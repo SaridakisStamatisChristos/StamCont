@@ -1,4 +1,48 @@
-import { ChildProcess } from "child_process";
+import { spawn, type ChildProcess } from "node:child_process";
+
+
+type StamContChildProcess = ChildProcess & {
+  __stamcontIsolatedProcessGroup?: boolean;
+};
+
+export function markIsolatedProcessGroup(process: ChildProcess): ChildProcess {
+  (process as StamContChildProcess).__stamcontIsolatedProcessGroup = true;
+  return process;
+}
+
+export function terminateProcessTree(
+  child: ChildProcess,
+  signal: NodeJS.Signals = "SIGTERM",
+): void {
+  if (!child.pid || child.exitCode !== null || child.signalCode !== null) {
+    return;
+  }
+
+  if (process.platform === "win32") {
+    const args = ["/PID", String(child.pid), "/T"];
+    if (signal === "SIGKILL") {
+      args.push("/F");
+    }
+    const killer = spawn("taskkill", args, {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    killer.unref();
+    return;
+  }
+
+  if ((child as StamContChildProcess).__stamcontIsolatedProcessGroup) {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {
+      // Fall back to killing the direct child if its group already exited.
+    }
+  }
+
+  child.kill(signal);
+}
 
 // Track which processes have been backgrounded
 const processTerminalBackgroundStates = new Map<string, boolean>();
@@ -72,12 +116,12 @@ export async function killTerminalProcess(toolCallId: string): Promise<void> {
   if (processInfo && !processInfo.process.killed) {
     const { process } = processInfo;
 
-    process.kill("SIGTERM");
+    terminateProcessTree(process, "SIGTERM");
 
-    // Force kill after 5 seconds if still running
+    // Force kill after 5 seconds if still running.
     setTimeout(() => {
-      if (!process.killed) {
-        process.kill("SIGKILL");
+      if (process.exitCode === null && process.signalCode === null) {
+        terminateProcessTree(process, "SIGKILL");
       }
     }, 5000);
 
