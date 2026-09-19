@@ -19,15 +19,17 @@ export const editToolImpl: ClientToolImpl = async (
     filepath = filepath.slice(2);
   }
 
-  const allowOutsideWorkspace =
-    extras.getState().session?.executionProfile === "full_access";
+  const executionProfile = extras.getState().session?.executionProfile;
+  const allowOutsideWorkspace = executionProfile === "full_access";
+  const strictWorkspace = executionProfile === "interactive";
 
   let firstUriMatch: string | undefined;
-  if (allowOutsideWorkspace) {
+  if (allowOutsideWorkspace || strictWorkspace) {
     firstUriMatch = await validateSearchAndReplaceFilepath(
       filepath,
       extras.ideMessenger.ide,
-      true,
+      allowOutsideWorkspace,
+      strictWorkspace,
     );
   } else {
     firstUriMatch = await resolveRelativePathInDir(
