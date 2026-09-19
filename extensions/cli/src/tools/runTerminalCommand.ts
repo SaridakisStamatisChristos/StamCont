@@ -1,4 +1,5 @@
 import { ChildProcess, spawn } from "child_process";
+import { terminateProcessTree } from "core/util/processTerminalStates.js";
 import fs from "fs";
 
 import {
@@ -187,9 +188,34 @@ IMPORTANT: To edit files, use Edit/MultiEdit tools instead of bash commands (sed
     emitBashToolStarted();
 
     const terminalOutput: string = await new Promise((resolve, reject) => {
-      // Use same shell logic as core implementation
-      const { shell, args } = getShellCommand(command);
-      const child = spawn(shell, args);
+      const legacyShell = getShellCommand(command);
+      let child: ChildProcess;
+      let cleanupAbort = () => undefined;
+
+      if (context?.executionBackend) {
+        const backend = context.executionBackend;
+        const cwd = await backend.resolveWorkingDirectory(".");
+        child = backend.spawnShell(command, {
+          cwd,
+          env: process.env,
+        });
+      } else {
+        child = spawn(legacyShell.shell, legacyShell.args);
+      }
+
+      if (context?.executionSignal) {
+        const abort = () => terminateProcessTree(child, "SIGTERM");
+        if (context.executionSignal.aborted) {
+          abort();
+        } else {
+          context.executionSignal.addEventListener("abort", abort, {
+            once: true,
+          });
+          cleanupAbort = () =>
+            context.executionSignal?.removeEventListener("abort", abort);
+        }
+      }
+
       let stdout = "";
       let stderr = "";
       let timeoutId: NodeJS.Timeout;
@@ -270,7 +296,7 @@ IMPORTANT: To edit files, use Edit/MultiEdit tools instead of bash commands (sed
         timeoutId = setTimeout(() => {
           if (isResolved) return;
           isResolved = true;
-          child.kill();
+          terminateProcessTree(child, "SIGTERM");
           let output = stdout + (stderr ? `\nStderr: ${stderr}` : "");
           output += `\n\n[Command timed out after ${TIMEOUT_MS / 1000} seconds of no output]`;
 
@@ -318,6 +344,7 @@ IMPORTANT: To edit files, use Edit/MultiEdit tools instead of bash commands (sed
       child.stderr.on("data", onStderr);
 
       child.on("close", (code) => {
+        cleanupAbort();
         if (isResolved) return;
         isResolved = true;
 
@@ -361,6 +388,7 @@ IMPORTANT: To edit files, use Edit/MultiEdit tools instead of bash commands (sed
       });
 
       child.on("error", (error) => {
+        cleanupAbort();
         if (isResolved) return;
         isResolved = true;
 
