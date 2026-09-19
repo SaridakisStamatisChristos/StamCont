@@ -279,6 +279,7 @@ export async function callTool(
                   args,
                   {
                     ...extras,
+                    fetch: executionBackend.wrapFetch(extras.fetch),
                     executionBackend,
                     executionSignal: agentContext.signal,
                   },
