@@ -135,15 +135,17 @@ export class IdeExecutionBackend implements ExecutionBackend {
   async listDirectory(
     resolvedPath: ResolvedPath,
     recursive: boolean,
-    maxEntries: number,
+    _maxEntries: number,
   ): Promise<string[]> {
-    const entries = await walkDir(resolvedPath.uri, this.ide, {
+    // Preserve the legacy IDE listing behavior so lsTool can report an exact
+    // truncation count. The Host backend remains bounded because a recursive
+    // whole-machine traversal must not materialize an unbounded result set.
+    return walkDir(resolvedPath.uri, this.ide, {
       returnRelativeUrisPaths: true,
       include: "both",
       recursive,
       overrideDefaultIgnores: ignore(),
     });
-    return entries.slice(0, maxEntries);
   }
 
   async resolveWorkingDirectory(requestedCwd?: string): Promise<string> {
