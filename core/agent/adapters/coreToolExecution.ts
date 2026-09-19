@@ -3,13 +3,13 @@ import type { Tool } from "../..";
 import type { BuiltInExecutionProfileId } from "../capabilities";
 import { AgentKernel } from "../kernel";
 import type { AgentSession } from "../session";
-import type { AgentTool } from "../tools";
+import type { AgentTool, AgentToolContext } from "../tools";
 
 import { getCoreToolCapabilityRequirement } from "./coreTool";
 
 export interface CoreToolExecutionOptions<Output> {
   tool: Tool;
-  execute: () => Output | Promise<Output>;
+  execute: (context: AgentToolContext) => Output | Promise<Output>;
   profile?: BuiltInExecutionProfileId;
   sessionId?: string;
 }
@@ -43,7 +43,7 @@ export class CoreToolKernelBridge {
         toolName,
       requiredCapabilities:
         getCoreToolCapabilityRequirement(options.tool),
-      execute: options.execute,
+      execute: (_input, context) => options.execute(context),
     };
 
     this.kernel.tools.replace(adapted);
