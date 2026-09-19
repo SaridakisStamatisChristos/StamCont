@@ -17,10 +17,12 @@ export const singleFindAndReplaceImpl: ClientToolImpl = async (
     args.new_string,
     args.replace_all,
   );
+  const executionProfile = extras.getState().session?.executionProfile;
   const fileUri = await validateSearchAndReplaceFilepath(
     args.filepath,
     extras.ideMessenger.ide,
-    extras.getState().session?.executionProfile === "full_access",
+    executionProfile === "full_access",
+    executionProfile === "interactive",
   );
 
   const editingFileContents = await extras.ideMessenger.ide.readFile(fileUri);
