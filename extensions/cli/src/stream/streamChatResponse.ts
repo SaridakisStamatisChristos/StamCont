@@ -247,7 +247,6 @@ export async function processStreamingResponse(
       safetyBuffer: SAFETY_BUFFER,
       systemMessage,
       tools,
-      useChatHistoryService,
     });
   }
 
@@ -551,6 +550,7 @@ export async function streamChatResponse(
         callbacks,
         systemMessage,
         tools,
+        useChatHistoryService,
       },
     );
     chatHistory = postToolResult.chatHistory;
