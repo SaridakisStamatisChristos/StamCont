@@ -32,6 +32,7 @@ concurrency:
 
 jobs:
   check_release_name:
+    if: github.repository == 'continuedev/continue'
     runs-on: ubuntu-latest
     outputs:
       should_run: ${{ steps.check.outputs.should_run }}
@@ -93,7 +94,7 @@ jobs:
   # Prepare and publish the plugin to JetBrains Marketplace repository
   build:
     needs: check_release_name
-    if: needs.check_release_name.outputs.should_run == 'true' || github.event_name == 'workflow_dispatch'
+    if: github.repository == 'continuedev/continue' && (needs.check_release_name.outputs.should_run == 'true' || github.event_name == 'workflow_dispatch')
     name: Build Plugin
     runs-on: macos-latest
     permissions:
@@ -337,6 +338,7 @@ jobs:
           path: ./binary/bin/linux-x64/
 
   test-binaries:
+    if: github.repository == 'continuedev/continue'
     needs: build
     strategy:
       matrix:
@@ -427,6 +429,7 @@ jobs:
 
   # Run tests and upload a code coverage report
   test:
+    if: github.repository == 'continuedev/continue'
     name: Test
     needs: [build]
     runs-on: ubuntu-latest
@@ -462,7 +465,7 @@ jobs:
 
   # Run Qodana inspections and provide report
   inspectCode:
-    if: false
+    if: github.repository == 'continuedev/continue' && (false)
     name: Inspect code
     needs: [build]
     runs-on: ubuntu-latest
@@ -497,7 +500,7 @@ jobs:
 
   # Run plugin structure verification along with IntelliJ Plugin Verifier
   verify:
-    if: false
+    if: github.repository == 'continuedev/continue' && (false)
     name: Verify plugin
     needs: [build]
     runs-on: ubuntu-latest
@@ -546,7 +549,7 @@ jobs:
           path: ${{ github.workspace }}/build/reports/pluginVerifier
 
   upload-release:
-    if: false
+    if: github.repository == 'continuedev/continue' && (false)
     name: Upload Release
     needs:
       - build
