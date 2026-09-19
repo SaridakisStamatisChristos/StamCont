@@ -1,5 +1,5 @@
 import { ToolPolicy } from "@continuedev/terminal-security";
-import { Tool, ToolCallState } from "core";
+import { Tool, ToolCallState, type ExecutionProfileId } from "core";
 import { IIdeMessenger } from "../../context/IdeMessenger";
 import { isEditTool } from "../../util/toolCallState";
 import { errorToolCall, updateToolCallOutput } from "../slices/sessionSlice";
@@ -77,9 +77,23 @@ export async function evaluateToolPolicies(
   activeTools: Tool[],
   generatedToolCalls: ToolCallState[],
   toolPolicies: ToolPolicies,
+  executionProfile: ExecutionProfileId = "interactive",
 ): Promise<EvaluatedPolicy[]> {
-  // Check if ALL tool calls are auto-approved using dynamic evaluation
-  const policyResults = await Promise.all(
+  const activeToolNames = new Set(
+    activeTools.map((tool) => tool.function.name),
+  );
+
+  // Full Access removes per-command approval friction, but it does not
+  // resurrect tools that the user, group settings, or model overrides disabled.
+  const policyResults =
+    executionProfile === "full_access"
+      ? generatedToolCalls.map((toolCallState): EvaluatedPolicy => ({
+          policy: activeToolNames.has(toolCallState.toolCall.function.name)
+            ? "allowedWithoutPermission"
+            : "disabled",
+          toolCallState,
+        }))
+      : await Promise.all(
     generatedToolCalls.map((toolCallState) =>
       evaluateToolPolicy(
         ideMessenger,
@@ -87,8 +101,8 @@ export async function evaluateToolPolicies(
         toolCallState,
         toolPolicies,
       ),
-    ),
-  );
+        ),
+      );
 
   const disabledResults = policyResults.filter(
     ({ policy }) => policy === "disabled",

@@ -79,7 +79,11 @@ Parent cancellation propagates to children. Cancelling a child does not cancel i
 
 Core-side built-in, MCP, and HTTP tool execution now passes through `CoreToolKernelBridge` from the existing `core/tools/callTool.ts` seam.
 
-Existing GUI policy evaluation and approval behavior remain in front of the kernel. The Core bridge currently uses the `interactive` profile by default.
+The IDE now exposes Chat, Plan, Interactive, and explicit Full Access choices in the existing mode selector. Plan maps to the kernel `plan` profile, Interactive maps to `interactive`, and Full Access maps to `full_access`.
+
+The selected execution profile and chat session ID are propagated with Core-side tool calls. Core kernel sessions are isolated by chat session, and switching the profile for a chat closes the previous Core kernel session before the replacement is created.
+
+Interactive retains the existing GUI policy/approval layer. Full Access skips per-command approval for tools that are already active, while explicitly disabled/excluded tools remain blocked.
 
 ## Capability boundary
 
@@ -115,9 +119,8 @@ const result = await kernel.executeTool(
 
 The major remaining product-facing work is:
 
-- expose execution-profile selection in the IDE/GUI, including an explicit Full Access control;
 - decide and implement path/process/network enforcement semantics for workspace-restricted profiles;
 - continue promoting the streamed model loop toward a provider-neutral `AgentLoop` contract;
-- add lifecycle cleanup hooks for IDE/Core sessions where product shutdown/profile switching requires them.
+- add remaining lifecycle cleanup hooks for IDE shutdown, chat close, and explicit session reset.
 
 The separate Orchestrator repository remains a later higher-level planning/DAG/durability layer and is not a dependency of the kernel.
