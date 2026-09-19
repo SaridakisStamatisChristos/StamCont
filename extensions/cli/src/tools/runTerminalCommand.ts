@@ -200,7 +200,7 @@ IMPORTANT: To edit files, use Edit/MultiEdit tools instead of bash commands (sed
       child = spawn(legacyShell.shell, legacyShell.args);
     }
 
-    let cleanupAbort = () => undefined;
+    let cleanupAbort: () => void = () => {};
     if (context?.executionSignal) {
       const abort = () => terminateProcessTree(child, "SIGTERM");
       if (context.executionSignal.aborted) {
@@ -209,8 +209,9 @@ IMPORTANT: To edit files, use Edit/MultiEdit tools instead of bash commands (sed
         context.executionSignal.addEventListener("abort", abort, {
           once: true,
         });
-        cleanupAbort = () =>
+        cleanupAbort = () => {
           context.executionSignal?.removeEventListener("abort", abort);
+        };
       }
     }
 
@@ -259,8 +260,8 @@ IMPORTANT: To edit files, use Edit/MultiEdit tools instead of bash commands (sed
         // Detach stdout/stderr listeners so they don't accumulate in local
         // buffers or trigger chat history updates after the tool call resolves.
         // BackgroundJobService.createJobWithProcess attaches its own listeners.
-        child.stdout.removeListener("data", onStdout);
-        child.stderr.removeListener("data", onStderr);
+        child.stdout?.removeListener("data", onStdout);
+        child.stderr?.removeListener("data", onStderr);
 
         const job = backgroundJobService.createJobWithProcess(
           command,
@@ -339,8 +340,8 @@ IMPORTANT: To edit files, use Edit/MultiEdit tools instead of bash commands (sed
         showCurrentOutput();
       };
 
-      child.stdout.on("data", onStdout);
-      child.stderr.on("data", onStderr);
+      child.stdout?.on("data", onStdout);
+      child.stderr?.on("data", onStderr);
 
       child.on("close", (code) => {
         cleanupAbort();
