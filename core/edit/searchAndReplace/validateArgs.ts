@@ -21,7 +21,13 @@ export async function validateSearchAndReplaceFilepath(
     typeof resolvedFilepath === "string"
       ? resolvedFilepath
       : resolvedFilepath?.uri;
-  if (!resolvedUri || !(await ide.fileExists(resolvedUri))) {
+  const exists =
+    typeof resolvedFilepath === "string"
+      ? true
+      : resolvedUri
+        ? await ide.fileExists(resolvedUri)
+        : false;
+  if (!resolvedUri || !exists) {
     throw new ContinueError(
       ContinueErrorReason.FileNotFound,
       `File ${filepath} does not exist`,
