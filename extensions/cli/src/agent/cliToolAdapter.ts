@@ -74,7 +74,7 @@ export function adaptCliTool(
   return {
     name: tool.name,
     description: tool.description,
-    requiredCapabilities: (invocation) =>
+    requiredCapabilities: (invocation: CliToolInvocation) =>
       getCliToolCapabilityRequirement(invocation.tool),
     execute: async (invocation) => {
       return invocation.tool.run(
