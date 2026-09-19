@@ -1,4 +1,5 @@
 import { createRuleMarkdown } from "@continuedev/config-yaml";
+import { getExecutionBackend } from "../../agent/execution";
 import { ToolImpl } from ".";
 import { RuleWithSource } from "../..";
 import { createRuleFilePath } from "../../config/markdown/utils";
@@ -32,9 +33,11 @@ export const createRuleBlockImpl: ToolImpl = async (args, extras) => {
 
   const [localContinueDir] = await extras.ide.getWorkspaceDirs();
   const ruleFilePath = createRuleFilePath(localContinueDir, name);
+  const backend = getExecutionBackend(extras);
+  const resolvedRulePath = await backend.resolveWritablePath(ruleFilePath);
 
-  await extras.ide.writeFile(ruleFilePath, fileContent);
-  await extras.ide.openFile(ruleFilePath);
+  await backend.writeFile(resolvedRulePath, fileContent);
+  await extras.ide.openFile(resolvedRulePath.uri);
 
   return [
     {
@@ -42,7 +45,7 @@ export const createRuleBlockImpl: ToolImpl = async (args, extras) => {
       description: description || "",
       uri: {
         type: "file",
-        value: ruleFilePath,
+        value: resolvedRulePath.uri,
       },
       content: `Rule created successfully`,
     },
