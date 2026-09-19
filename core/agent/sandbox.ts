@@ -359,6 +359,7 @@ export class SandboxExecutionBackend implements ExecutionBackend {
   readonly enforceSensitivePathChecks = true;
 
   private workspaceRoots?: Promise<string[]>;
+  private resolvedWorkspaceRoots?: string[];
 
   constructor(private readonly ide: IDE) {}
 
@@ -493,19 +494,10 @@ export class SandboxExecutionBackend implements ExecutionBackend {
         "Sandbox shell requires an explicit validated working directory",
       );
     }
-    const rootsPromise = this.workspaceRoots;
-    if (!rootsPromise) {
-      throw new SandboxViolationError(
-        "Sandbox roots were not initialized before process launch",
-      );
-    }
-
-    // resolveWorkingDirectory initializes roots before spawnShell is reached.
-    const roots = (rootsPromise as Promise<string[]> & { __resolved?: string[] })
-      .__resolved;
+    const roots = this.resolvedWorkspaceRoots;
     if (!roots) {
       throw new SandboxViolationError(
-        "Sandbox roots are still initializing; retry the command",
+        "Sandbox roots were not initialized before process launch",
       );
     }
     return spawnSandboxedShell(command, options, roots, options.cwd);
@@ -533,13 +525,11 @@ export class SandboxExecutionBackend implements ExecutionBackend {
             "Interactive sandbox requires at least one local file workspace",
           );
         }
-        return [...new Set(roots)];
+        const uniqueRoots = [...new Set(roots)];
+        this.resolvedWorkspaceRoots = uniqueRoots;
+        return uniqueRoots;
       })();
       this.workspaceRoots = pending;
-      pending.then((roots) => {
-        (pending as Promise<string[]> & { __resolved?: string[] }).__resolved =
-          roots;
-      });
     }
     return this.workspaceRoots;
   }
