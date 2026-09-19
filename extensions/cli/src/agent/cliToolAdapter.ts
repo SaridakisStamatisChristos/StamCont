@@ -70,12 +70,17 @@ export function getCliToolCapabilityRequirement(
 
 export function adaptCliTool(
   tool: Tool,
+  nameOverride?: string,
 ): AgentTool<CliToolInvocation, string> {
+  const name = nameOverride?.trim() || tool.name;
   return {
-    name: tool.name,
-    description: tool.description,
-    requiredCapabilities: (invocation: CliToolInvocation) =>
-      getCliToolCapabilityRequirement(invocation.tool),
+    name,
+    description: tool.description ?? name,
+    requiredCapabilities: () =>
+      getCliToolCapabilityRequirement({
+        ...tool,
+        name,
+      }),
     execute: async (invocation) => {
       return invocation.tool.run(
         invocation.args,
