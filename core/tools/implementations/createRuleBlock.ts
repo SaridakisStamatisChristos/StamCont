@@ -33,19 +33,35 @@ export const createRuleBlockImpl: ToolImpl = async (args, extras) => {
 
   const [localContinueDir] = await extras.ide.getWorkspaceDirs();
   const ruleFilePath = createRuleFilePath(localContinueDir, name);
-  const backend = getExecutionBackend(extras);
-  const resolvedRulePath = await backend.resolveWritablePath(ruleFilePath);
+  if (extras.executionBackend) {
+    const backend = getExecutionBackend(extras);
+    const resolvedRulePath = await backend.resolveWritablePath(ruleFilePath);
+    await backend.writeFile(resolvedRulePath, fileContent);
+    await extras.ide.openFile(resolvedRulePath.uri);
 
-  await backend.writeFile(resolvedRulePath, fileContent);
-  await extras.ide.openFile(resolvedRulePath.uri);
+    return [
+      {
+        name: "New Rule Block",
+        description: description || "",
+        uri: {
+          type: "file",
+          value: resolvedRulePath.uri,
+        },
+        content: `Rule created successfully`,
+      },
+    ];
+  }
 
+  // Direct legacy/test invocations do not carry a kernel execution backend.
+  await extras.ide.writeFile(ruleFilePath, fileContent);
+  await extras.ide.openFile(ruleFilePath);
   return [
     {
       name: "New Rule Block",
       description: description || "",
       uri: {
         type: "file",
-        value: resolvedRulePath.uri,
+        value: ruleFilePath,
       },
       content: `Rule created successfully`,
     },
