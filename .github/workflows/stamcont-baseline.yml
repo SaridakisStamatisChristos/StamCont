@@ -146,6 +146,12 @@ jobs:
           component: core
           include-root: true
 
+      - name: Setup VS Code packaging dependencies
+        uses: ./.github/actions/setup-component
+        with:
+          component: vscode
+          include-packages: false
+
       - name: Setup binary
         uses: ./.github/actions/setup-component
         with:
