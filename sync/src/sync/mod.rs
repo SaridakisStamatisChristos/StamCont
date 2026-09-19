@@ -51,6 +51,18 @@ fn path_for_tag(tag: &Tag) -> PathBuf {
     return path;
 }
 
+/// Stored in ~/.continue/index/.last_sync
+fn get_last_sync_time(tag: &Tag) -> u64 {
+    // TODO: Error handle here
+    let path = path_for_tag(tag).join(".last_sync");
+
+//     let mut file = File::open(path).unwrap();
+//     let mut contents = String::new();
+//     file.read_to_string(&mut contents).unwrap();
+
+//     contents.parse::<u64>().unwrap()
+// }
+
 fn write_sync_time(tag: &Tag) {
     let path = path_for_tag(tag).join(".last_sync");
 
@@ -61,6 +73,32 @@ fn write_sync_time(tag: &Tag) {
         .as_secs();
     file.write_all(now.to_string().as_bytes()).unwrap();
 }
+
+
+/// Use stat to find files since last sync time
+// pub fn get_modified_files(tag: &Tag) -> Vec<PathBuf> {
+//     let last_sync_time = get_last_sync_time(tag);
+//     let mut modified_files = Vec::new();
+//     for entry in build_walk(tag.dir) {
+//         let entry = entry.unwrap();
+//         let path = entry.path();
+//         let metadata = path.metadata().unwrap();
+//         let modified = metadata.modified().unwrap();
+//     build_walk(dir)
+//         .filter_map(|entry| {
+//             let entry = entry.unwrap();
+//             let path = entry.path();
+//             let metadata = path.metadata().unwrap();
+//             let modified = metadata.modified().unwrap();
+
+//             if modified.duration_since(UNIX_EPOCH).unwrap().as_secs() > last_sync_time {
+//                 Some(path.to_path_buf())
+//             } else {
+//                 None
+//             }
+//         })
+//         .collect()
+// }
 
 // Merkle trees are unique to directories, even if nested, but .index_cache is shared between all
 
