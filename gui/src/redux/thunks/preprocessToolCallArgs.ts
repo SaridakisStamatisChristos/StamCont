@@ -21,7 +21,9 @@ export async function preprocessToolCalls(
     generatedToolCalls.map(async (tcState) => {
       if (
         executionProfile === "full_access" &&
-        CLIENT_TOOLS_IMPLS.includes(tcState.toolCall.function.name as any)
+        CLIENT_TOOLS_IMPLS.some(
+          (toolName) => toolName === tcState.toolCall.function.name,
+        )
       ) {
         return;
       }
