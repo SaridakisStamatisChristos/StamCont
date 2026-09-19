@@ -13,10 +13,12 @@ export const multiEditImpl: ClientToolImpl = async (
   // Note that this is fully duplicate of what occurs in args preprocessing
   // This is to handle cases where file changes while tool call is pending
   const { edits } = validateMultiEdit(args);
+  const executionProfile = extras.getState().session?.executionProfile;
   const fileUri = await validateSearchAndReplaceFilepath(
     args.filepath,
     extras.ideMessenger.ide,
-    extras.getState().session?.executionProfile === "full_access",
+    executionProfile === "full_access",
+    executionProfile === "interactive",
   );
 
   const editingFileContents = await extras.ideMessenger.ide.readFile(fileUri);
