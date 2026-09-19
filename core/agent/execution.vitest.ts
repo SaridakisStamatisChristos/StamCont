@@ -9,7 +9,6 @@ import type { IDE } from "..";
 import {
   createExecutionBackend,
   HostExecutionBackend,
-  IdeExecutionBackend,
 } from "./execution";
 import { SandboxExecutionBackend } from "./sandbox";
 
