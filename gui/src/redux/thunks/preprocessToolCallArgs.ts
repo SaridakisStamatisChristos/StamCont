@@ -1,4 +1,5 @@
-import { ToolCallState } from "core";
+import { type ExecutionProfileId, ToolCallState } from "core";
+import { CLIENT_TOOLS_IMPLS } from "core/tools/builtIn";
 import { ContinueErrorReason } from "core/util/errors";
 
 import { IIdeMessenger } from "../../context/IdeMessenger";
@@ -13,10 +14,18 @@ export async function preprocessToolCalls(
   dispatch: AppThunkDispatch,
   ideMessenger: IIdeMessenger,
   generatedToolCalls: ToolCallState[],
+  executionProfile: ExecutionProfileId = "interactive",
 ): Promise<void> {
   // Tool call pre-processing
   await Promise.all(
     generatedToolCalls.map(async (tcState) => {
+      if (
+        executionProfile === "full_access" &&
+        CLIENT_TOOLS_IMPLS.includes(tcState.toolCall.function.name as any)
+      ) {
+        return;
+      }
+
       let errorReason: ContinueErrorReason | undefined = undefined;
       let errorMessage: string | undefined = undefined;
       let preprocessedArgs: Record<string, unknown> | undefined = undefined;
