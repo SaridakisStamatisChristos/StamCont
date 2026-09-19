@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { AgentKernel } from "core/agent/index.js";
+import { AgentKernel } from "core/agent/kernel.js";
 
 import {
   adaptCliTool,
