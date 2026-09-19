@@ -1,0 +1,62 @@
+name: Promote validated Node 20 binary packager
+
+on:
+  push:
+    branches:
+      - stamcont/phase-2-agent-kernel
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: stamcont/phase-2-agent-kernel
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: binary/package-lock.json
+
+      - name: Apply the already validated packager migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd binary
+          npm uninstall --save-dev pkg
+          npm install --save-dev --save-exact @yao-pkg/pkg@6.14.0
+          node <<'NODE'
+          const fs = require("fs");
+          const path = require("path");
+
+          const root = path.join(process.cwd(), "pkgJson");
+          for (const dir of fs.readdirSync(root)) {
+            const packagePath = path.join(root, dir, "package.json");
+            if (!fs.existsSync(packagePath)) continue;
+
+            const pkg = JSON.parse(fs.readFileSync(packagePath, "utf8"));
+            pkg.pkg.targets = pkg.pkg.targets.map((target) =>
+              target.replace(/^node18-/, "node20-"),
+            );
+            fs.writeFileSync(packagePath, JSON.stringify(pkg, null, 2) + "\n");
+          }
+          NODE
+
+      - name: Commit generated migration files
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add binary/package.json binary/package-lock.json binary/pkgJson/*/package.json
+          if git diff --cached --quiet; then
+            echo "Validated migration is already committed."
+            exit 0
+          fi
+          git commit -m "build(binary): promote validated Node 20 packager"
+          git push origin HEAD:stamcont/phase-2-agent-kernel
