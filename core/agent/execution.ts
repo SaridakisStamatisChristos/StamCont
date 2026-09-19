@@ -389,7 +389,7 @@ export function createExecutionBackend(
   if (profile === "full_access") {
     return new HostExecutionBackend(ide);
   }
-  if (profile === "interactive") {
+  if (profile === "interactive" || profile === "plan") {
     return new SandboxExecutionBackend(ide);
   }
   return new IdeExecutionBackend(ide);
