@@ -30,7 +30,7 @@ export const multiEditTool: Tool = {
     description: `Use this tool to make multiple edits to a single file in one operation. It allows you to perform multiple find-and-replace operations efficiently. 
 
 To make multiple edits to a file, provide the following:
-1. filepath: The path to the file to modify, RELATIVE to the project/workspace root (verify the directory path is correct)
+1. filepath: The path to the file to modify, relative to the project/workspace root, or absolute/~/ in Full Access (verify the path is correct)
 2. edits: An array of edit operations to perform, where each edit contains:
    - old_string: The text to replace (must match the old file contents exactly, including all whitespace/indentation)
    - new_string: The edited text to replace the old_string
@@ -63,7 +63,7 @@ WARNINGS:
         filepath: {
           type: "string",
           description:
-            "The path to the file to modify, relative to the root of the workspace",
+            "The path to the file to modify, relative to the workspace root, or an absolute/~/ path in Full Access",
         },
         edits: {
           type: "array",
@@ -95,7 +95,7 @@ WARNINGS:
     },
   },
   systemMessageDescription: {
-    prefix: `To make multiple edits to a single file, use the ${BuiltInToolNames.MultiEdit} tool with a filepath (relative to the root of the workspace) and an array of edit operations.
+    prefix: `To make multiple edits to a single file, use the ${BuiltInToolNames.MultiEdit} tool with a filepath (relative to the workspace root, or an absolute/~/ path in Full Access) and an array of edit operations.
 
   For example, you could respond with:`,
     exampleArgs: [
