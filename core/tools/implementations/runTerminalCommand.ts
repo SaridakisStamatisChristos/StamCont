@@ -1,3 +1,4 @@
+import type { ChildProcess } from "node:child_process";
 import iconv from "iconv-lite";
 import { ContinueError, ContinueErrorReason } from "../../util/errors";
 import { getExecutionBackend } from "../../agent/execution";
@@ -47,11 +48,7 @@ const getColorEnv = () => ({
 });
 
 function bindAbortSignal(
-  childProc: {
-    exitCode: number | null;
-    signalCode: NodeJS.Signals | null;
-    kill(signal?: NodeJS.Signals | number): boolean;
-  },
+  childProc: ChildProcess,
   signal?: AbortSignal,
 ): () => void {
   if (!signal) {
