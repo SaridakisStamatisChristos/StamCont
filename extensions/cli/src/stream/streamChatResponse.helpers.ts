@@ -566,6 +566,9 @@ export async function executeStreamedToolCalls(
 
             const toolResult = await executeToolCall(call, {
               parallelToolCallCount,
+              permissionMode: permissionState.currentMode,
+              sessionId:
+                services.chatHistory?.getSessionId?.() || undefined,
             });
             const entry: ToolResultWithStatus = {
               role: "tool",
