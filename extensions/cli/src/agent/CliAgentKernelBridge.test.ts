@@ -1,3 +1,4 @@
+import type { AgentEvent } from "core/agent/events.js";
 import { AgentKernel } from "core/agent/kernel.js";
 import { describe, expect, it, vi } from "vitest";
 
@@ -34,7 +35,7 @@ describe("CliAgentKernelBridge", () => {
   it("reuses one kernel session per CLI session and profile", async () => {
     const events: string[] = [];
     const kernel = new AgentKernel();
-    kernel.subscribe((event) => {
+    kernel.subscribe((event: Readonly<AgentEvent>) => {
       events.push(event.type);
     });
     const bridge = new CliAgentKernelBridge(kernel);
@@ -61,7 +62,7 @@ describe("CliAgentKernelBridge", () => {
   it("creates a separate session when the execution profile changes", async () => {
     const createdProfiles: unknown[] = [];
     const kernel = new AgentKernel();
-    kernel.subscribe((event) => {
+    kernel.subscribe((event: Readonly<AgentEvent>) => {
       if (event.type === "session.created") {
         createdProfiles.push(event.details?.profileId);
       }
@@ -138,7 +139,7 @@ describe("CliAgentKernelBridge", () => {
   it("allows closing and recreating a cached session", async () => {
     const events: string[] = [];
     const kernel = new AgentKernel();
-    kernel.subscribe((event) => {
+    kernel.subscribe((event: Readonly<AgentEvent>) => {
       events.push(event.type);
     });
     const bridge = new CliAgentKernelBridge(kernel);
