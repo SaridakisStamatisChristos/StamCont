@@ -272,7 +272,10 @@ export async function callTool(
         sessionId: executionContext.sessionId,
         execute: async (agentContext) =>
           tool.uri
-            ? callToolFromUri(tool.uri, args, extras)
+            ? callToolFromUri(tool.uri, args, {
+                ...extras,
+                fetch: executionBackend.wrapFetch(extras.fetch),
+              })
             : {
                 contextItems: await callBuiltInTool(
                   tool.function.name,
