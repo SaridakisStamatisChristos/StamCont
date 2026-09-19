@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import ignore from "ignore";
 import untildify from "untildify";
 
-import type { IDE } from "..";
+import type { FetchFunction, IDE } from "..";
 import { walkDir } from "../indexing/walkDir";
 import { inferResolvedUriFromRelativePath } from "../util/ideUtils";
 import {
@@ -15,13 +15,15 @@ import {
   type ResolvedPath,
 } from "../util/pathResolver";
 import type { BuiltInExecutionProfileId } from "./capabilities";
+import { SandboxExecutionBackend } from "./sandbox";
 
-export type ExecutionBackendKind = "ide" | "host";
+export type ExecutionBackendKind = "ide" | "sandbox" | "host";
 
 export interface ExecutionBackend {
   readonly kind: ExecutionBackendKind;
   readonly enforceSensitivePathChecks: boolean;
 
+  wrapFetch(fetch: FetchFunction): FetchFunction;
   resolveExistingPath(inputPath: string): Promise<ResolvedPath | null>;
   resolveWritablePath(inputPath: string): Promise<ResolvedPath>;
   readFile(resolvedPath: ResolvedPath): Promise<string>;
@@ -94,6 +96,10 @@ export class IdeExecutionBackend implements ExecutionBackend {
   readonly enforceSensitivePathChecks = true;
 
   constructor(private readonly ide: IDE) {}
+
+  wrapFetch(fetch: FetchFunction): FetchFunction {
+    return fetch;
+  }
 
   resolveExistingPath(inputPath: string): Promise<ResolvedPath | null> {
     return resolveInputPath(this.ide, inputPath);
@@ -185,6 +191,10 @@ export class HostExecutionBackend implements ExecutionBackend {
   private defaultWorkingDirectory?: Promise<string>;
 
   constructor(private readonly ide: IDE) {}
+
+  wrapFetch(fetch: FetchFunction): FetchFunction {
+    return fetch;
+  }
 
   async resolveExistingPath(inputPath: string): Promise<ResolvedPath | null> {
     const hostPath = await this.resolveHostPath(inputPath);
@@ -376,9 +386,13 @@ export function createExecutionBackend(
   profile: BuiltInExecutionProfileId,
   ide: IDE,
 ): ExecutionBackend {
-  return profile === "full_access"
-    ? new HostExecutionBackend(ide)
-    : new IdeExecutionBackend(ide);
+  if (profile === "full_access") {
+    return new HostExecutionBackend(ide);
+  }
+  if (profile === "interactive") {
+    return new SandboxExecutionBackend(ide);
+  }
+  return new IdeExecutionBackend(ide);
 }
 
 export function getExecutionBackend(extras: {
