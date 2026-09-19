@@ -1,5 +1,19 @@
 import iconv from "iconv-lite";
 import { ContinueError, ContinueErrorReason } from "../../util/errors";
+import { getExecutionBackend } from "../../agent/execution";
+import { ToolImpl } from ".";
+import {
+  isProcessBackgrounded,
+  markProcessAsRunning,
+  removeBackgroundedProcess,
+  removeRunningProcess,
+  updateProcessOutput,
+} from "../../util/processTerminalStates";
+import {
+  getBooleanArg,
+  getOptionalStringArg,
+  getStringArg,
+} from "../parseArgs";
 
 // Default timeout for terminal commands (2 minutes)
 const DEFAULT_TOOL_TIMEOUT_MS = 120_000;
@@ -218,7 +232,7 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
           }
 
           childProc.on("close", (code) => {
-            cleanupAbort();
+                cleanupAbort();
             // Clear timeout on normal completion
             if (timeoutId) {
               clearTimeout(timeoutId);
@@ -285,7 +299,7 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
           });
 
           childProc.on("error", (error) => {
-            cleanupAbort();
+                cleanupAbort();
             // Clear timeout on error
             if (timeoutId) {
               clearTimeout(timeoutId);
@@ -373,7 +387,7 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
               });
 
               childProc.on("close", (code) => {
-            cleanupAbort();
+                cleanupAbort();
                 // Clear outer timeout
                 if (timeoutId) {
                   clearTimeout(timeoutId);
@@ -402,7 +416,7 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
               });
 
               childProc.on("error", (error) => {
-            cleanupAbort();
+                cleanupAbort();
                 // Clear timeout on error
                 if (timeoutId) {
                   clearTimeout(timeoutId);
