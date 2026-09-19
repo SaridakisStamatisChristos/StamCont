@@ -270,14 +270,18 @@ export async function callTool(
         tool,
         profile,
         sessionId: executionContext.sessionId,
-        execute: async () =>
+        execute: async (agentContext) =>
           tool.uri
             ? callToolFromUri(tool.uri, args, extras)
             : {
                 contextItems: await callBuiltInTool(
                   tool.function.name,
                   args,
-                  { ...extras, executionBackend },
+                  {
+                    ...extras,
+                    executionBackend,
+                    executionSignal: agentContext.signal,
+                  },
                 ),
                 mcpUiState: undefined,
               },
