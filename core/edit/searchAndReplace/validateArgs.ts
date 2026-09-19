@@ -1,10 +1,12 @@
 import { IDE } from "../..";
 import { ContinueError, ContinueErrorReason } from "../../util/errors";
 import { resolveRelativePathInDir } from "../../util/ideUtils";
+import { resolveInputPath } from "../../util/pathResolver";
 
 export async function validateSearchAndReplaceFilepath(
   filepath: unknown,
   ide: IDE,
+  allowOutsideWorkspace = false,
 ) {
   if (!filepath || typeof filepath !== "string") {
     throw new ContinueError(
@@ -12,12 +14,18 @@ export async function validateSearchAndReplaceFilepath(
       "filepath (string) is required",
     );
   }
-  const resolvedFilepath = await resolveRelativePathInDir(filepath, ide);
-  if (!resolvedFilepath) {
+  const resolvedFilepath = allowOutsideWorkspace
+    ? await resolveInputPath(ide, filepath)
+    : await resolveRelativePathInDir(filepath, ide);
+  const resolvedUri =
+    typeof resolvedFilepath === "string"
+      ? resolvedFilepath
+      : resolvedFilepath?.uri;
+  if (!resolvedUri || !(await ide.fileExists(resolvedUri))) {
     throw new ContinueError(
       ContinueErrorReason.FileNotFound,
       `File ${filepath} does not exist`,
     );
   }
-  return resolvedFilepath;
+  return resolvedUri;
 }
