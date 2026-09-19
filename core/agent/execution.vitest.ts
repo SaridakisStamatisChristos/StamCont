@@ -85,6 +85,37 @@ describe("HostExecutionBackend", () => {
       backend.resolveWorkingDirectory(path.join(outside, "project")),
     ).resolves.toBe(path.join(outside, "project"));
   });
+
+  it("spawns commands from an arbitrary host working directory", async () => {
+    const workspace = await tempDir("stamcont-workspace-");
+    const outside = await tempDir("stamcont-shell-cwd-");
+    const backend = new HostExecutionBackend(ideWithWorkspace(workspace));
+
+    const output = await new Promise<string>((resolve, reject) => {
+      const child = backend.spawnShell('node -p "process.cwd()"', {
+        cwd: outside,
+        env: process.env,
+      });
+      let stdout = "";
+      child.stdout?.on("data", (chunk) => {
+        stdout += String(chunk);
+      });
+      child.once("error", reject);
+      child.once("close", (code) => {
+        if (code === 0) {
+          resolve(stdout.trim());
+        } else {
+          reject(new Error(`shell exited with code ${code}`));
+        }
+      });
+    });
+
+    const normalize = (value: string) =>
+      process.platform === "win32"
+        ? path.resolve(value).toLowerCase()
+        : path.resolve(value);
+    expect(normalize(output)).toBe(normalize(outside));
+  });
 });
 
 describe("execution backend selection", () => {
