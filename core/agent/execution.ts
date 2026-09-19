@@ -18,10 +18,6 @@ import type { BuiltInExecutionProfileId } from "./capabilities";
 
 export type ExecutionBackendKind = "ide" | "host";
 
-export interface ResolvePathOptions {
-  mustExist?: boolean;
-}
-
 export interface ExecutionBackend {
   readonly kind: ExecutionBackendKind;
   readonly enforceSensitivePathChecks: boolean;
@@ -86,7 +82,11 @@ async function getIdeDefaultWorkingDirectory(ide: IDE): Promise<string> {
     }
   }
 
-  return process.env.HOME || process.env.USERPROFILE || process.cwd() || os.tmpdir();
+  try {
+    return process.env.HOME || process.env.USERPROFILE || process.cwd();
+  } catch {
+    return os.tmpdir();
+  }
 }
 
 export class IdeExecutionBackend implements ExecutionBackend {
@@ -334,14 +334,39 @@ export class HostExecutionBackend implements ExecutionBackend {
     return this.defaultWorkingDirectory;
   }
 
-  private toResolvedPath(hostPath: string): ResolvedPath {
+  private async toResolvedPath(hostPath: string): Promise<ResolvedPath> {
     const absolutePath = path.resolve(hostPath);
     return {
       uri: pathToFileURL(absolutePath).href,
       displayPath: absolutePath,
       isAbsolute: true,
-      isWithinWorkspace: false,
+      isWithinWorkspace: await this.isWithinWorkspace(absolutePath),
     };
+  }
+
+  private async isWithinWorkspace(hostPath: string): Promise<boolean> {
+    const workspaceDirs = await this.ide.getWorkspaceDirs();
+    for (const workspaceDir of workspaceDirs) {
+      if (!workspaceDir.startsWith("file:")) {
+        continue;
+      }
+
+      try {
+        const root = path.resolve(fileURLToPath(workspaceDir));
+        const relative = path.relative(root, hostPath);
+        if (
+          relative === "" ||
+          (relative !== ".." &&
+            !relative.startsWith(`..${path.sep}`) &&
+            !path.isAbsolute(relative))
+        ) {
+          return true;
+        }
+      } catch {
+        // Ignore malformed/non-local workspace URIs.
+      }
+    }
+    return false;
   }
 }
 
