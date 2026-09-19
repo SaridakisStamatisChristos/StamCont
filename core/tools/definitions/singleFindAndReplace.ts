@@ -42,7 +42,7 @@ WARNINGS:
         filepath: {
           type: "string",
           description:
-            "The path to the file to modify, relative to the root of the workspace",
+            "The path to the file to modify, relative to the workspace root, or an absolute/~/ path in Full Access",
         },
         old_string: {
           type: "string",
@@ -62,7 +62,7 @@ WARNINGS:
     },
   },
   systemMessageDescription: {
-    prefix: `To perform exact string replacements in files, use the ${BuiltInToolNames.SingleFindAndReplace} tool with a filepath (relative to the root of the workspace) and the strings to find and replace.
+    prefix: `To perform exact string replacements in files, use the ${BuiltInToolNames.SingleFindAndReplace} tool with a filepath (relative to the workspace root, or an absolute/~/ path in Full Access) and the strings to find and replace.
 
   For example, you could respond with:`,
     exampleArgs: [
