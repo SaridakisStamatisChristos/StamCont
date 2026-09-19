@@ -2,6 +2,7 @@ import { AgentKernel } from "core/agent/kernel.js";
 import { describe, expect, it, vi } from "vitest";
 
 import type { Tool } from "../tools/types.js";
+
 import {
   adaptCliTool,
   getCliToolCapabilityRequirement,
