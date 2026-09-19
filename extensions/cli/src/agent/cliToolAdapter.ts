@@ -1,7 +1,5 @@
-import type {
-  AgentTool,
-  CapabilityRequirement,
-} from "core/agent/index.js";
+import type { CapabilityRequirement } from "core/agent/capabilities.js";
+import type { AgentTool } from "core/agent/tools.js";
 
 import type { Tool, ToolRunContext } from "../tools/types.js";
 
