@@ -1,0 +1,181 @@
+name: StamCont Baseline
+
+on:
+  push:
+    branches:
+      - main
+      - "stamcont/**"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stamcont-baseline-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: "true"
+  IGNORE_API_KEY_TESTS: "true"
+
+jobs:
+  core:
+    name: Core / packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build local packages
+        uses: ./.github/actions/setup-packages
+
+      - name: Setup core
+        uses: ./.github/actions/setup-component
+        with:
+          component: core
+          include-root: true
+
+      - name: Typecheck and lint core
+        working-directory: core
+        run: |
+          npm run tsc:check
+          npm run lint
+
+      - name: Test core without external provider credentials
+        working-directory: core
+        run: |
+          npm test -- --runInBand
+          npm run vitest
+
+  cli:
+    name: CLI agent runtime
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build local packages
+        uses: ./.github/actions/setup-packages
+
+      - name: Setup core
+        uses: ./.github/actions/setup-component
+        with:
+          component: core
+          include-root: true
+
+      - name: Build core
+        working-directory: core
+        run: npm run build
+
+      - name: Install CLI dependencies
+        working-directory: extensions/cli
+        run: npm ci --include=optional
+
+      - name: Typecheck and lint CLI
+        working-directory: extensions/cli
+        run: npm run lint
+
+      - name: Build CLI
+        working-directory: extensions/cli
+        run: npm run build
+
+      - name: Run CLI unit and smoke tests
+        working-directory: extensions/cli
+        run: |
+          npm test
+          npm run test:smoke
+
+  ide:
+    name: GUI / VS Code
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build local packages
+        uses: ./.github/actions/setup-packages
+
+      - name: Setup core
+        uses: ./.github/actions/setup-component
+        with:
+          component: core
+          include-root: true
+
+      - name: Setup GUI
+        uses: ./.github/actions/setup-component
+        with:
+          component: gui
+          include-packages: false
+
+      - name: Check GUI
+        working-directory: gui
+        run: |
+          npm run tsc:check
+          npm run lint
+          npm test
+
+      - name: Setup VS Code extension
+        uses: ./.github/actions/setup-component
+        with:
+          component: vscode
+          include-packages: false
+
+      - name: Check VS Code extension
+        working-directory: extensions/vscode
+        run: |
+          npm run write-build-timestamp
+          npm run tsc:check
+          npm run lint
+          npm run vitest
+
+  native:
+    name: Binary / Rust sync
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build local packages
+        uses: ./.github/actions/setup-packages
+
+      - name: Setup core
+        uses: ./.github/actions/setup-component
+        with:
+          component: core
+          include-root: true
+
+      - name: Setup binary
+        uses: ./.github/actions/setup-component
+        with:
+          component: binary
+          include-packages: false
+
+      - name: Typecheck and test binary layer
+        working-directory: binary
+        run: |
+          npx tsc --noEmit
+          npm test -- --runInBand
+
+      - name: Check Rust sync crate
+        run: cargo check --locked --manifest-path sync/Cargo.toml
+
+  baseline:
+    name: Baseline gate
+    if: always()
+    runs-on: ubuntu-latest
+    needs:
+      - core
+      - cli
+      - ide
+      - native
+    steps:
+      - name: Require all baseline jobs
+        shell: bash
+        run: |
+          test "${{ needs.core.result }}" = "success"
+          test "${{ needs.cli.result }}" = "success"
+          test "${{ needs.ide.result }}" = "success"
+          test "${{ needs.native.result }}" = "success"
