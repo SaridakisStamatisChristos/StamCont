@@ -6,6 +6,10 @@ import type { PermissionMode } from "../permissions/types.js";
 import type { Tool, ToolRunContext } from "../tools/types.js";
 
 import { adaptCliTool } from "./cliToolAdapter.js";
+import {
+  createCliExecutionBackend,
+  permissionModeToExecutionProfile,
+} from "./cliExecution.js";
 
 export interface CliKernelToolExecution {
   tool: Tool;
@@ -14,20 +18,6 @@ export interface CliKernelToolExecution {
   context?: ToolRunContext;
   mode: PermissionMode;
   sessionId?: string;
-}
-
-export function permissionModeToExecutionProfile(
-  mode: PermissionMode,
-): BuiltInExecutionProfileId {
-  switch (mode) {
-    case "plan":
-      return "plan";
-    case "auto":
-      return "full_access";
-    case "normal":
-    default:
-      return "interactive";
-  }
 }
 
 export class CliAgentKernelBridge {
