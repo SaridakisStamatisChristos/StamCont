@@ -57,6 +57,11 @@ export const runTerminalCommandTool: Tool = {
           description:
             "Whether to wait for the command to complete before returning. Default is true. Set to false to run the command in the background. Set to true to run the command in the foreground and wait to collect the output.",
         },
+        cwd: {
+          type: "string",
+          description:
+            "Optional working directory. In Full Access this may be any directory accessible to the current OS user.",
+        },
       },
     },
   },
@@ -73,7 +78,8 @@ export const runTerminalCommandTool: Tool = {
   systemMessageDescription: {
     prefix: `To run a terminal command, use the ${BuiltInToolNames.RunTerminalCommand} tool
 ${RUN_COMMAND_NOTES}
-You can also optionally include the waitForCompletion argument set to false to run the command in the background.      
+You can also optionally include the waitForCompletion argument set to false to run the command in the background.
+In Full Access, you can pass cwd to execute in any directory accessible to the current OS user.      
 For example, to see the git log, you could respond with:`,
     exampleArgs: [["command", "git log"]],
   },
