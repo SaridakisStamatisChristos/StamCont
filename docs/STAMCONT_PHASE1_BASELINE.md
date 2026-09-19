@@ -40,7 +40,7 @@ The baseline covers:
 4. GUI typechecking, linting and tests
 5. VS Code typechecking, linting and Vitest
 6. binary typechecking and tests
-7. Rust sync crate compilation
+7. packaged native binary integration
 
 Heavy external-service E2E suites and marketplace publishing are not part of this first gate.
 
@@ -53,3 +53,12 @@ Phase 1 is complete when:
 - failures in the imported codebase are documented and either repaired or explicitly quarantined
 - the initial build/test timings are recorded
 - the repository is ready for Phase 2: the shared Agent Kernel boundary
+
+
+## Legacy component classification
+
+The `sync/` Rust crate is retained unchanged for provenance, but it is not part of the Phase 1 required product path.
+
+Static repository tracing found no current TypeScript/JavaScript consumer of `sync.node`, `sync_results`, or the crate's Neon exports. The only live reference is an orphaned `build:rust` script in the VS Code package manifest. The imported crate also contains mutually ambiguous duplicate module layouts (`sync.rs` + `sync/mod.rs`, `utils.rs` + `utils/mod.rs`), so compiling it would measure abandoned historical source rather than the current product.
+
+Decision for Phase 1: preserve the source untouched and exclude it from the canonical gate. Phase 2/cleanup work will decide whether to delete it or port any useful algorithmic ideas into the shared kernel.
