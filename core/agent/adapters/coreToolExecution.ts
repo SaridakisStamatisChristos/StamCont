@@ -54,6 +54,14 @@ export class CoreToolKernelBridge {
     );
   }
 
+  async closeAllSessions(): Promise<number> {
+    const sessionIds = [...this.activeProfiles.keys()];
+    const closed = await Promise.all(
+      sessionIds.map((sessionId) => this.closeSession(sessionId)),
+    );
+    return closed.filter(Boolean).length;
+  }
+
   async closeSession(
     sessionId = "ide",
     profile?: BuiltInExecutionProfileId,

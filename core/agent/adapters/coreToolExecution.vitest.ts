@@ -152,6 +152,37 @@ describe("CoreToolKernelBridge", () => {
     ]);
   });
 
+  it("closes every active IDE chat session during host shutdown", async () => {
+    const closed: string[] = [];
+    const bridge = new CoreToolKernelBridge();
+    bridge.kernel.subscribe((event) => {
+      if (event.type === "session.closed") {
+        closed.push(event.sessionId);
+      }
+    });
+
+    await bridge.execute({
+      tool: tool("read_file", true),
+      sessionId: "chat-a",
+      execute: async () => "a",
+    });
+    await bridge.execute({
+      tool: tool("read_file", true),
+      sessionId: "chat-b",
+      profile: "full_access",
+      execute: async () => "b",
+    });
+
+    await expect(bridge.closeAllSessions()).resolves.toBe(2);
+    expect(closed.sort()).toEqual(
+      [
+        "core:chat-a:interactive",
+        "core:chat-b:full_access",
+      ].sort(),
+    );
+    await expect(bridge.closeAllSessions()).resolves.toBe(0);
+  });
+
   it("keeps different IDE chat sessions isolated", async () => {
     const created: string[] = [];
     const bridge = new CoreToolKernelBridge();

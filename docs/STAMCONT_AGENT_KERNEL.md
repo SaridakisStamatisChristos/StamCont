@@ -83,6 +83,8 @@ The IDE now exposes Chat, Plan, Interactive, and explicit Full Access choices in
 
 The selected execution profile and chat session ID are propagated with Core-side tool calls. Core kernel sessions are isolated by chat session, and switching the profile for a chat closes the previous Core kernel session before the replacement is created.
 
+Chat changes and new-session transitions explicitly close the outgoing Core kernel session. VS Code registers Core disposal with the extension lifecycle so any remaining IDE kernel sessions are closed when the host deactivates.
+
 Interactive retains the existing GUI policy/approval layer. Full Access skips per-command approval for tools that are already active, while explicitly disabled/excluded tools remain blocked.
 
 ## Capability boundary
@@ -120,7 +122,6 @@ const result = await kernel.executeTool(
 The major remaining product-facing work is:
 
 - decide and implement path/process/network enforcement semantics for workspace-restricted profiles;
-- continue promoting the streamed model loop toward a provider-neutral `AgentLoop` contract;
-- add remaining lifecycle cleanup hooks for IDE shutdown, chat close, and explicit session reset.
+- continue promoting the streamed model loop toward a provider-neutral `AgentLoop` contract.
 
 The separate Orchestrator repository remains a later higher-level planning/DAG/durability layer and is not a dependency of the kernel.

@@ -19,6 +19,7 @@ import { fetchModels } from "./llm/fetchModels";
 import Ollama from "./llm/llms/Ollama";
 import { EditAggregator } from "./nextEdit/context/aggregateEdits";
 import { createNewPromptFileV2 } from "./promptFiles/createNewPromptFile";
+import { coreToolKernelBridge } from "./agent/adapters/coreToolExecution";
 import { callTool } from "./tools/callTool";
 import { ChatDescriber } from "./util/chatDescriber";
 import { compactConversation } from "./util/conversationCompaction";
@@ -107,6 +108,10 @@ export class Core {
   }
   private abortById(messageId: string) {
     this.messageAbortControllers.get(messageId)?.abort();
+  }
+
+  async dispose(): Promise<void> {
+    await coreToolKernelBridge.closeAllSessions();
   }
 
   invoke<T extends keyof ToCoreProtocol>(
@@ -1044,6 +1049,10 @@ export class Core {
     on("auth/getAuthUrl", async (_msg) => {
       return { url: "" };
     });
+
+    on("agent/closeSession", async ({ data: { sessionId } }) => ({
+      closed: await coreToolKernelBridge.closeSession(sessionId),
+    }));
 
     on(
       "tools/call",

@@ -20,6 +20,26 @@ const MAX_TITLE_LENGTH = 100;
 // Async session functions live in thunks (because of IDE messaging mostly)
 // see sessionSlice for sync redux session functions
 
+export async function closeCoreAgentSession(
+  ideMessenger: IIdeMessenger,
+  sessionId: string,
+): Promise<boolean> {
+  if (!sessionId.trim()) {
+    return false;
+  }
+
+  const result = await ideMessenger.request("agent/closeSession", {
+    sessionId,
+  });
+  if (result.status === "error") {
+    console.warn(
+      `Failed to close Core agent session ${sessionId}: ${result.error}`,
+    );
+    return false;
+  }
+  return result.content.closed;
+}
+
 export async function getSession(
   ideMessenger: IIdeMessenger,
   id: string,
@@ -93,7 +113,11 @@ export const loadSession = createAsyncThunk<
   ThunkApiType
 >(
   "session/load",
-  async ({ sessionId, saveCurrentSession: save }, { extra, dispatch }) => {
+  async (
+    { sessionId, saveCurrentSession: save },
+    { extra, dispatch, getState },
+  ) => {
+    const currentSessionId = getState().session.id;
     if (save) {
       // save the session in the background
       void dispatch(
@@ -104,6 +128,9 @@ export const loadSession = createAsyncThunk<
       );
     }
     const session = await getSession(extra.ideMessenger, sessionId);
+    if (currentSessionId !== session.sessionId) {
+      await closeCoreAgentSession(extra.ideMessenger, currentSessionId);
+    }
     dispatch(newSession(session));
 
     // Restore selected chat model from session, if present
@@ -140,6 +167,7 @@ export const selectChatModelForProfile = createAsyncThunk<
 export const loadLastSession = createAsyncThunk<void, void, ThunkApiType>(
   "session/loadLast",
   async (_, { extra, dispatch, getState }) => {
+    const currentSessionId = getState().session.id;
     let lastSessionId = getState().session.lastSessionId;
 
     // const lastSessionResult = await extra.ideMessenger.request("history/list", {
@@ -150,6 +178,7 @@ export const loadLastSession = createAsyncThunk<void, void, ThunkApiType>(
     // }
 
     if (!lastSessionId) {
+      await closeCoreAgentSession(extra.ideMessenger, currentSessionId);
       dispatch(newSession());
       return;
     }
@@ -161,6 +190,9 @@ export const loadLastSession = createAsyncThunk<void, void, ThunkApiType>(
       // retry again after 1 sec
       await new Promise((resolve) => setTimeout(resolve, 1000));
       session = await getSession(extra.ideMessenger, lastSessionId);
+    }
+    if (currentSessionId !== session.sessionId) {
+      await closeCoreAgentSession(extra.ideMessenger, currentSessionId);
     }
     dispatch(newSession(session));
     if (session.chatModelTitle) {
@@ -196,6 +228,7 @@ export const saveCurrentSession = createAsyncThunk<
     }
 
     if (openNewSession) {
+      await closeCoreAgentSession(extra.ideMessenger, session.id);
       dispatch(newSession());
     }
 

@@ -301,6 +301,10 @@ export type ToCoreFromIdeOrWebviewProtocol = {
   addAutocompleteModel: [{ model: ModelDescription }, void];
 
   "auth/getAuthUrl": [{ useOnboarding: boolean }, { url: string }];
+  "agent/closeSession": [
+    { sessionId: string },
+    { closed: boolean },
+  ];
   "tools/call": [
     {
       toolCall: ToolCall;
