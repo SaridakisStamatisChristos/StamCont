@@ -87,11 +87,29 @@ Chat changes and new-session transitions explicitly close the outgoing Core kern
 
 Interactive retains the existing GUI policy/approval layer. Full Access skips per-command approval for tools that are already active, while explicitly disabled/excluded tools remain blocked.
 
-## Capability boundary
+### Host Executor
 
-The capability model distinguishes workspace-scoped and unrestricted filesystem/shell access. At this phase, the kernel enforces the declared capability requirement at the dispatcher boundary.
+Full Access now selects a concrete `HostExecutionBackend` for Core execution instead of relying only on capability labels. The backend uses the authority of the OS user running StamCont and does not add an artificial workspace allowlist.
 
-The labels **workspace** and **unrestricted** are not yet an OS sandbox. Path-aware filesystem confinement and process-level shell/network sandboxing are separate enforcement work and must not be assumed from the profile names alone.
+The current host-backed surface includes:
+
+- reading full files and line ranges by absolute, `file://`, `~`, or workspace-relative path;
+- creating files and directories outside the opened workspace;
+- listing arbitrary OS-user-accessible directories;
+- editing existing outside-workspace files through the existing VS Code apply/diff flow;
+- executing shell commands with an explicit arbitrary `cwd`;
+- foreground and detached/background process creation;
+- binding spawned processes to the owning kernel session's cancellation signal.
+
+Relative paths continue to resolve from the first local workspace when one exists, preserving the normal coding workflow. Absolute paths provide the whole-machine path needed for cross-project Full Access work.
+
+Plan and Interactive deliberately continue to use `IdeExecutionBackend`; this change does not widen their filesystem or shell boundary.
+
+## Capability and enforcement boundary
+
+The capability model still distinguishes workspace-scoped and unrestricted filesystem/shell access at the dispatcher boundary. For **Full Access**, those unrestricted capabilities now select real host filesystem/shell execution for the path-aware Core tools described above.
+
+For **Plan** and **Interactive**, the existing `workspace` capability labels are still not an OS sandbox. Real path/process/network containment remains the Sandbox Executor work and must not be claimed until it is implemented.
 
 ## Current API
 
@@ -121,7 +139,8 @@ const result = await kernel.executeTool(
 
 The major remaining product-facing work is:
 
-- decide and implement path/process/network enforcement semantics for workspace-restricted profiles;
-- continue promoting the streamed model loop toward a provider-neutral `AgentLoop` contract.
+- finish hardening/verification of the Host Executor across supported platforms and any remaining path-sensitive tool seams;
+- implement a real Sandbox Executor for Interactive, including path canonicalization, symlink/junction escape prevention, process inheritance, environment filtering, network policy, and background-process ownership;
+- continue promoting the streamed model loop toward a provider-neutral `AgentLoop` contract after the execution backends are stable.
 
 The separate Orchestrator repository remains a later higher-level planning/DAG/durability layer and is not a dependency of the kernel.
