@@ -163,15 +163,21 @@ jobs:
         working-directory: binary
         run: npx tsc --noEmit
 
-      - name: Stage maintained Node 20 packager migration
+      - name: Verify committed Node 20 packager state
+        working-directory: binary
         shell: bash
         run: |
-          cd binary
-          npm uninstall --save-dev pkg
-          npm install --save-dev --save-exact @yao-pkg/pkg@6.14.0
           node <<'NODE'
           const fs = require("fs");
           const path = require("path");
+
+          const rootPackage = require("./package.json");
+          if (rootPackage.devDependencies?.["@yao-pkg/pkg"] !== "6.14.0") {
+            throw new Error("@yao-pkg/pkg must be pinned to 6.14.0");
+          }
+          if (rootPackage.devDependencies?.pkg) {
+            throw new Error("legacy pkg dependency must remain removed");
+          }
 
           const root = path.join(process.cwd(), "pkgJson");
           for (const dir of fs.readdirSync(root)) {
@@ -179,10 +185,10 @@ jobs:
             if (!fs.existsSync(packagePath)) continue;
 
             const pkg = JSON.parse(fs.readFileSync(packagePath, "utf8"));
-            pkg.pkg.targets = pkg.pkg.targets.map((target) =>
-              target.replace(/^node18-/, "node20-"),
-            );
-            fs.writeFileSync(packagePath, JSON.stringify(pkg, null, 2) + "\n");
+            const targets = pkg.pkg?.targets ?? [];
+            if (targets.length === 0 || targets.some((target) => !target.startsWith("node20-"))) {
+              throw new Error(`${packagePath} must use only node20-* pkg targets`);
+            }
           }
           NODE
 
@@ -193,18 +199,6 @@ jobs:
       - name: Test packaged binary
         working-directory: binary
         run: npm test -- --runInBand
-
-      - name: Export validated binary migration
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: binary-node20-migration
-          if-no-files-found: error
-          retention-days: 1
-          path: |
-            binary/package.json
-            binary/package-lock.json
-            binary/pkgJson/*/package.json
 
   baseline:
     name: Baseline gate
