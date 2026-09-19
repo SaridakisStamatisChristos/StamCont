@@ -155,7 +155,7 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
                 }
 
                 // Try graceful termination first
-                childProc.kill("SIGTERM");
+                terminateProcessTree(childProc, "SIGTERM");
 
                 // Force kill after 5 seconds if still running
                 sigkillTimeoutId = setTimeout(() => {
