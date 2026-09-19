@@ -229,7 +229,11 @@ export async function handleNormalAutoCompaction(
 
   if (wasCompacted) {
     // Use the service to update history if available, otherwise use local copy
-    if (chatHistorySvc && typeof chatHistorySvc.setHistory === "function") {
+    if (
+      useChatHistoryService &&
+      chatHistorySvc &&
+      typeof chatHistorySvc.setHistory === "function"
+    ) {
       chatHistorySvc.setHistory(updatedChatHistory);
       return {
         chatHistory: chatHistorySvc.getHistory(),
