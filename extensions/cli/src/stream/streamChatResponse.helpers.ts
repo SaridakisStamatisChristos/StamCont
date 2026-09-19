@@ -27,7 +27,10 @@ import {
 import { PreprocessedToolCall, ToolCall } from "../tools/types.js";
 import { logger } from "../util/logger.js";
 
-import { StreamCallbacks } from "./streamChatResponse.types.js";
+import {
+  StreamCallbacks,
+  StreamExecutionContext,
+} from "./streamChatResponse.types.js";
 
 export interface ToolResultWithStatus extends ChatCompletionToolMessageParam {
   status: ToolStatus;
@@ -470,6 +473,7 @@ export async function executeStreamedToolCalls(
   preprocessedCalls: PreprocessedToolCall[],
   callbacks?: StreamCallbacks,
   isHeadless?: boolean,
+  executionContext?: StreamExecutionContext,
 ): Promise<{
   hasRejection: boolean;
   chatHistoryEntries: ToolResultWithStatus[];
@@ -492,6 +496,25 @@ export async function executeStreamedToolCalls(
 
   let hasRejection = false;
 
+  const servicePermissionState = executionContext?.permissions
+    ? undefined
+    : await serviceContainer.get<ToolPermissionServiceState>(
+        SERVICE_NAMES.TOOL_PERMISSIONS,
+      );
+  const effectivePermissions =
+    executionContext?.permissions ?? servicePermissionState!.permissions;
+  const effectivePermissionMode =
+    executionContext?.permissionMode ??
+    servicePermissionState?.currentMode ??
+    "normal";
+  const useChatHistoryService =
+    executionContext?.useChatHistoryService !== false;
+  const kernelSessionId =
+    executionContext?.sessionId ??
+    (useChatHistoryService
+      ? services.chatHistory?.getSessionId?.() || undefined
+      : undefined);
+
   // Permission phase (sequential)
   for (const { index, call } of indexedCalls) {
     // Do not cancel subsequent tools after a rejection; handle each independently
@@ -505,13 +528,9 @@ export async function executeStreamedToolCalls(
       // Notify tool start before permission check to display in UI fallbacks
       callbacks?.onToolStart?.(call.name, call.arguments);
 
-      // Check tool permissions using helper
-      const permissionState =
-        await serviceContainer.get<ToolPermissionServiceState>(
-          SERVICE_NAMES.TOOL_PERMISSIONS,
-        );
+      // Check tool permissions using invocation-scoped or service permissions
       const permissionResult = await checkToolPermissionApproval(
-        permissionState.permissions,
+        effectivePermissions,
         call,
         callbacks,
         isHeadless,
@@ -538,22 +557,26 @@ export async function executeStreamedToolCalls(
           "canceled",
         );
         // Immediate service update for UI feedback
-        try {
-          services.chatHistory.addToolResult(
-            call.id,
-            String(deniedEntry.content),
-            "canceled",
-          );
-        } catch {}
+        if (useChatHistoryService) {
+          try {
+            services.chatHistory.addToolResult(
+              call.id,
+              String(deniedEntry.content),
+              "canceled",
+            );
+          } catch {}
+        }
         hasRejection = true;
         // Remaining items will be auto-cancelled in subsequent iterations
         continue;
       }
 
       // Immediately mark as calling for instant UI feedback
-      try {
-        services.chatHistory.updateToolStatus(call.id, "calling");
-      } catch {}
+      if (useChatHistoryService) {
+        try {
+          services.chatHistory.updateToolStatus(call.id, "calling");
+        } catch {}
+      }
 
       // Start execution immediately for approved calls
       execPromises.push(
@@ -566,9 +589,8 @@ export async function executeStreamedToolCalls(
 
             const toolResult = await executeToolCall(call, {
               parallelToolCallCount,
-              permissionMode: permissionState.currentMode,
-              sessionId:
-                services.chatHistory?.getSessionId?.() || undefined,
+              permissionMode: effectivePermissionMode,
+              sessionId: kernelSessionId,
             });
             const entry: ToolResultWithStatus = {
               role: "tool",
@@ -579,13 +601,15 @@ export async function executeStreamedToolCalls(
             entriesByIndex.set(index, entry);
             callbacks?.onToolResult?.(toolResult, call.name, "done");
             // Immediate service update for UI feedback
-            try {
-              services.chatHistory.addToolResult(
-                call.id,
-                String(toolResult),
-                "done",
-              );
-            } catch {}
+            if (useChatHistoryService) {
+              try {
+                services.chatHistory.addToolResult(
+                  call.id,
+                  String(toolResult),
+                  "done",
+                );
+              } catch {}
+            }
           } catch (error) {
             const errorMessage = `Error executing tool ${call.name}: ${
               error instanceof Error ? error.message : String(error)
@@ -602,13 +626,15 @@ export async function executeStreamedToolCalls(
             });
             callbacks?.onToolError?.(errorMessage, call.name);
             // Immediate service update for UI feedback
-            try {
-              services.chatHistory.addToolResult(
-                call.id,
-                errorMessage as string,
-                "errored",
-              );
-            } catch {}
+            if (useChatHistoryService) {
+              try {
+                services.chatHistory.addToolResult(
+                  call.id,
+                  errorMessage as string,
+                  "errored",
+                );
+              } catch {}
+            }
           }
         })(),
       );
@@ -628,13 +654,15 @@ export async function executeStreamedToolCalls(
       });
       callbacks?.onToolError?.(errorMessage, call.name);
       // Treat permission errors like execution errors but do not stop the batch
-      try {
-        services.chatHistory.addToolResult(
-          call.id,
-          errorMessage as string,
-          "errored",
-        );
-      } catch {}
+      if (useChatHistoryService) {
+        try {
+          services.chatHistory.addToolResult(
+            call.id,
+            errorMessage as string,
+            "errored",
+          );
+        } catch {}
+      }
     }
   }
 
