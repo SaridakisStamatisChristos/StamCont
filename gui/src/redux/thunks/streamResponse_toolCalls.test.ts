@@ -406,6 +406,8 @@ describe("streamResponseThunk - tool calls", () => {
     });
 
     expect(requestSpy).toHaveBeenCalledWith("tools/call", {
+      executionProfile: "interactive",
+      sessionId: "session-123",
       toolCall: {
         id: "tool-call-1",
         type: "function",
@@ -1741,6 +1743,8 @@ describe("streamResponseThunk - tool calls", () => {
 
     // Verify IDE messenger calls for tool execution
     expect(requestSpy).toHaveBeenCalledWith("tools/call", {
+      executionProfile: "interactive",
+      sessionId: "session-123",
       toolCall: {
         id: "tool-approval-flow-1",
         type: "function",

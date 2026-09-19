@@ -283,6 +283,8 @@ export interface Session {
   history: ChatHistoryItem[];
   /** Optional: per-session UI mode (chat/agent/plan/background) */
   mode?: MessageModes;
+  /** Optional: StamCont Agent Kernel execution profile for this session */
+  executionProfile?: ExecutionProfileId;
   /** Optional: title of the selected chat model for this session */
   chatModelTitle?: string | null;
   /** Optional: cumulative usage and cost for all LLM API calls in this session */
@@ -491,6 +493,8 @@ export interface PromptLog {
   prompt: string;
   completion: string;
 }
+
+export type ExecutionProfileId = "plan" | "interactive" | "full_access";
 
 export type MessageModes = "chat" | "agent" | "plan" | "background";
 

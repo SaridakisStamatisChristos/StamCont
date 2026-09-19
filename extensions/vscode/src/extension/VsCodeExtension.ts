@@ -279,6 +279,11 @@ export class VsCodeExtension {
     );
 
     this.core = new Core(inProcessMessenger, this.ide);
+    context.subscriptions.push({
+      dispose: () => {
+        void this.core.dispose();
+      },
+    });
     this.configHandler = this.core.configHandler;
     resolveConfigHandler?.(this.configHandler);
 

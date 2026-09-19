@@ -742,6 +742,8 @@ describe("streamResponseThunk", () => {
     });
 
     expect(requestSpy).toHaveBeenCalledWith("tools/call", {
+      executionProfile: "interactive",
+      sessionId: "session-123",
       toolCall: {
         id: "tool-call-1",
         type: "function",

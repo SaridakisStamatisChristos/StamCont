@@ -4,22 +4,58 @@ import {
   ExclamationTriangleIcon,
   InformationCircleIcon,
 } from "@heroicons/react/24/outline";
-import { MessageModes } from "core";
+import type { ExecutionProfileId, MessageModes } from "core";
 import { isRecommendedAgentModel } from "core/llm/toolSupport";
 import { useCallback, useEffect, useMemo } from "react";
 import { useAppDispatch, useAppSelector } from "../../redux/hooks";
 import { selectSelectedChatModel } from "../../redux/slices/configSlice";
-import { setMode } from "../../redux/slices/sessionSlice";
+import {
+  setExecutionProfile,
+  setMode,
+} from "../../redux/slices/sessionSlice";
 import { getFontSize, getMetaKeyLabel } from "../../util";
 import { ToolTip } from "../gui/Tooltip";
 import { useMainEditor } from "../mainInput/TipTapEditor";
 import { Listbox, ListboxButton, ListboxOption, ListboxOptions } from "../ui";
 import { ModeIcon } from "./ModeIcon";
 
+type ModeSelection = "chat" | ExecutionProfileId;
+
+const MODE_SELECTIONS: readonly ModeSelection[] = [
+  "chat",
+  "plan",
+  "interactive",
+  "full_access",
+];
+
+const MODE_LABELS: Record<ModeSelection, string> = {
+  chat: "Chat",
+  plan: "Plan",
+  interactive: "Interactive",
+  full_access: "Full Access",
+};
+
+export function getModeSelection(
+  mode: MessageModes,
+  executionProfile: ExecutionProfileId,
+): ModeSelection {
+  if (mode === "chat") {
+    return "chat";
+  }
+  if (mode === "plan") {
+    return "plan";
+  }
+  return executionProfile === "full_access" ? "full_access" : "interactive";
+}
+
 export function ModeSelect() {
   const dispatch = useAppDispatch();
   const mode = useAppSelector((store) => store.session.mode);
+  const executionProfile = useAppSelector(
+    (store) => store.session.executionProfile,
+  );
   const selectedModel = useAppSelector(selectSelectedChatModel);
+  const selection = getModeSelection(mode, executionProfile);
 
   const isGoodAtAgentMode = useMemo(() => {
     if (!selectedModel) {
@@ -33,38 +69,41 @@ export function ModeSelect() {
     return getMetaKeyLabel();
   }, []);
 
-  const cycleMode = useCallback(() => {
-    if (mode === "chat") {
-      dispatch(setMode("plan"));
-    } else if (mode === "plan") {
-      dispatch(setMode("agent"));
-    } else {
-      dispatch(setMode("chat"));
-    }
-    // Only focus main editor if another one doesn't already have focus
-    if (!document.activeElement?.classList?.contains("ProseMirror")) {
-      mainEditor?.commands.focus();
-    }
-  }, [mode, mainEditor]);
-
   const selectMode = useCallback(
-    (newMode: MessageModes) => {
-      if (newMode === mode) {
+    (newSelection: ModeSelection) => {
+      if (newSelection === selection) {
         return;
       }
 
-      dispatch(setMode(newMode));
+      if (newSelection === "chat") {
+        dispatch(setMode("chat"));
+      } else if (newSelection === "plan") {
+        dispatch(setExecutionProfile("plan"));
+      } else {
+        dispatch(setMode("agent"));
+        dispatch(setExecutionProfile(newSelection));
+      }
 
       mainEditor?.commands.focus();
     },
-    [mode, mainEditor],
+    [dispatch, mainEditor, selection],
   );
+
+  const cycleMode = useCallback(() => {
+    const currentIndex = MODE_SELECTIONS.indexOf(selection);
+    const nextIndex = (currentIndex + 1) % MODE_SELECTIONS.length;
+    selectMode(MODE_SELECTIONS[nextIndex]);
+
+    if (!document.activeElement?.classList?.contains("ProseMirror")) {
+      mainEditor?.commands.focus();
+    }
+  }, [mainEditor, selectMode, selection]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "." && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
-        void cycleMode();
+        cycleMode();
       }
     };
 
@@ -72,41 +111,37 @@ export function ModeSelect() {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [cycleMode]);
 
-  const notGreatAtAgent = (mode: string) => (
-    <>
-      <ToolTip
-        style={{
-          zIndex: 200001, // in front of listbox
-        }}
-        className="flex items-center gap-1"
-        content={`${mode} might not work well with this model.`}
-      >
-        <ExclamationTriangleIcon className="text-warning h-2.5 w-2.5" />
-      </ToolTip>
-    </>
+  const notGreatAtAgent = (label: string) => (
+    <ToolTip
+      style={{
+        zIndex: 200001,
+      }}
+      className="flex items-center gap-1"
+      content={`${label} might not work well with this model.`}
+    >
+      <ExclamationTriangleIcon className="text-warning h-2.5 w-2.5" />
+    </ToolTip>
   );
 
   return (
-    <Listbox value={mode} onChange={selectMode}>
+    <Listbox value={selection} onChange={selectMode}>
       <div className="relative">
         <ListboxButton
           data-testid="mode-select-button"
           className="xs:px-2 text-description bg-lightgray/20 gap-1 rounded-full border-none px-1.5 py-0.5 transition-colors duration-200 hover:brightness-110"
         >
-          <ModeIcon mode={mode} />
-          <span className="hidden sm:block">
-            {mode === "chat" ? "Chat" : mode === "agent" ? "Agent" : "Plan"}
-          </span>
+          <ModeIcon mode={selection} />
+          <span className="hidden sm:block">{MODE_LABELS[selection]}</span>
           <ChevronDownIcon
             className="h-2 w-2 flex-shrink-0"
             aria-hidden="true"
           />
         </ListboxButton>
-        <ListboxOptions className="min-w-32 max-w-48">
+        <ListboxOptions className="min-w-40 max-w-64">
           <ListboxOption value="chat">
             <div className="flex flex-row items-center gap-1.5">
               <ModeIcon mode="chat" />
-              <span className="">Chat</span>
+              <span>Chat</span>
               <ToolTip
                 style={{
                   zIndex: 200001,
@@ -124,43 +159,71 @@ export function ModeSelect() {
                 {getMetaKeyLabel()}L
               </span>
             </div>
-            {mode === "chat" && <CheckIcon className="ml-auto h-3 w-3" />}
+            {selection === "chat" && (
+              <CheckIcon className="ml-auto h-3 w-3" />
+            )}
           </ListboxOption>
-          <ListboxOption value="plan" className={"gap-1"}>
+
+          <ListboxOption value="plan" className="gap-1">
             <div className="flex flex-row items-center gap-1.5">
               <ModeIcon mode="plan" />
-              <span className="">Plan</span>
+              <span>Plan</span>
               <ToolTip
                 style={{
                   zIndex: 200001,
                 }}
-                content="Read-only/MCP tools available"
+                content="Read-only workspace and MCP tools; filesystem writes are blocked"
               >
                 <InformationCircleIcon className="h-2.5 w-2.5 flex-shrink-0" />
               </ToolTip>
             </div>
             {!isGoodAtAgentMode && notGreatAtAgent("Plan")}
             <CheckIcon
-              className={`ml-auto h-3 w-3 ${mode === "plan" ? "" : "opacity-0"}`}
+              className={`ml-auto h-3 w-3 ${
+                selection === "plan" ? "" : "opacity-0"
+              }`}
             />
           </ListboxOption>
 
-          <ListboxOption value="agent" className={"gap-1"}>
+          <ListboxOption value="interactive" className="gap-1">
             <div className="flex flex-row items-center gap-1.5">
-              <ModeIcon mode="agent" />
-              <span className="">Agent</span>
+              <ModeIcon mode="interactive" />
+              <span>Interactive</span>
               <ToolTip
                 style={{
                   zIndex: 200001,
                 }}
-                content="All tools available"
+                content="Workspace coding tools with policy-driven approvals"
               >
                 <InformationCircleIcon className="h-2.5 w-2.5 flex-shrink-0" />
               </ToolTip>
             </div>
-            {!isGoodAtAgentMode && notGreatAtAgent("Agent")}
+            {!isGoodAtAgentMode && notGreatAtAgent("Interactive")}
             <CheckIcon
-              className={`ml-auto h-3 w-3 ${mode === "agent" ? "" : "opacity-0"}`}
+              className={`ml-auto h-3 w-3 ${
+                selection === "interactive" ? "" : "opacity-0"
+              }`}
+            />
+          </ListboxOption>
+
+          <ListboxOption value="full_access" className="gap-1">
+            <div className="flex flex-row items-center gap-1.5">
+              <ModeIcon mode="full_access" />
+              <span>Full Access</span>
+              <ToolTip
+                style={{
+                  zIndex: 200001,
+                }}
+                content="Unrestricted filesystem, shell, network and process execution with no per-command approval"
+              >
+                <ExclamationTriangleIcon className="text-warning h-2.5 w-2.5 flex-shrink-0" />
+              </ToolTip>
+            </div>
+            {!isGoodAtAgentMode && notGreatAtAgent("Full Access")}
+            <CheckIcon
+              className={`ml-auto h-3 w-3 ${
+                selection === "full_access" ? "" : "opacity-0"
+              }`}
             />
           </ListboxOption>
 
