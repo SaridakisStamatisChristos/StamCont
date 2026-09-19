@@ -38,6 +38,7 @@ import {
   CompleteOnboardingPayload,
   ContextItemId,
   ContextItemWithId,
+  ExecutionProfileId,
   IdeSettings,
   ModelDescription,
   Position,
@@ -1044,8 +1045,10 @@ export class Core {
       return { url: "" };
     });
 
-    on("tools/call", async ({ data: { toolCall } }) =>
-      this.handleToolCall(toolCall),
+    on(
+      "tools/call",
+      async ({ data: { toolCall, executionProfile, sessionId } }) =>
+        this.handleToolCall(toolCall, executionProfile, sessionId),
     );
 
     on(
@@ -1147,7 +1150,11 @@ export class Core {
     });
   }
 
-  private async handleToolCall(toolCall: ToolCall) {
+  private async handleToolCall(
+    toolCall: ToolCall,
+    executionProfile?: ExecutionProfileId,
+    sessionId?: string,
+  ) {
     const { config } = await this.configHandler.loadConfig();
     if (!config) {
       throw new Error("Config not loaded");
@@ -1173,17 +1180,25 @@ export class Core {
       this.messenger.send("toolCallPartialOutput", params);
     };
 
-    const result = await callTool(tool, toolCall, {
-      config,
-      ide: this.ide,
-      llm: config.selectedModelByRole.chat,
-      fetch: (url, init) =>
-        fetchwithRequestOptions(url, init, config.requestOptions),
+    const result = await callTool(
       tool,
-      toolCallId: toolCall.id,
-      onPartialOutput,
-      codeBaseIndexer: this.codeBaseIndexer,
-    });
+      toolCall,
+      {
+        config,
+        ide: this.ide,
+        llm: config.selectedModelByRole.chat,
+        fetch: (url, init) =>
+          fetchwithRequestOptions(url, init, config.requestOptions),
+        tool,
+        toolCallId: toolCall.id,
+        onPartialOutput,
+        codeBaseIndexer: this.codeBaseIndexer,
+      },
+      {
+        profile: executionProfile,
+        sessionId,
+      },
+    );
 
     return result;
   }

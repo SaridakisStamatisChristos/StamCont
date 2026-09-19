@@ -68,6 +68,7 @@ describe("sessionSlice streamUpdate", () => {
     streamAborter: new AbortController(),
     symbols: {},
     mode: "chat" as const,
+    executionProfile: "interactive" as const,
     isInEdit: false,
     codeBlockApplyStates: {
       states: [],

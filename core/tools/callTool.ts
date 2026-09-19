@@ -1,5 +1,12 @@
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
-import { ContextItem, McpUiState, Tool, ToolCall, ToolExtras } from "..";
+import {
+  ContextItem,
+  type ExecutionProfileId,
+  McpUiState,
+  Tool,
+  ToolCall,
+  ToolExtras,
+} from "..";
 import { coreToolKernelBridge } from "../agent/adapters/coreToolExecution";
 import { MCPManagerSingleton } from "../context/mcp/MCPManagerSingleton";
 import { ContinueError, ContinueErrorReason } from "../util/errors";
@@ -230,6 +237,11 @@ export async function callBuiltInTool(
   }
 }
 
+export interface CoreToolExecutionContext {
+  profile?: ExecutionProfileId;
+  sessionId?: string;
+}
+
 // Handles calls for core/non-client tools
 // Returns an error context item if the tool call fails
 // Note: Edit tool is handled on client
@@ -237,6 +249,7 @@ export async function callTool(
   tool: Tool,
   toolCall: ToolCall,
   extras: ToolExtras,
+  executionContext: CoreToolExecutionContext = {},
 ): Promise<{
   contextItems: ContextItem[];
   errorMessage: string | undefined;
@@ -251,6 +264,8 @@ export async function callTool(
         mcpUiState?: McpUiState;
       }>({
         tool,
+        profile: executionContext.profile,
+        sessionId: executionContext.sessionId,
         execute: async () =>
           tool.uri
             ? callToolFromUri(tool.uri, args, extras)

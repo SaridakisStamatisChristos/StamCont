@@ -26,6 +26,7 @@ import {
   DiffLine,
   DocsIndexingDetails,
   ExperimentalModelRoles,
+  ExecutionProfileId,
   FileSymbolMap,
   IdeSettings,
   LLMFullCompletionOptions,
@@ -301,7 +302,11 @@ export type ToCoreFromIdeOrWebviewProtocol = {
 
   "auth/getAuthUrl": [{ useOnboarding: boolean }, { url: string }];
   "tools/call": [
-    { toolCall: ToolCall },
+    {
+      toolCall: ToolCall;
+      executionProfile?: ExecutionProfileId;
+      sessionId?: string;
+    },
     {
       contextItems: ContextItem[];
       errorMessage?: string;

@@ -253,6 +253,7 @@ export const saveCurrentSession = createAsyncThunk<
       workspaceDirectory: window.workspacePaths?.[0] || "",
       history: session.history,
       mode: session.mode,
+      executionProfile: session.executionProfile,
       chatModelTitle: selectedChatModel?.title ?? null,
     };
 

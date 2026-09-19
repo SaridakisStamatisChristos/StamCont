@@ -18,6 +18,10 @@ export class CoreToolKernelBridge {
   readonly kernel: AgentKernel;
 
   private readonly sessions = new Map<string, Promise<AgentSession>>();
+  private readonly activeProfiles = new Map<
+    string,
+    BuiltInExecutionProfileId
+  >();
 
   constructor(kernel: AgentKernel = new AgentKernel()) {
     this.kernel = kernel;
@@ -52,25 +56,42 @@ export class CoreToolKernelBridge {
 
   async closeSession(
     sessionId = "ide",
-    profile: BuiltInExecutionProfileId = "interactive",
+    profile?: BuiltInExecutionProfileId,
   ): Promise<boolean> {
-    const key = this.sessionKey(sessionId, profile);
+    const resolvedProfile = profile ?? this.activeProfiles.get(sessionId);
+    if (!resolvedProfile) {
+      return false;
+    }
+
+    const key = this.sessionKey(sessionId, resolvedProfile);
     const pending = this.sessions.get(key);
     if (!pending) {
+      if (this.activeProfiles.get(sessionId) === resolvedProfile) {
+        this.activeProfiles.delete(sessionId);
+      }
       return false;
     }
 
     this.sessions.delete(key);
+    if (this.activeProfiles.get(sessionId) === resolvedProfile) {
+      this.activeProfiles.delete(sessionId);
+    }
     return this.kernel.closeSession(await pending);
   }
 
-  private getSession(
+  private async getSession(
     sessionId: string,
     profile: BuiltInExecutionProfileId,
   ): Promise<AgentSession> {
+    const activeProfile = this.activeProfiles.get(sessionId);
+    if (activeProfile && activeProfile !== profile) {
+      await this.closeSession(sessionId, activeProfile);
+    }
+
     const key = this.sessionKey(sessionId, profile);
     const existing = this.sessions.get(key);
     if (existing) {
+      this.activeProfiles.set(sessionId, profile);
       return existing;
     }
 
@@ -82,6 +103,7 @@ export class CoreToolKernelBridge {
       },
     });
     this.sessions.set(key, created);
+    this.activeProfiles.set(sessionId, profile);
     return created;
   }
 
