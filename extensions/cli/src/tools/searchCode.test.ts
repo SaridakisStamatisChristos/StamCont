@@ -1,95 +1,78 @@
-import * as nodeUtil from "util";
+import {
+  mkdtemp,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
-import { vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
-const execMock: any = vi.fn();
-(execMock as any)[(nodeUtil as any).promisify.custom] = (cmd: any) =>
-  new Promise((resolve, reject) => {
-    execMock(cmd, (err: any, stdout: any, stderr: any) => {
-      if (err) reject(err);
-      else resolve({ stdout, stderr });
-    });
-  });
+import { searchCodeTool } from "./searchCode.js";
 
-vi.mock("child_process", () => ({ exec: execMock }));
+const tempRoots: string[] = [];
 
-// Since we want to test just the interface and not the internals,
-// let's create a simplified version of the run function to test the truncation logic
+async function tempDir(prefix: string): Promise<string> {
+  const dir = await mkdtemp(path.join(os.tmpdir(), prefix));
+  tempRoots.push(dir);
+  return dir;
+}
+
+afterEach(async () => {
+  await Promise.all(
+    tempRoots.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
+  );
+});
+
 describe("searchCodeTool", () => {
-  // We'll test the functionality without mocking the dependencies
-  // Instead, we'll focus on the core truncation logic by directly checking
-  // if truncation happens with large outputs
-
-  it("should include truncation message when output exceeds limit", () => {
-    // Create a large sample output (more than 100 lines)
-    const largeOutput = Array.from(
-      { length: 150 },
-      (_, i) => `file${i}.ts:${i}:const foo = 'bar';`,
-    ).join("\n");
-
-    // Check if the truncation logic is applied by the function
-    const truncatedOutput = `Search results for pattern "foo":\n\n${largeOutput.split("\n").slice(0, 100).join("\n")}\n\n[Results truncated: showing 100 of 150 matches]`;
-
-    // Verify the truncation message is included and only 100 lines are shown
-    const lines = truncatedOutput.split("\n");
-    const nonEmptyLines = lines.filter((line) => line.trim() !== "");
-
-    // Count the content lines (excluding header and truncation message)
-    const contentLines = nonEmptyLines.slice(1, -1);
-
-    // Check that we have exactly 100 content lines
-    expect(contentLines.length).toBe(100);
-
-    // Check that the truncation message is present
-    expect(truncatedOutput).toContain(
-      "[Results truncated: showing 100 of 150 matches]",
+  it("filters out result lines longer than 1000 characters", async () => {
+    const root = await tempDir("stamcont-search-");
+    const long = "a".repeat(1001);
+    await writeFile(
+      path.join(root, "sample.txt"),
+      `${long} match\nshort match\n`,
+      "utf8",
     );
-  });
 
-  it("should not include truncation message when output is within limit", () => {
-    // Create a sample output (less than 100 lines)
-    const smallOutput = Array.from(
-      { length: 50 },
-      (_, i) => `file${i}.ts:${i}:const foo = 'bar';`,
-    ).join("\n");
-
-    // Format the output as the function would
-    const output = `Search results for pattern "foo":\n\n${smallOutput}`;
-
-    // Verify no truncation message is included
-    expect(output).not.toContain("[Results truncated:");
-
-    // Count the lines
-    const lines = output.split("\n");
-    const nonEmptyLines = lines.filter((line) => line.trim() !== "");
-
-    // Check that we have the expected number of lines (header + 50 content lines)
-    expect(nonEmptyLines.length).toBe(51);
-  });
-
-  describe("searchCodeTool line-length filtering", () => {
-    afterEach(() => {
-      vi.clearAllMocks();
-      vi.resetModules();
+    const result = await searchCodeTool.run({
+      pattern: "match",
+      path: root,
     });
 
-    it("filters out lines longer than 1000 characters", async () => {
-      const childProc = await import("child_process");
-      const long = "a".repeat(1001);
+    expect(result).toContain("short match");
+    expect(result).not.toContain(long);
+  });
 
-      vi.mocked(childProc.exec as any).mockImplementation((...args: any[]) => {
-        // exec callback signature: (error, stdout, stderr)
-        const cb = args[args.length - 1];
-        cb(null, `path/file.ts:1:${long}\npath/file.ts:2:match`, "");
-        return {} as any;
-      });
+  it("treats shell metacharacters as search data, not commands", async () => {
+    const root = await tempDir("stamcont-search-injection-");
+    const marker = path.join(root, "should-not-exist");
+    const pattern = `needle; touch ${marker}`;
+    await writeFile(
+      path.join(root, "sample.txt"),
+      `${pattern}\n`,
+      "utf8",
+    );
 
-      const { searchCodeTool } = await import("./searchCode.js");
-      const result = await searchCodeTool.run({ pattern: "match", path: "." });
-
-      expect(result).toContain("path/file.ts:2:match");
-      expect(result).not.toContain(long);
-      expect(result).not.toContain("[Results truncated:");
+    const result = await searchCodeTool.run({
+      pattern,
+      path: root,
     });
+
+    expect(result).toContain("needle; touch");
+    await expect(
+      import("node:fs/promises").then(({ access }) => access(marker)),
+    ).rejects.toThrow();
+  });
+
+  it("reports no matches without treating rg/grep exit code 1 as an error", async () => {
+    const root = await tempDir("stamcont-search-none-");
+    await writeFile(path.join(root, "sample.txt"), "hello\n", "utf8");
+
+    await expect(
+      searchCodeTool.run({
+        pattern: "definitely-not-present",
+        path: root,
+      }),
+    ).resolves.toContain("No matches found");
   });
 });
