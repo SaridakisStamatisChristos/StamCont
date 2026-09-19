@@ -11,6 +11,7 @@ on:
 
 jobs:
   create-vscode-release:
+    if: github.repository == 'continuedev/continue'
     runs-on: ubuntu-latest
     permissions:
       contents: write # Needed for creating releases
@@ -40,6 +41,7 @@ jobs:
             --prerelease
 
   create-jetbrains-release:
+    if: github.repository == 'continuedev/continue'
     runs-on: ubuntu-latest
     permissions:
       contents: write # Needed for creating releases
