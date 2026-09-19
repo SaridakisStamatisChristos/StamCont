@@ -106,6 +106,14 @@ export class IdeExecutionBackend implements ExecutionBackend {
   }
 
   async resolveWritablePath(inputPath: string): Promise<ResolvedPath> {
+    if (inputPath.trim().startsWith("file://")) {
+      return {
+        uri: inputPath.trim(),
+        displayPath: fileURLToPath(inputPath.trim()),
+        isAbsolute: true,
+        isWithinWorkspace: true,
+      };
+    }
     const uri = await inferResolvedUriFromRelativePath(inputPath, this.ide);
     return {
       uri,
