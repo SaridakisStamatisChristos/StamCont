@@ -570,6 +570,7 @@ export async function streamChatResponse(
         callbacks,
         systemMessage,
         tools,
+        useChatHistoryService,
       },
     );
     chatHistory = compactionResult.chatHistory;
