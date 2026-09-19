@@ -162,6 +162,29 @@ jobs:
         working-directory: binary
         run: npx tsc --noEmit
 
+      - name: Stage maintained Node 20 packager migration
+        shell: bash
+        run: |
+          cd binary
+          npm uninstall --save-dev pkg
+          npm install --save-dev --save-exact @yao-pkg/pkg@6.14.0
+          node <<'NODE'
+          const fs = require("fs");
+          const path = require("path");
+
+          const root = path.join(process.cwd(), "pkgJson");
+          for (const dir of fs.readdirSync(root)) {
+            const packagePath = path.join(root, dir, "package.json");
+            if (!fs.existsSync(packagePath)) continue;
+
+            const pkg = JSON.parse(fs.readFileSync(packagePath, "utf8"));
+            pkg.pkg.targets = pkg.pkg.targets.map((target) =>
+              target.replace(/^node18-/, "node20-"),
+            );
+            fs.writeFileSync(packagePath, JSON.stringify(pkg, null, 2) + "\n");
+          }
+          NODE
+
       - name: Build native Linux x64 binary
         working-directory: binary
         run: node build.js --target linux-x64
@@ -169,6 +192,18 @@ jobs:
       - name: Test packaged binary
         working-directory: binary
         run: npm test -- --runInBand
+
+      - name: Export validated binary migration
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-node20-migration
+          if-no-files-found: error
+          retention-days: 1
+          path: |
+            binary/package.json
+            binary/package-lock.json
+            binary/pkgJson/*/package.json
 
   baseline:
     name: Baseline gate
