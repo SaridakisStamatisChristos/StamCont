@@ -245,19 +245,24 @@ export async function callTool(
 }> {
   try {
     const args = safeParseToolCallArgs(toolCall);
-    const { contextItems, mcpUiState } = await coreToolKernelBridge.execute({
-      tool,
-      execute: async () =>
-        tool.uri
-          ? callToolFromUri(tool.uri, args, extras)
-          : {
-              contextItems: await callBuiltInTool(
-                tool.function.name,
-                args,
-                extras,
-              ),
-            },
-    });
+    const { contextItems, mcpUiState } =
+      await coreToolKernelBridge.execute<{
+        contextItems: ContextItem[];
+        mcpUiState?: McpUiState;
+      }>({
+        tool,
+        execute: async () =>
+          tool.uri
+            ? callToolFromUri(tool.uri, args, extras)
+            : {
+                contextItems: await callBuiltInTool(
+                  tool.function.name,
+                  args,
+                  extras,
+                ),
+                mcpUiState: undefined,
+              },
+      });
     if (tool.faviconUrl) {
       contextItems.forEach((item) => {
         item.icon = tool.faviconUrl;
