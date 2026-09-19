@@ -48,15 +48,15 @@ export class AgentCapabilityDeniedError extends Error {
 }
 
 export class AgentToolRegistry {
-  private readonly tools = new Map<string, AgentTool>();
+  private readonly tools = new Map<string, AgentTool<any, any>>();
 
-  constructor(tools: readonly AgentTool[] = []) {
+  constructor(tools: readonly AgentTool<any, any>[] = []) {
     for (const tool of tools) {
       this.register(tool);
     }
   }
 
-  register(tool: AgentTool): void {
+  register(tool: AgentTool<any, any>): void {
     const name = tool.name.trim();
     if (!name) {
       throw new Error("Agent tool name must be non-empty");
@@ -68,7 +68,7 @@ export class AgentToolRegistry {
     this.tools.set(name, { ...tool, name });
   }
 
-  replace(tool: AgentTool): void {
+  replace(tool: AgentTool<any, any>): void {
     const name = tool.name.trim();
     if (!name) {
       throw new Error("Agent tool name must be non-empty");
@@ -80,11 +80,11 @@ export class AgentToolRegistry {
     return this.tools.delete(name);
   }
 
-  get(name: string): AgentTool | undefined {
+  get(name: string): AgentTool<any, any> | undefined {
     return this.tools.get(name);
   }
 
-  list(): readonly AgentTool[] {
+  list(): readonly AgentTool<any, any>[] {
     return [...this.tools.values()];
   }
 }
