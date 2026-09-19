@@ -10,15 +10,23 @@ export function markIsolatedProcessGroup(process: ChildProcess): ChildProcess {
   return process;
 }
 
+function isChildProcessActive(child: ChildProcess): boolean {
+  return (
+    !child.killed &&
+    (child.exitCode ?? null) === null &&
+    (child.signalCode ?? null) === null
+  );
+}
+
 export function terminateProcessTree(
   child: ChildProcess,
   signal: NodeJS.Signals = "SIGTERM",
 ): void {
-  if (!child.pid || child.exitCode !== null || child.signalCode !== null) {
+  if (!isChildProcessActive(child)) {
     return;
   }
 
-  if (process.platform === "win32") {
+  if (process.platform === "win32" && child.pid) {
     const args = ["/PID", String(child.pid), "/T"];
     if (signal === "SIGKILL") {
       args.push("/F");
@@ -120,7 +128,7 @@ export async function killTerminalProcess(toolCallId: string): Promise<void> {
 
     // Force kill after 5 seconds if still running.
     setTimeout(() => {
-      if (process.exitCode === null && process.signalCode === null) {
+      if (isChildProcessActive(process)) {
         terminateProcessTree(process, "SIGKILL");
       }
     }, 5000);
