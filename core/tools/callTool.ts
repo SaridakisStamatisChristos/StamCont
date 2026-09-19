@@ -1,5 +1,6 @@
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { ContextItem, McpUiState, Tool, ToolCall, ToolExtras } from "..";
+import { coreToolKernelBridge } from "../agent/adapters/coreToolExecution";
 import { MCPManagerSingleton } from "../context/mcp/MCPManagerSingleton";
 import { ContinueError, ContinueErrorReason } from "../util/errors";
 import { canParseUrl } from "../util/url";
@@ -244,11 +245,19 @@ export async function callTool(
 }> {
   try {
     const args = safeParseToolCallArgs(toolCall);
-    const { contextItems, mcpUiState } = tool.uri
-      ? await callToolFromUri(tool.uri, args, extras)
-      : {
-          contextItems: await callBuiltInTool(tool.function.name, args, extras),
-        };
+    const { contextItems, mcpUiState } = await coreToolKernelBridge.execute({
+      tool,
+      execute: async () =>
+        tool.uri
+          ? callToolFromUri(tool.uri, args, extras)
+          : {
+              contextItems: await callBuiltInTool(
+                tool.function.name,
+                args,
+                extras,
+              ),
+            },
+    });
     if (tool.faviconUrl) {
       contextItems.forEach((item) => {
         item.icon = tool.faviconUrl;
