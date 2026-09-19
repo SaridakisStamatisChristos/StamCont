@@ -152,14 +152,20 @@ jobs:
           component: binary
           include-packages: false
 
-      - name: Typecheck and test binary layer
+      - name: Typecheck binary layer
         working-directory: binary
-        run: |
-          npx tsc --noEmit
-          npm test -- --runInBand
+        run: npx tsc --noEmit
 
       - name: Check Rust sync crate
         run: cargo check --locked --manifest-path sync/Cargo.toml
+
+      - name: Build native Linux x64 binary
+        working-directory: binary
+        run: node build.js --target linux-x64
+
+      - name: Test packaged binary
+        working-directory: binary
+        run: npm test -- --runInBand
 
   baseline:
     name: Baseline gate
