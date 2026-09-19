@@ -10,7 +10,11 @@ import { ToolPermissionServiceState } from "src/services/ToolPermissionService.j
 
 import { checkToolPermission } from "../permissions/permissionChecker.js";
 import { toolPermissionManager } from "../permissions/permissionManager.js";
-import { ToolCallRequest, ToolPermissions } from "../permissions/types.js";
+import {
+  PermissionMode,
+  ToolCallRequest,
+  ToolPermissions,
+} from "../permissions/types.js";
 import {
   SERVICE_NAMES,
   serviceContainer,
@@ -18,6 +22,7 @@ import {
 } from "../services/index.js";
 import { trackSessionUsage } from "../session.js";
 import { telemetryService } from "../telemetry/telemetryService.js";
+import { prepareCliToolArgs } from "../agent/cliExecution.js";
 import {
   executeToolCall,
   getAllAvailableTools,
@@ -386,6 +391,7 @@ export async function preprocessStreamedToolCalls(
   isHeadless: boolean,
   toolCalls: ToolCall[],
   callbacks?: StreamCallbacks,
+  permissionMode: PermissionMode = "normal",
 ): Promise<{
   preprocessedCalls: PreprocessedToolCall[];
   errorChatEntries: ChatCompletionToolMessageParam[];
@@ -407,18 +413,28 @@ export async function preprocessStreamedToolCalls(
 
       validateToolCallArgsPresent(toolCall, tool);
 
+      const prepared = await prepareCliToolArgs(
+        tool.name,
+        toolCall.arguments,
+        permissionMode,
+      );
       const preprocessedCall: PreprocessedToolCall = {
         ...toolCall,
+        arguments: prepared.args,
         tool,
       };
 
       if (tool.preprocess) {
         logger.debug("Preprocessing tool call args", {
           name: toolCall.name,
-          arguments: toolCall.arguments,
+          arguments: prepared.args,
         });
-        const preprocessed = await tool.preprocess(toolCall.arguments);
+        const preprocessed = await tool.preprocess(prepared.args);
         preprocessedCall.preprocessResult = preprocessed;
+      } else {
+        preprocessedCall.preprocessResult = {
+          args: prepared.args,
+        };
       }
 
       preprocessedCalls.push(preprocessedCall);
