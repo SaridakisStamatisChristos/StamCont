@@ -12,10 +12,14 @@ export interface AgentToolContext {
   capabilities: AgentSession["capabilities"];
 }
 
+export type AgentCapabilityRequirement<Input> =
+  | CapabilityRequirement
+  | ((input: Input) => CapabilityRequirement);
+
 export interface AgentTool<Input = unknown, Output = unknown> {
   name: string;
   description: string;
-  requiredCapabilities?: CapabilityRequirement;
+  requiredCapabilities?: AgentCapabilityRequirement<Input>;
   execute(
     input: Input,
     context: AgentToolContext,
@@ -64,6 +68,14 @@ export class AgentToolRegistry {
     this.tools.set(name, { ...tool, name });
   }
 
+  replace(tool: AgentTool): void {
+    const name = tool.name.trim();
+    if (!name) {
+      throw new Error("Agent tool name must be non-empty");
+    }
+    this.tools.set(name, { ...tool, name });
+  }
+
   unregister(name: string): boolean {
     return this.tools.delete(name);
   }
@@ -102,9 +114,13 @@ export class AgentToolDispatcher {
 
     await this.emit(session, "tool.requested", tool.name);
 
+    const requirement =
+      typeof tool.requiredCapabilities === "function"
+        ? tool.requiredCapabilities(input)
+        : tool.requiredCapabilities;
     const missing = getMissingCapabilities(
       session.capabilities,
-      tool.requiredCapabilities,
+      requirement,
     );
     if (missing.length > 0) {
       await this.emit(session, "tool.denied", tool.name, {
