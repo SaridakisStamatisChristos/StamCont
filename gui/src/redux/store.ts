@@ -41,6 +41,7 @@ const saveSubsetFilters = [
 
     // Persist edit mode in case closes in middle
     "mode",
+    "executionProfile",
 
     // higher risk to persist
     // codeBlockApplyStates

@@ -2,7 +2,20 @@ import { CompletionOptions } from "@continuedev/config-yaml";
 import type { ToolStatus } from "core/index.js";
 import type { ChatCompletionCreateParamsStreaming } from "openai/resources.mjs";
 
+import type {
+  PermissionMode,
+  ToolPermissions,
+} from "../permissions/types.js";
 import { ToolCallPreview } from "../tools/types.js";
+
+export interface StreamExecutionContext {
+  permissionMode?: PermissionMode;
+  permissions?: ToolPermissions;
+  systemMessage?: string;
+  useChatHistoryService?: boolean;
+  sessionId?: string;
+  isHeadless?: boolean;
+}
 
 export interface StreamCallbacks {
   onContent?: (content: string) => void;

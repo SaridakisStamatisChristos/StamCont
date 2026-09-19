@@ -68,6 +68,7 @@ describe("sessionSlice streamUpdate", () => {
     streamAborter: new AbortController(),
     symbols: {},
     mode: "chat" as const,
+    executionProfile: "interactive" as const,
     isInEdit: false,
     codeBlockApplyStates: {
       states: [],
@@ -418,6 +419,31 @@ describe("sessionSlice streamUpdate", () => {
 
       expect(newState.history).toHaveLength(2);
       expect(newState.history[1].message.content).toBe("Hello world!");
+    });
+
+    it("should synchronize execution profiles with plan and agent modes", () => {
+      const initialState = createInitialState();
+
+      const planState = sessionSlice.reducer(initialState, {
+        type: "session/setMode",
+        payload: "plan",
+      });
+      expect(planState.mode).toBe("plan");
+      expect(planState.executionProfile).toBe("plan");
+
+      const interactiveState = sessionSlice.reducer(planState, {
+        type: "session/setExecutionProfile",
+        payload: "interactive",
+      });
+      expect(interactiveState.mode).toBe("agent");
+      expect(interactiveState.executionProfile).toBe("interactive");
+
+      const fullAccessState = sessionSlice.reducer(interactiveState, {
+        type: "session/setExecutionProfile",
+        payload: "full_access",
+      });
+      expect(fullAccessState.mode).toBe("agent");
+      expect(fullAccessState.executionProfile).toBe("full_access");
     });
 
     it("should handle basic tool call streaming", () => {

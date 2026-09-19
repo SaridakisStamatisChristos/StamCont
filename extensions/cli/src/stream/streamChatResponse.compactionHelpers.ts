@@ -19,6 +19,7 @@ export interface CompactionHelperOptions {
   callbacks?: StreamCallbacks;
   systemMessage: string;
   tools?: ChatCompletionTool[];
+  useChatHistoryService?: boolean;
 }
 
 /**
@@ -36,6 +37,7 @@ export async function handlePreApiCompaction(
     callbacks,
     systemMessage,
     tools,
+    useChatHistoryService = true,
   } = options;
 
   if (isCompacting) {
@@ -57,6 +59,7 @@ export async function handlePreApiCompaction(
     logger.debug("Pre-API compaction occurred, updating chat history");
     const chatHistorySvc = services.chatHistory;
     if (
+      useChatHistoryService &&
       typeof chatHistorySvc?.isReady === "function" &&
       chatHistorySvc.isReady()
     ) {
@@ -77,8 +80,15 @@ export async function handlePostToolValidation(
   chatHistory: ChatHistoryItem[],
   options: CompactionHelperOptions,
 ): Promise<{ chatHistory: ChatHistoryItem[]; wasCompacted: boolean }> {
-  const { model, llmApi, isHeadless, callbacks, systemMessage, tools } =
-    options;
+  const {
+    model,
+    llmApi,
+    isHeadless,
+    callbacks,
+    systemMessage,
+    tools,
+    useChatHistoryService = true,
+  } = options;
 
   if (toolCalls.length === 0) {
     return { chatHistory, wasCompacted: false };
@@ -87,6 +97,7 @@ export async function handlePostToolValidation(
   // Get updated history after tool execution
   const chatHistorySvc = services.chatHistory;
   if (
+    useChatHistoryService &&
     typeof chatHistorySvc?.isReady === "function" &&
     chatHistorySvc.isReady()
   ) {
@@ -123,7 +134,11 @@ export async function handlePostToolValidation(
 
     if (wasCompacted) {
       // Use the service to update history if available, otherwise use local copy
-      if (chatHistorySvc && typeof chatHistorySvc.setHistory === "function") {
+      if (
+        useChatHistoryService &&
+        chatHistorySvc &&
+        typeof chatHistorySvc.setHistory === "function"
+      ) {
         chatHistorySvc.setHistory(compactedHistory);
         chatHistory = chatHistorySvc.getHistory();
       } else {
@@ -178,8 +193,15 @@ export async function handleNormalAutoCompaction(
   shouldContinue: boolean,
   options: CompactionHelperOptions,
 ): Promise<{ chatHistory: ChatHistoryItem[]; wasCompacted: boolean }> {
-  const { model, llmApi, isHeadless, callbacks, systemMessage, tools } =
-    options;
+  const {
+    model,
+    llmApi,
+    isHeadless,
+    callbacks,
+    systemMessage,
+    tools,
+    useChatHistoryService = true,
+  } = options;
 
   if (!shouldContinue) {
     return { chatHistory, wasCompacted: false };
@@ -187,6 +209,7 @@ export async function handleNormalAutoCompaction(
 
   const chatHistorySvc = services.chatHistory;
   if (
+    useChatHistoryService &&
     typeof chatHistorySvc?.isReady === "function" &&
     chatHistorySvc.isReady()
   ) {
@@ -206,7 +229,11 @@ export async function handleNormalAutoCompaction(
 
   if (wasCompacted) {
     // Use the service to update history if available, otherwise use local copy
-    if (chatHistorySvc && typeof chatHistorySvc.setHistory === "function") {
+    if (
+      useChatHistoryService &&
+      chatHistorySvc &&
+      typeof chatHistorySvc.setHistory === "function"
+    ) {
       chatHistorySvc.setHistory(updatedChatHistory);
       return {
         chatHistory: chatHistorySvc.getHistory(),

@@ -39,6 +39,7 @@ const DEFAULT_MOCK_CORE_RESPONSES: MockResponses = {
   "history/list": [],
   "docs/getIndexedPages": [],
   "history/save": undefined,
+  "agent/closeSession": { closed: false },
   "config/getSerializedProfileInfo": {
     profileId: "local",
     profiles: [],

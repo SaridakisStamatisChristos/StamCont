@@ -1,13 +1,14 @@
 import {
   ChatBubbleLeftIcon,
+  LockOpenIcon,
   RocketLaunchIcon,
   SparklesIcon,
   SwatchIcon,
 } from "@heroicons/react/24/outline";
-import { MessageModes } from "core";
+import type { ExecutionProfileId, MessageModes } from "core";
 
 interface ModeIconProps {
-  mode: MessageModes;
+  mode: MessageModes | ExecutionProfileId;
   className?: string;
 }
 
@@ -17,7 +18,10 @@ export function ModeIcon({
 }: ModeIconProps) {
   switch (mode) {
     case "agent":
+    case "interactive":
       return <SparklesIcon className={className} />;
+    case "full_access":
+      return <LockOpenIcon className={className} />;
     case "plan":
       return <SwatchIcon className={className} />;
     case "chat":

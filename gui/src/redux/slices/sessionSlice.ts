@@ -14,6 +14,7 @@ import {
   ChatMessage,
   ContextItem,
   ContextItemWithId,
+  ExecutionProfileId,
   FileSymbolMap,
   McpUiState,
   MessageModes,
@@ -212,6 +213,7 @@ type SessionState = {
   mainEditorContentTrigger?: JSONContent | undefined;
   symbols: FileSymbolMap;
   mode: MessageModes;
+  executionProfile: ExecutionProfileId;
   isInEdit: boolean;
   codeBlockApplyStates: {
     states: ApplyState[];
@@ -235,6 +237,7 @@ export const INITIAL_SESSION_STATE: SessionState = {
   streamAborter: new AbortController(),
   symbols: {},
   mode: "agent",
+  executionProfile: "interactive",
   isInEdit: false,
   codeBlockApplyStates: {
     states: [],
@@ -703,6 +706,9 @@ export const sessionSlice = createSlice({
         if (payload.mode) {
           state.mode = payload.mode;
         }
+        state.executionProfile =
+          payload.executionProfile ??
+          (payload.mode === "plan" ? "plan" : "interactive");
       } else {
         state.history = [];
         state.title = NEW_SESSION_TITLE;
@@ -959,6 +965,25 @@ export const sessionSlice = createSlice({
     },
     setMode: (state, action: PayloadAction<MessageModes>) => {
       state.mode = action.payload;
+      if (action.payload === "plan") {
+        state.executionProfile = "plan";
+      } else if (
+        action.payload === "agent" &&
+        state.executionProfile === "plan"
+      ) {
+        state.executionProfile = "interactive";
+      }
+    },
+    setExecutionProfile: (
+      state,
+      action: PayloadAction<ExecutionProfileId>,
+    ) => {
+      state.executionProfile = action.payload;
+      if (action.payload === "plan") {
+        state.mode = "plan";
+      } else if (state.mode === "plan") {
+        state.mode = "agent";
+      }
     },
     setIsInEdit: (state, action: PayloadAction<boolean>) => {
       state.isInEdit = action.payload;
@@ -1078,6 +1103,7 @@ export const {
   updateToolCallOutput,
   setProcessedToolCallArgs,
   setMode,
+  setExecutionProfile,
   setIsSessionMetadataLoading,
   setAllSessionMetadata,
   addSessionMetadata,

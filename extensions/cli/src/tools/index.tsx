@@ -4,6 +4,8 @@ import { ChatCompletionTool } from "openai/resources.mjs";
 
 import { isModelCapable } from "src/utils/modelCapability.js";
 
+import { cliAgentKernelBridge } from "../agent/CliAgentKernelBridge.js";
+import type { PermissionMode } from "../permissions/types.js";
 import {
   SERVICE_NAMES,
   serviceContainer,
@@ -211,9 +213,15 @@ export function convertMcpToolToContinueTool(mcpTool: MCPTool): Tool {
   };
 }
 
+export interface ExecuteToolCallOptions {
+  parallelToolCallCount: number;
+  permissionMode?: PermissionMode;
+  sessionId?: string;
+}
+
 export async function executeToolCall(
   toolCall: PreprocessedToolCall,
-  options: { parallelToolCallCount: number } = { parallelToolCallCount: 1 },
+  options: ExecuteToolCallOptions = { parallelToolCallCount: 1 },
 ): Promise<string> {
   const startTime = Date.now();
 
@@ -234,10 +242,14 @@ export async function executeToolCall(
 
     // IMPORTANT: if preprocessed args are present, uses preprocessed args instead of original args
     // Preprocessed arg names may be different
-    const result = await toolCall.tool.run(
-      toolCall.preprocessResult?.args ?? toolCall.arguments,
+    const result = await cliAgentKernelBridge.execute({
+      tool: toolCall.tool,
+      toolName: toolCall.name,
+      args: toolCall.preprocessResult?.args ?? toolCall.arguments,
       context,
-    );
+      mode: options.permissionMode ?? "normal",
+      sessionId: options.sessionId,
+    });
     const duration = Date.now() - startTime;
 
     // Track edits if Git AI is enabled (no-op if not enabled)

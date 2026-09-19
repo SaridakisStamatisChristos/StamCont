@@ -1,5 +1,11 @@
 import { createAsyncThunk, unwrapResult } from "@reduxjs/toolkit";
-import { ContextItem, McpUiState } from "core";
+import {
+  ContextItem,
+  McpUiState,
+  type ExecutionProfileId,
+  type ToolCall,
+} from "core";
+import type { ToCoreProtocol } from "core/protocol";
 import { CLIENT_TOOLS_IMPLS } from "core/tools/builtIn";
 import { ContinueError, ContinueErrorReason } from "core/util/errors";
 
@@ -15,6 +21,18 @@ import {
 import { ThunkApiType } from "../store";
 import { findToolCallById, logToolUsage } from "../util";
 import { streamResponseAfterToolCall } from "./streamResponseAfterToolCall";
+
+export function buildCoreToolCallRequest(
+  toolCall: ToolCall,
+  sessionId: string,
+  executionProfile: ExecutionProfileId,
+): ToCoreProtocol["tools/call"][0] {
+  return {
+    toolCall,
+    sessionId,
+    executionProfile,
+  };
+}
 
 export const callToolById = createAsyncThunk<
   void,
@@ -76,9 +94,14 @@ export const callToolById = createAsyncThunk<
     streamResponse = respondImmediately;
   } else {
     // Tool is called on core side
-    const result = await extra.ideMessenger.request("tools/call", {
-      toolCall: toolCallState.toolCall,
-    });
+    const result = await extra.ideMessenger.request(
+      "tools/call",
+      buildCoreToolCallRequest(
+        toolCallState.toolCall,
+        state.session.id,
+        state.session.executionProfile,
+      ),
+    );
     if (result.status === "error") {
       throw new Error(result.error);
     } else {
