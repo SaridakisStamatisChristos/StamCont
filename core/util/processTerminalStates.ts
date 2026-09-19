@@ -40,7 +40,10 @@ export function terminateProcessTree(
     return;
   }
 
-  if ((child as StamContChildProcess).__stamcontIsolatedProcessGroup) {
+  if (
+    (child as StamContChildProcess).__stamcontIsolatedProcessGroup &&
+    child.pid
+  ) {
     try {
       process.kill(-child.pid, signal);
       return;
