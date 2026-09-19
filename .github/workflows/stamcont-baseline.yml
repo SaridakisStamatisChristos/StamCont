@@ -131,7 +131,7 @@ jobs:
           npm run vitest
 
   native:
-    name: Binary / Rust sync
+    name: Binary
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -155,9 +155,6 @@ jobs:
       - name: Typecheck binary layer
         working-directory: binary
         run: npx tsc --noEmit
-
-      - name: Check Rust sync crate
-        run: cargo check --locked --manifest-path sync/Cargo.toml
 
       - name: Build native Linux x64 binary
         working-directory: binary
