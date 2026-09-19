@@ -6,15 +6,16 @@ The StamCont Agent Kernel is the shared execution substrate for CLI, VS Code, Je
 
 It is intentionally independent of any specific model provider or UI.
 
-## Phase 2 foundation
+## Phase 2 invariants
 
-The first kernel layer establishes five invariants:
+The kernel establishes these invariants:
 
 1. **Session-scoped state** — every root agent and subagent owns an isolated `AgentSession`.
-2. **Capability-based execution** — every tool call crosses one dispatcher and is checked against the session's capabilities.
-3. **First-class Full Access** — unrestricted local execution is an explicit profile, not a hidden permission bypass.
+2. **Capability-based execution** — adapted tool calls cross the shared dispatcher and are checked against session capabilities.
+3. **First-class Full Access** — unrestricted execution is an explicit profile, not a hidden permission bypass.
 4. **Structured events** — lifecycle events are emitted independently of UI/telemetry consumers.
 5. **Cancellation propagation** — parent cancellation propagates to child sessions, while child cancellation cannot cancel the parent.
+6. **Legacy compatibility** — existing Continue tool implementations, permission UX, telemetry, MCP plumbing, and model adapters remain reusable behind the kernel.
 
 ## Built-in execution profiles
 
@@ -46,9 +47,45 @@ The first kernel layer establishes five invariants:
 - MCP
 - subagents
 - computer control
-- no per-command approval
+- no per-command kernel approval
 
-Full Access is deliberately explicit and opt-in at the product surface.
+Full Access is explicit. CLI legacy `auto` mode currently maps to `full_access`.
+
+## Live integration state
+
+### CLI
+
+Approved CLI tool calls now execute through `CliAgentKernelBridge` and the shared kernel dispatcher.
+
+Legacy permission handling remains the first gate. The mapping is:
+
+```text
+normal -> interactive
+plan   -> plan
+auto   -> full_access
+```
+
+Existing preprocessing, permission prompts, telemetry, Git-AI integration, tool implementations, and chat-history UI behavior remain intact.
+
+### Subagents
+
+Subagents now run as real child kernel sessions.
+
+They no longer temporarily mutate global tool permissions, replace the global system-message function, or disable the global ChatHistoryService. Child execution receives invocation-scoped permissions, system message, history behavior, kernel session ID, and cancellation.
+
+Parent cancellation propagates to children. Cancelling a child does not cancel its parent.
+
+### Core / IDE
+
+Core-side built-in, MCP, and HTTP tool execution now passes through `CoreToolKernelBridge` from the existing `core/tools/callTool.ts` seam.
+
+Existing GUI policy evaluation and approval behavior remain in front of the kernel. The Core bridge currently uses the `interactive` profile by default.
+
+## Capability boundary
+
+The capability model distinguishes workspace-scoped and unrestricted filesystem/shell access. At this phase, the kernel enforces the declared capability requirement at the dispatcher boundary.
+
+The labels **workspace** and **unrestricted** are not yet an OS sandbox. Path-aware filesystem confinement and process-level shell/network sandboxing are separate enforcement work and must not be assumed from the profile names alone.
 
 ## Current API
 
@@ -62,10 +99,7 @@ const tool: AgentTool<{ command: string }, string> = {
   name: "shell.execute",
   description: "Execute a shell command",
   requiredCapabilities: { shell: "workspace" },
-  execute: async ({ command }, context) => {
-    // Adapter implementation supplied by CLI / IDE surface.
-    return command;
-  },
+  execute: async ({ command }) => command,
 };
 
 const kernel = new AgentKernel({ tools: [tool] });
@@ -77,12 +111,13 @@ const result = await kernel.executeTool(
 );
 ```
 
-## Deliberate non-goals of the first kernel commit
+## Remaining Phase 2 work
 
-This foundation does not yet replace Continue's existing CLI agent loop, Core tool implementation, permission UI, model adapters, or MCP manager.
+The major remaining product-facing work is:
 
-Those systems remain operational while adapters are introduced incrementally.
+- expose execution-profile selection in the IDE/GUI, including an explicit Full Access control;
+- decide and implement path/process/network enforcement semantics for workspace-restricted profiles;
+- continue promoting the streamed model loop toward a provider-neutral `AgentLoop` contract;
+- add lifecycle cleanup hooks for IDE/Core sessions where product shutdown/profile switching requires them.
 
-The next migration step is to wrap the existing CLI/Core tools behind `AgentTool`, then move permission/profile resolution into the kernel without changing externally visible behavior. After that, the existing streamed LLM loop can be promoted into a provider-neutral `AgentLoop` using the same session and dispatcher contracts.
-
-The separate Orchestrator repository will be integrated later as a higher-level planning/DAG/durability layer. It is not a dependency of the kernel.
+The separate Orchestrator repository remains a later higher-level planning/DAG/durability layer and is not a dependency of the kernel.
