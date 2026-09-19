@@ -10,6 +10,7 @@ import {
   createCliExecutionBackend,
   permissionModeToExecutionProfile,
 } from "./cliExecution.js";
+export { permissionModeToExecutionProfile } from "./cliExecution.js";
 
 export interface CliKernelToolExecution {
   tool: Tool;
