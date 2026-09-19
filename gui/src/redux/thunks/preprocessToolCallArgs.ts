@@ -20,11 +20,16 @@ export async function preprocessToolCalls(
   await Promise.all(
     generatedToolCalls.map(async (tcState) => {
       if (
-        executionProfile === "full_access" &&
+        (executionProfile === "full_access" ||
+          executionProfile === "interactive") &&
         CLIENT_TOOLS_IMPLS.some(
           (toolName) => toolName === tcState.toolCall.function.name,
         )
       ) {
+        // Client edit tools validate at execution time, where Full Access can
+        // resolve host paths and Interactive can enforce canonical sandbox
+        // paths. Preprocessing here would otherwise reintroduce a weaker
+        // workspace-only path resolver before the real executor runs.
         return;
       }
 
