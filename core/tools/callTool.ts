@@ -197,7 +197,7 @@ async function callToolFromUri(
 export async function callBuiltInTool(
   functionName: string,
   args: any,
-  extras: ToolExtras,
+  extras: ToolExecutionExtras,
 ): Promise<ContextItem[]> {
   switch (functionName) {
     case BuiltInToolNames.ReadFile:
