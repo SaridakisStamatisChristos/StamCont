@@ -1,4 +1,4 @@
-import { inferResolvedUriFromRelativePath } from "../../util/ideUtils";
+import { getExecutionBackend } from "../../agent/execution";
 
 import { ToolImpl } from ".";
 import { throwIfFileIsSecurityConcern } from "../../indexing/ignore";
@@ -10,40 +10,33 @@ export const createNewFileImpl: ToolImpl = async (args, extras) => {
   const filepath = getStringArg(args, "filepath");
   const contents = getStringArg(args, "contents", true);
 
-  const resolvedFileUri = await inferResolvedUriFromRelativePath(
-    filepath,
-    extras.ide,
-  );
-  if (resolvedFileUri) {
-    throwIfFileIsSecurityConcern(getCleanUriPath(resolvedFileUri));
-    const exists = await extras.ide.fileExists(resolvedFileUri);
-    if (exists) {
-      throw new ContinueError(
-        ContinueErrorReason.FileAlreadyExists,
-        `File ${filepath} already exists. Use the edit tool to edit this file`,
-      );
-    }
-    await extras.ide.writeFile(resolvedFileUri, contents);
-    await extras.ide.openFile(resolvedFileUri);
-    await extras.ide.saveFile(resolvedFileUri);
-    if (extras.codeBaseIndexer) {
-      void extras.codeBaseIndexer?.refreshCodebaseIndexFiles([resolvedFileUri]);
-    }
-    return [
-      {
-        name: getUriPathBasename(resolvedFileUri),
-        description: getCleanUriPath(resolvedFileUri),
-        content: "File created successfuly",
-        uri: {
-          type: "file",
-          value: resolvedFileUri,
-        },
-      },
-    ];
-  } else {
+  const backend = getExecutionBackend(extras);
+  const resolvedPath = await backend.resolveWritablePath(filepath);
+  if (backend.enforceSensitivePathChecks) {
+    throwIfFileIsSecurityConcern(getCleanUriPath(resolvedPath.uri));
+  }
+  if (await backend.fileExists(resolvedPath)) {
     throw new ContinueError(
-      ContinueErrorReason.PathResolutionFailed,
-      "Failed to resolve path",
+      ContinueErrorReason.FileAlreadyExists,
+      `File ${filepath} already exists. Use the edit tool to edit this file`,
     );
   }
+
+  await backend.writeFile(resolvedPath, contents);
+  await extras.ide.openFile(resolvedPath.uri).catch(() => undefined);
+  await extras.ide.saveFile(resolvedPath.uri).catch(() => undefined);
+  if (extras.codeBaseIndexer && resolvedPath.isWithinWorkspace) {
+    void extras.codeBaseIndexer.refreshCodebaseIndexFiles([resolvedPath.uri]);
+  }
+  return [
+    {
+      name: getUriPathBasename(resolvedPath.uri),
+      description: getCleanUriPath(resolvedPath.uri),
+      content: "File created successfully",
+      uri: {
+        type: "file",
+        value: resolvedPath.uri,
+      },
+    },
+  ];
 };
