@@ -136,6 +136,53 @@ describe("CliAgentKernelBridge", () => {
     ).resolves.toBe("written");
   });
 
+  it("forks a child session with explicit parent lineage", async () => {
+    const bridge = new CliAgentKernelBridge();
+
+    const child = await bridge.forkSession({
+      parentSessionId: "parent-chat",
+      parentMode: "normal",
+      childSessionId: "child-chat",
+      childMode: "auto",
+    });
+
+    expect(child.parentSessionId).toBe("cli:parent-chat:interactive");
+    expect(child.profile.id).toBe("full_access");
+    expect(child.state).toBe("active");
+  });
+
+  it("cancels a child without cancelling its parent", async () => {
+    const bridge = new CliAgentKernelBridge();
+    const parentTool = tool("Read");
+
+    await bridge.execute({
+      tool: parentTool,
+      args: {},
+      mode: "normal",
+      sessionId: "parent-chat",
+    });
+    const child = await bridge.forkSession({
+      parentSessionId: "parent-chat",
+      parentMode: "normal",
+      childSessionId: "child-chat",
+      childMode: "auto",
+    });
+
+    await expect(
+      bridge.cancelSession("child-chat", "auto", "child stopped"),
+    ).resolves.toBe(true);
+
+    expect(child.state).toBe("cancelled");
+    await expect(
+      bridge.execute({
+        tool: parentTool,
+        args: {},
+        mode: "normal",
+        sessionId: "parent-chat",
+      }),
+    ).resolves.toBe("ok");
+  });
+
   it("allows closing and recreating a cached session", async () => {
     const events: string[] = [];
     const kernel = new AgentKernel();
