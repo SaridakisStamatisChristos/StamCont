@@ -42,7 +42,12 @@ export class CliAgentKernelBridge {
     return this.kernel.executeTool(session, toolName, {
       tool: options.tool,
       args: options.args,
-      context: options.context,
+      context: {
+        ...options.context,
+        executionBackend:
+          options.context?.executionBackend ??
+          createCliExecutionBackend(options.mode),
+      },
     });
   }
 
