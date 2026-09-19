@@ -187,35 +187,34 @@ IMPORTANT: To edit files, use Edit/MultiEdit tools instead of bash commands (sed
 
     emitBashToolStarted();
 
-    const terminalOutput: string = await new Promise((resolve, reject) => {
-      const legacyShell = getShellCommand(command);
-      let child: ChildProcess;
-      let cleanupAbort = () => undefined;
+    const legacyShell = getShellCommand(command);
+    let child: ChildProcess;
+    if (context?.executionBackend) {
+      const backend = context.executionBackend;
+      const cwd = await backend.resolveWorkingDirectory(".");
+      child = backend.spawnShell(command, {
+        cwd,
+        env: process.env,
+      });
+    } else {
+      child = spawn(legacyShell.shell, legacyShell.args);
+    }
 
-      if (context?.executionBackend) {
-        const backend = context.executionBackend;
-        const cwd = await backend.resolveWorkingDirectory(".");
-        child = backend.spawnShell(command, {
-          cwd,
-          env: process.env,
-        });
+    let cleanupAbort = () => undefined;
+    if (context?.executionSignal) {
+      const abort = () => terminateProcessTree(child, "SIGTERM");
+      if (context.executionSignal.aborted) {
+        abort();
       } else {
-        child = spawn(legacyShell.shell, legacyShell.args);
+        context.executionSignal.addEventListener("abort", abort, {
+          once: true,
+        });
+        cleanupAbort = () =>
+          context.executionSignal?.removeEventListener("abort", abort);
       }
+    }
 
-      if (context?.executionSignal) {
-        const abort = () => terminateProcessTree(child, "SIGTERM");
-        if (context.executionSignal.aborted) {
-          abort();
-        } else {
-          context.executionSignal.addEventListener("abort", abort, {
-            once: true,
-          });
-          cleanupAbort = () =>
-            context.executionSignal?.removeEventListener("abort", abort);
-        }
-      }
-
+    const terminalOutput: string = await new Promise((resolve, reject) => {
       let stdout = "";
       let stderr = "";
       let timeoutId: NodeJS.Timeout;
