@@ -33,7 +33,9 @@ function getDecodedOutput(data: Buffer): string {
   } else {
     return data.toString();
   }
-} // Add color-supporting environment variables
+}
+
+// Add color-supporting environment variables
 const getColorEnv = () => ({
   ...process.env,
   FORCE_COLOR: "1",
@@ -44,7 +46,11 @@ const getColorEnv = () => ({
 });
 
 function bindAbortSignal(
-  childProc: { exitCode: number | null; signalCode: NodeJS.Signals | null; kill(signal?: NodeJS.Signals | number): boolean },
+  childProc: {
+    exitCode: number | null;
+    signalCode: NodeJS.Signals | null;
+    kill(signal?: NodeJS.Signals | number): boolean;
+  },
   signal?: AbortSignal,
 ): () => void {
   if (!signal) {
@@ -232,7 +238,7 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
           }
 
           childProc.on("close", (code) => {
-                cleanupAbort();
+            cleanupAbort();
             // Clear timeout on normal completion
             if (timeoutId) {
               clearTimeout(timeoutId);
@@ -299,7 +305,7 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
           });
 
           childProc.on("error", (error) => {
-                cleanupAbort();
+            cleanupAbort();
             // Clear timeout on error
             if (timeoutId) {
               clearTimeout(timeoutId);
@@ -387,7 +393,7 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
               });
 
               childProc.on("close", (code) => {
-                cleanupAbort();
+            cleanupAbort();
                 // Clear outer timeout
                 if (timeoutId) {
                   clearTimeout(timeoutId);
@@ -416,7 +422,7 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
               });
 
               childProc.on("error", (error) => {
-                cleanupAbort();
+            cleanupAbort();
                 // Clear timeout on error
                 if (timeoutId) {
                   clearTimeout(timeoutId);
