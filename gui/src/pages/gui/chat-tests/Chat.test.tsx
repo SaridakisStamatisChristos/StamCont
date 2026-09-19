@@ -55,4 +55,6 @@ test("should send a message and receive a response", async () => {
   await sendInputWithMockedResponse(ideMessenger, INPUT, [
     { role: "assistant", content: CONTENT },
   ]);
+
+  await getElementByText(CONTENT);
 });
