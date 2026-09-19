@@ -29,6 +29,27 @@ const getColorEnv = () => ({
   CLICOLOR_FORCE: "1",
 });
 
+function bindAbortSignal(
+  childProc: { exitCode: number | null; signalCode: NodeJS.Signals | null; kill(signal?: NodeJS.Signals | number): boolean },
+  signal?: AbortSignal,
+): () => void {
+  if (!signal) {
+    return () => undefined;
+  }
+
+  const abort = () => {
+    if (childProc.exitCode === null && childProc.signalCode === null) {
+      childProc.kill("SIGTERM");
+    }
+  };
+  if (signal.aborted) {
+    abort();
+    return () => undefined;
+  }
+  signal.addEventListener("abort", abort, { once: true });
+  return () => signal.removeEventListener("abort", abort);
+}
+
 export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
   const command = getStringArg(args, "command");
   // Default to waiting for completion if not specified
@@ -69,6 +90,10 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
             cwd,
             env: getColorEnv(),
           });
+          const cleanupAbort = bindAbortSignal(
+            childProc,
+            extras.executionSignal,
+          );
 
           // Track this process for foreground cancellation
           if (toolCallId && waitForCompletion) {
@@ -193,6 +218,7 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
           }
 
           childProc.on("close", (code) => {
+            cleanupAbort();
             // Clear timeout on normal completion
             if (timeoutId) {
               clearTimeout(timeoutId);
@@ -259,6 +285,7 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
           });
 
           childProc.on("error", (error) => {
+            cleanupAbort();
             // Clear timeout on error
             if (timeoutId) {
               clearTimeout(timeoutId);
@@ -287,27 +314,23 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
       }
     } else {
       // Fallback to non-streaming for older clients
-      const workspaceDirs = await extras.ide.getWorkspaceDirs();
-      const cwd = resolveWorkingDirectory(workspaceDirs);
+      const cwd = await backend.resolveWorkingDirectory(requestedCwd);
 
       if (waitForCompletion) {
         // Standard execution, waiting for completion
         try {
-          // Use spawn approach for consistency with streaming version
-          const { shell: nonStreamingShell, args: nonStreamingArgs } =
-            getShellCommand(command);
           const output = await new Promise<{ stdout: string; stderr: string }>(
             (resolve, reject) => {
               let timeoutId: ReturnType<typeof setTimeout> | undefined;
               let sigkillTimeoutId: ReturnType<typeof setTimeout> | undefined;
 
-              const childProc = childProcess.spawn(
-                nonStreamingShell,
-                nonStreamingArgs,
-                {
-                  cwd,
-                  env: getColorEnv(),
-                },
+              const childProc = backend.spawnShell(command, {
+                cwd,
+                env: getColorEnv(),
+              });
+              const cleanupAbort = bindAbortSignal(
+                childProc,
+                extras.executionSignal,
               );
 
               // Track this process for foreground cancellation
@@ -350,6 +373,7 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
               });
 
               childProc.on("close", (code) => {
+            cleanupAbort();
                 // Clear outer timeout
                 if (timeoutId) {
                   clearTimeout(timeoutId);
@@ -378,6 +402,7 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
               });
 
               childProc.on("error", (error) => {
+            cleanupAbort();
                 // Clear timeout on error
                 if (timeoutId) {
                   clearTimeout(timeoutId);
@@ -429,15 +454,21 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
             // Redirect to /dev/null equivalent (works cross-platform)
             stdio: "ignore",
           });
+          const cleanupAbort = bindAbortSignal(
+            childProc,
+            extras.executionSignal,
+          );
 
           // Even for detached processes, add event handlers to clean up the background process map
           childProc.on("close", () => {
+            cleanupAbort();
             if (isProcessBackgrounded(toolCallId)) {
               removeBackgroundedProcess(toolCallId);
             }
           });
 
           childProc.on("error", () => {
+            cleanupAbort();
             if (isProcessBackgrounded(toolCallId)) {
               removeBackgroundedProcess(toolCallId);
             }
