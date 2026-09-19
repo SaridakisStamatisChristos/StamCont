@@ -11,6 +11,7 @@ import untildify from "untildify";
 import type { FetchFunction, IDE } from "..";
 import type { ExecutionBackend } from "./execution";
 import type { ResolvedPath } from "../util/pathResolver";
+import { markIsolatedProcessGroup } from "../util/processTerminalStates";
 
 export class SandboxViolationError extends Error {
   constructor(message: string) {
@@ -322,12 +323,14 @@ function spawnSandboxedShell(
     }
     args.push("--chdir", cwd, "--setenv", "HOME", workspaceRoot);
     args.push(shell, "-lc", command);
-    return spawn(bwrap, args, {
-      ...options,
-      cwd,
-      env,
-      detached: true,
-    });
+    return markIsolatedProcessGroup(
+      spawn(bwrap, args, {
+        ...options,
+        cwd,
+        env,
+        detached: true,
+      }),
+    );
   }
 
   if (process.platform === "darwin") {
@@ -337,15 +340,17 @@ function spawnSandboxedShell(
         "Interactive shell sandbox requires sandbox-exec on macOS. Full Access remains available explicitly.",
       );
     }
-    return spawn(
-      sandboxExec,
-      ["-p", buildMacSandboxProfile(roots), shell, "-lc", command],
-      {
-        ...options,
-        cwd,
-        env,
-        detached: true,
-      },
+    return markIsolatedProcessGroup(
+      spawn(
+        sandboxExec,
+        ["-p", buildMacSandboxProfile(roots), shell, "-lc", command],
+        {
+          ...options,
+          cwd,
+          env,
+          detached: true,
+        },
+      ),
     );
   }
 
