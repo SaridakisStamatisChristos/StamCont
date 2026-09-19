@@ -56,6 +56,55 @@ export class CliAgentKernelBridge {
     });
   }
 
+  async forkSession(options: {
+    parentSessionId: string;
+    parentMode: PermissionMode;
+    childSessionId: string;
+    childMode?: PermissionMode;
+  }): Promise<AgentSession> {
+    const parentProfile = permissionModeToExecutionProfile(options.parentMode);
+    const childMode = options.childMode ?? options.parentMode;
+    const childProfile = permissionModeToExecutionProfile(childMode);
+    const childKey = this.sessionKey(options.childSessionId, childProfile);
+
+    const existing = this.sessions.get(childKey);
+    if (existing) {
+      return existing;
+    }
+
+    const parent = await this.getSession(
+      options.parentSessionId,
+      parentProfile,
+    );
+    const child = this.kernel.forkSession(parent, {
+      id: this.kernelSessionId(options.childSessionId, childProfile),
+      profile: childProfile,
+      metadata: {
+        surface: "cli-subagent",
+        legacyPermissionMode: childMode,
+        parentCliSessionId: options.parentSessionId,
+      },
+    });
+    this.sessions.set(childKey, child);
+    return child;
+  }
+
+  async cancelSession(
+    sessionId: string,
+    mode: PermissionMode,
+    reason = "cancelled",
+  ): Promise<boolean> {
+    const profile = permissionModeToExecutionProfile(mode);
+    const key = this.sessionKey(sessionId, profile);
+    const pending = this.sessions.get(key);
+    if (!pending) {
+      return false;
+    }
+
+    const session = await pending;
+    return this.kernel.cancelSession(session, reason);
+  }
+
   async closeSession(
     sessionId: string,
     mode: PermissionMode,
