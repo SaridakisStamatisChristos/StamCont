@@ -74,14 +74,29 @@ export const readFileTool: Tool = {
         filepath = filepath.slice(2);
       }
 
-      if (!fs.existsSync(filepath)) {
-        throw new ContinueError(
-          ContinueErrorReason.Unspecified,
-          `File does not exist: ${filepath}`,
-        );
+      let realPath: string;
+      let content: string;
+      if (context?.executionBackend) {
+        const resolved =
+          await context.executionBackend.resolveExistingPath(filepath);
+        if (!resolved) {
+          throw new ContinueError(
+            ContinueErrorReason.Unspecified,
+            `File does not exist or is not accessible: ${filepath}`,
+          );
+        }
+        realPath = resolved.displayPath;
+        content = await context.executionBackend.readFile(resolved);
+      } else {
+        if (!fs.existsSync(filepath)) {
+          throw new ContinueError(
+            ContinueErrorReason.Unspecified,
+            `File does not exist: ${filepath}`,
+          );
+        }
+        realPath = fs.realpathSync(filepath);
+        content = fs.readFileSync(realPath, "utf-8");
       }
-      const realPath = fs.realpathSync(filepath);
-      const content = fs.readFileSync(realPath, "utf-8");
 
       // Divide limits by parallel tool call count to avoid context overflow
       const parallelCount = context?.parallelToolCallCount ?? 1;
