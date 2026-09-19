@@ -2,14 +2,7 @@ name: Main Branch Build
 
 # Download and republish VS Code extension artifacts when code is merged to main
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
-    inputs:
-      test_pr_number:
-        description: "PR number to test with"
-        required: true
 
 jobs:
   republish-pr-artifacts:
