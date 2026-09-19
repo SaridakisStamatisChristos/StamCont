@@ -1,4 +1,4 @@
-import { resolveRelativePathInDir } from "core/util/ideUtils";
+import { validateSearchAndReplaceFilepath } from "core/edit/searchAndReplace/validateArgs";
 import { v4 as uuid } from "uuid";
 import { applyForEditTool } from "../../redux/thunks/handleApplyStateUpdate";
 import { ClientToolImpl } from "./callClientTool";
@@ -18,24 +18,14 @@ export const editToolImpl: ClientToolImpl = async (
     filepath = filepath.slice(2);
   }
 
-  let firstUriMatch = await resolveRelativePathInDir(
+  const allowOutsideWorkspace =
+    extras.getState().session?.executionProfile === "full_access";
+  const firstUriMatch = await validateSearchAndReplaceFilepath(
     filepath,
     extras.ideMessenger.ide,
+    allowOutsideWorkspace,
   );
 
-  if (!firstUriMatch) {
-    const openFiles = await extras.ideMessenger.ide.getOpenFiles();
-    for (const uri of openFiles) {
-      if (uri.endsWith(filepath)) {
-        firstUriMatch = uri;
-        break;
-      }
-    }
-  }
-
-  if (!firstUriMatch) {
-    throw new Error(`${filepath} does not exist`);
-  }
   const streamId = uuid();
   void extras.dispatch(
     applyForEditTool({
