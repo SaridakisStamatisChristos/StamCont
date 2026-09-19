@@ -1,4 +1,5 @@
 import { IDE } from "../..";
+import { SandboxExecutionBackend } from "../../agent/sandbox";
 import { ContinueError, ContinueErrorReason } from "../../util/errors";
 import { resolveRelativePathInDir } from "../../util/ideUtils";
 import { resolveInputPath } from "../../util/pathResolver";
@@ -7,6 +8,7 @@ export async function validateSearchAndReplaceFilepath(
   filepath: unknown,
   ide: IDE,
   allowOutsideWorkspace = false,
+  strictWorkspace = false,
 ) {
   if (!filepath || typeof filepath !== "string") {
     throw new ContinueError(
@@ -16,7 +18,9 @@ export async function validateSearchAndReplaceFilepath(
   }
   const resolvedFilepath = allowOutsideWorkspace
     ? await resolveInputPath(ide, filepath)
-    : await resolveRelativePathInDir(filepath, ide);
+    : strictWorkspace
+      ? await new SandboxExecutionBackend(ide).resolveExistingPath(filepath)
+      : await resolveRelativePathInDir(filepath, ide);
   const resolvedUri =
     typeof resolvedFilepath === "string"
       ? resolvedFilepath
