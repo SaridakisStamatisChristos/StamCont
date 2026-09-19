@@ -14,7 +14,7 @@ import {
 } from "./tools";
 
 export interface AgentKernelOptions {
-  tools?: readonly AgentTool[];
+  tools?: readonly AgentTool<any, any>[];
   events?: AgentEventBus;
   clock?: () => number;
   idFactory?: () => string;
