@@ -1,5 +1,6 @@
-import type { ChatHistoryItem } from "core";
 import { randomUUID } from "node:crypto";
+
+import type { ChatHistoryItem } from "core";
 
 import { cliAgentKernelBridge } from "../agent/CliAgentKernelBridge.js";
 import type { PermissionMode } from "../permissions/types.js";
