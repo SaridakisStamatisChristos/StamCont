@@ -119,9 +119,24 @@ export async function handleToolCalls(
     chatHistory.push(createHistoryItem(messageWithUsage, [], toolCallStates));
   }
 
-  // First preprocess the tool calls
+  // First preprocess the tool calls through the selected execution profile
+  // so previews cannot read outside the same boundary enforced at execution.
+  const permissionState = executionContext?.permissionMode
+    ? undefined
+    : await serviceContainer.get<ToolPermissionServiceState>(
+        SERVICE_NAMES.TOOL_PERMISSIONS,
+      );
+  const preprocessingMode =
+    executionContext?.permissionMode ??
+    permissionState?.currentMode ??
+    "normal";
   const { preprocessedCalls, errorChatEntries } =
-    await preprocessStreamedToolCalls(isHeadless, toolCalls, callbacks);
+    await preprocessStreamedToolCalls(
+      isHeadless,
+      toolCalls,
+      callbacks,
+      preprocessingMode,
+    );
 
   // Add any preprocessing errors to the toolCallStates on the assistant message
   // (NOT as separate history items, which would cause duplicate tool_result messages)
