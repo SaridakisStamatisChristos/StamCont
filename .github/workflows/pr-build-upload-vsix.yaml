@@ -2,9 +2,7 @@ name: PR Build And Upload VSIX
 
 # Builds and uploads VSIX artifacts for the `oneper` script across Linux, Windows, and macOS ARM platforms
 on:
-  pull_request:
-    branches:
-      - main
+  workflow_dispatch:
 
 jobs:
   build-and-upload-vsix:
