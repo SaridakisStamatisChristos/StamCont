@@ -24,6 +24,7 @@ export interface ResolvePathOptions {
 
 export interface ExecutionBackend {
   readonly kind: ExecutionBackendKind;
+  readonly enforceSensitivePathChecks: boolean;
 
   resolveExistingPath(inputPath: string): Promise<ResolvedPath | null>;
   resolveWritablePath(inputPath: string): Promise<ResolvedPath>;
@@ -90,6 +91,7 @@ async function getIdeDefaultWorkingDirectory(ide: IDE): Promise<string> {
 
 export class IdeExecutionBackend implements ExecutionBackend {
   readonly kind = "ide" as const;
+  readonly enforceSensitivePathChecks = true;
 
   constructor(private readonly ide: IDE) {}
 
@@ -176,6 +178,7 @@ export class IdeExecutionBackend implements ExecutionBackend {
 
 export class HostExecutionBackend implements ExecutionBackend {
   readonly kind = "host" as const;
+  readonly enforceSensitivePathChecks = false;
 
   private defaultWorkingDirectory?: Promise<string>;
 
