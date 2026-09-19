@@ -152,8 +152,8 @@ WARNINGS:
     },
     context?: ToolRunContext,
   ) => {
+    let resolvedPath = args.resolvedPath;
     try {
-      let resolvedPath = args.resolvedPath;
       if (context?.executionBackend) {
         const target =
           await context.executionBackend.resolveWritablePath(args.resolvedPath);
