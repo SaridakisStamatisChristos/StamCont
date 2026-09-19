@@ -36,6 +36,7 @@ import {
 import {
   getDefaultCompletionOptions,
   StreamCallbacks,
+  StreamExecutionContext,
 } from "./streamChatResponse.types.js";
 
 dotenv.config();
@@ -74,9 +75,11 @@ function handleContentDisplay(
 function refreshChatHistoryFromService(
   chatHistory: ChatHistoryItem[],
   isCompacting: boolean,
+  useChatHistoryService = true,
 ): ChatHistoryItem[] {
   const chatHistorySvc = services.chatHistory;
   if (
+    useChatHistoryService &&
     typeof chatHistorySvc?.isReady === "function" &&
     chatHistorySvc.isReady()
   ) {
@@ -96,6 +99,7 @@ function handleAutoContinuation(
   compactionOccurred: boolean,
   shouldContinue: boolean,
   chatHistory: ChatHistoryItem[],
+  useChatHistoryService = true,
 ): { shouldAutoContinue: boolean; chatHistory: ChatHistoryItem[] } {
   if (!compactionOccurred || shouldContinue) {
     return { shouldAutoContinue: false, chatHistory };
@@ -108,6 +112,7 @@ function handleAutoContinuation(
   // Add a continuation message to the history
   const chatHistorySvc = services.chatHistory;
   if (
+    useChatHistoryService &&
     typeof chatHistorySvc?.isReady === "function" &&
     chatHistorySvc.isReady()
   ) {
@@ -242,6 +247,7 @@ export async function processStreamingResponse(
       safetyBuffer: SAFETY_BUFFER,
       systemMessage,
       tools,
+      useChatHistoryService,
     });
   }
 
@@ -427,6 +433,7 @@ export async function streamChatResponse(
   abortController: AbortController,
   callbacks?: StreamCallbacks,
   isCompacting = false,
+  executionContext?: StreamExecutionContext,
 ) {
   logger.debug("streamChatResponse called", {
     model,
@@ -434,7 +441,10 @@ export async function streamChatResponse(
     hasCallbacks: !!callbacks,
   });
 
-  const isHeadless = services.toolPermissions.isHeadless();
+  const isHeadless =
+    executionContext?.isHeadless ?? services.toolPermissions.isHeadless();
+  const useChatHistoryService =
+    executionContext?.useChatHistoryService !== false;
 
   let fullResponse = "";
   let finalResponse = "";
@@ -442,16 +452,22 @@ export async function streamChatResponse(
 
   while (true) {
     // If ChatHistoryService is available, refresh local chatHistory view
-    chatHistory = refreshChatHistoryFromService(chatHistory, isCompacting);
+    chatHistory = refreshChatHistoryFromService(
+      chatHistory,
+      isCompacting,
+      useChatHistoryService,
+    );
     logger.debug("Starting conversation iteration");
 
     // Get system message once per iteration (can change based on tool permissions mode)
-    const systemMessage = await services.systemMessage.getSystemMessage(
-      services.toolPermissions.getState().currentMode,
-    );
+    const systemMessage =
+      executionContext?.systemMessage ??
+      (await services.systemMessage.getSystemMessage(
+        services.toolPermissions.getState().currentMode,
+      ));
 
     // Recompute tools on each iteration to handle mode changes during streaming
-    const rawTools = await getRequestTools(isHeadless);
+    const rawTools = await getRequestTools(isHeadless, executionContext);
     const tools = applyChatCompletionToolOverrides(
       rawTools,
       model.chatOptions?.toolOverrides,
@@ -466,6 +482,7 @@ export async function streamChatResponse(
       callbacks,
       systemMessage,
       tools,
+      useChatHistoryService,
     });
     chatHistory = preCompactionResult.chatHistory;
     if (preCompactionResult.wasCompacted) {
@@ -515,6 +532,7 @@ export async function streamChatResponse(
       callbacks,
       isHeadless,
       usage,
+      executionContext,
     });
 
     if (shouldReturn) {
@@ -565,6 +583,7 @@ export async function streamChatResponse(
       compactionOccurredThisTurn,
       shouldContinue,
       chatHistory,
+      useChatHistoryService,
     );
     chatHistory = autoContinueResult.chatHistory;
     const shouldAutoContinue = autoContinueResult.shouldAutoContinue;
