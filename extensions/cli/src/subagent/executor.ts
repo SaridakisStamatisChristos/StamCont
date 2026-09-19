@@ -71,6 +71,9 @@ export async function executeSubAgent(
   const childMode: PermissionMode = "auto";
   const childSessionId = createChildSessionId(parentSessionId);
 
+  let childSessionCreated = false;
+  let escapeHandler: (() => void) | undefined;
+
   try {
     logger.debug("Starting isolated subagent execution", {
       agent: subAgent.model?.name,
@@ -89,6 +92,7 @@ export async function executeSubAgent(
       childSessionId,
       childMode,
     });
+    childSessionCreated = true;
 
     const systemMessage = await buildAgentSystemMessage(
       subAgent,
@@ -105,7 +109,7 @@ export async function executeSubAgent(
       },
     ] as ChatHistoryItem[];
 
-    const escapeHandler = () => {
+    escapeHandler = () => {
       abortController.abort();
       void cliAgentKernelBridge.cancelSession(
         childSessionId,
@@ -120,64 +124,55 @@ export async function executeSubAgent(
         contextItems: [],
       });
     };
-
     escapeEvents.on("user-escape", escapeHandler);
 
-    try {
-      let accumulatedOutput = "";
+    let accumulatedOutput = "";
 
-      await streamChatResponse(
-        chatHistory,
-        model,
-        llmApi,
-        abortController,
-        {
-          onContent: (content: string) => {
-            accumulatedOutput += content;
-            onOutputUpdate?.(accumulatedOutput);
-          },
-          onToolResult: (result: string) => {
-            accumulatedOutput += `\n\n${result}`;
-            onOutputUpdate?.(accumulatedOutput);
-          },
+    await streamChatResponse(
+      chatHistory,
+      model,
+      llmApi,
+      abortController,
+      {
+        onContent: (content: string) => {
+          accumulatedOutput += content;
+          onOutputUpdate?.(accumulatedOutput);
         },
-        false,
-        {
-          permissionMode: childMode,
-          permissions: {
-            policies: [{ tool: "*", permission: "allow" }],
-          },
-          systemMessage,
-          useChatHistoryService: false,
-          sessionId: childSessionId,
-          isHeadless: false,
+        onToolResult: (result: string) => {
+          accumulatedOutput += `\n\n${result}`;
+          onOutputUpdate?.(accumulatedOutput);
         },
-      );
+      },
+      false,
+      {
+        permissionMode: childMode,
+        permissions: {
+          policies: [{ tool: "*", permission: "allow" }],
+        },
+        systemMessage,
+        useChatHistoryService: false,
+        sessionId: childSessionId,
+        isHeadless: false,
+      },
+    );
 
-      const lastMessage = chatHistory.at(-1);
-      const response =
-        typeof lastMessage?.message?.content === "string"
-          ? lastMessage.message.content
-          : "";
+    const lastMessage = chatHistory.at(-1);
+    const response =
+      typeof lastMessage?.message?.content === "string"
+        ? lastMessage.message.content
+        : "";
 
-      logger.debug("Subagent execution completed", {
-        agent: model.name,
-        parentSessionId,
-        childSessionId,
-        responseLength: response.length,
-      });
+    logger.debug("Subagent execution completed", {
+      agent: model.name,
+      parentSessionId,
+      childSessionId,
+      responseLength: response.length,
+    });
 
-      return {
-        success: true,
-        response,
-      };
-    } finally {
-      escapeEvents.removeListener("user-escape", escapeHandler);
-      await cliAgentKernelBridge.closeSession(
-        childSessionId,
-        childMode,
-      );
-    }
+    return {
+      success: true,
+      response,
+    };
   } catch (error: any) {
     logger.error("Subagent execution failed", {
       agent: subAgent.model?.name,
@@ -191,5 +186,15 @@ export async function executeSubAgent(
       response: "",
       error: error.message,
     };
+  } finally {
+    if (escapeHandler) {
+      escapeEvents.removeListener("user-escape", escapeHandler);
+    }
+    if (childSessionCreated) {
+      await cliAgentKernelBridge.closeSession(
+        childSessionId,
+        childMode,
+      );
+    }
   }
 }
