@@ -25,8 +25,9 @@ export async function validateSearchAndReplaceFilepath(
     typeof resolvedFilepath === "string"
       ? resolvedFilepath
       : resolvedFilepath?.uri;
-  const exists =
-    typeof resolvedFilepath === "string"
+  const exists = strictWorkspace
+    ? !!resolvedUri
+    : typeof resolvedFilepath === "string"
       ? true
       : resolvedUri
         ? await ide.fileExists(resolvedUri)
