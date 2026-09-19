@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { MockIdeMessenger } from "../../context/MockIdeMessenger";
 import { createMockStore, getEmptyRootState } from "../../util/test/mockStore";
+import type { RootState } from "../store";
 import { loadSession, saveCurrentSession } from "./session";
 
 function storedSession(sessionId: string): Session {
@@ -37,7 +38,7 @@ describe("session Core agent lifecycle", () => {
     expect(requestSpy).toHaveBeenCalledWith("agent/closeSession", {
       sessionId: "chat-current",
     });
-    expect(store.getState().session.id).toBe("chat-next");
+    expect((store.getState() as RootState).session.id).toBe("chat-next");
   });
 
   it("closes the outgoing Core agent session before opening a new chat", async () => {
@@ -69,6 +70,8 @@ describe("session Core agent lifecycle", () => {
     expect(requestSpy).toHaveBeenCalledWith("agent/closeSession", {
       sessionId: "chat-current",
     });
-    expect(store.getState().session.id).not.toBe("chat-current");
+    expect((store.getState() as RootState).session.id).not.toBe(
+      "chat-current",
+    );
   });
 });
