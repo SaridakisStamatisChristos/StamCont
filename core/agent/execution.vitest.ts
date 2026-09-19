@@ -131,7 +131,7 @@ describe("execution backend selection", () => {
       SandboxExecutionBackend,
     );
     expect(createExecutionBackend("plan", ide)).toBeInstanceOf(
-      IdeExecutionBackend,
+      SandboxExecutionBackend,
     );
   });
 });
