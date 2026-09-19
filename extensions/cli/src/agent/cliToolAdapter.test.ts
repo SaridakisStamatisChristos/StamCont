@@ -1,12 +1,11 @@
+import { AgentKernel } from "core/agent/kernel.js";
 import { describe, expect, it, vi } from "vitest";
 
-import { AgentKernel } from "core/agent/kernel.js";
-
+import type { Tool } from "../tools/types.js";
 import {
   adaptCliTool,
   getCliToolCapabilityRequirement,
 } from "./cliToolAdapter.js";
-import type { Tool } from "../tools/types.js";
 
 function tool(
   name: string,
