@@ -114,6 +114,15 @@ export async function prepareCliToolArgs(
       );
       break;
     }
+    case "UploadArtifact": {
+      if (typeof prepared.filePath === "string") {
+        prepared.filePath = await resolveExisting(
+          backend,
+          prepared.filePath,
+        );
+      }
+      break;
+    }
     default:
       break;
   }
