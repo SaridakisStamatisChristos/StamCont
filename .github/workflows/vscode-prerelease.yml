@@ -18,6 +18,7 @@ permissions:
 
 jobs:
   create-prerelease:
+    if: github.repository == 'continuedev/continue'
     name: Create VSCode Pre-release
     runs-on: ubuntu-latest
     steps:

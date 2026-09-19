@@ -1,9 +1,6 @@
 name: Similar Issue Search & Discussion Suggestion
 on:
-  issues:
-    types: [opened]
-  pull_request:
-    types: [opened]
+  workflow_dispatch:
 
 jobs:
   analyze:
