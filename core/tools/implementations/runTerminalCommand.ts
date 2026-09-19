@@ -7,6 +7,7 @@ import {
   markProcessAsRunning,
   removeBackgroundedProcess,
   removeRunningProcess,
+  terminateProcessTree,
   updateProcessOutput,
 } from "../../util/processTerminalStates";
 import {
@@ -59,7 +60,7 @@ function bindAbortSignal(
 
   const abort = () => {
     if (childProc.exitCode === null && childProc.signalCode === null) {
-      childProc.kill("SIGTERM");
+      terminateProcessTree(childProc, "SIGTERM");
     }
   };
   if (signal.aborted) {
@@ -159,7 +160,7 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
                 // Force kill after 5 seconds if still running
                 sigkillTimeoutId = setTimeout(() => {
                   if (isRunning()) {
-                    childProc.kill("SIGKILL");
+                    terminateProcessTree(childProc, "SIGKILL");
                   }
                 }, 5_000);
               }
@@ -373,12 +374,12 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
                   stderr += "\n[Timeout: process killed after 2 minutes]\n";
 
                   // Try graceful termination first
-                  childProc.kill("SIGTERM");
+                  terminateProcessTree(childProc, "SIGTERM");
 
                   // Force kill after 5 seconds if still running
                   sigkillTimeoutId = setTimeout(() => {
                     if (isRunning()) {
-                      childProc.kill("SIGKILL");
+                      terminateProcessTree(childProc, "SIGKILL");
                     }
                   }, 5_000);
                 }
