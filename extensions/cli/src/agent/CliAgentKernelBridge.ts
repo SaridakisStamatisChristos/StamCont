@@ -9,6 +9,7 @@ import { adaptCliTool } from "./cliToolAdapter.js";
 
 export interface CliKernelToolExecution {
   tool: Tool;
+  toolName?: string;
   args: Record<string, any>;
   context?: ToolRunContext;
   mode: PermissionMode;
@@ -45,9 +46,10 @@ export class CliAgentKernelBridge {
       profile,
     );
 
-    this.kernel.tools.replace(adaptCliTool(options.tool));
+    const toolName = options.toolName?.trim() || options.tool.name;
+    this.kernel.tools.replace(adaptCliTool(options.tool, toolName));
 
-    return this.kernel.executeTool(session, options.tool.name, {
+    return this.kernel.executeTool(session, toolName, {
       tool: options.tool,
       args: options.args,
       context: options.context,
