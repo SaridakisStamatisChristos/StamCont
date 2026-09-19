@@ -22,7 +22,10 @@ import {
   executeStreamedToolCalls,
   preprocessStreamedToolCalls,
 } from "./streamChatResponse.helpers.js";
-import { StreamCallbacks } from "./streamChatResponse.types.js";
+import {
+  StreamCallbacks,
+  StreamExecutionContext,
+} from "./streamChatResponse.types.js";
 
 interface HandleToolCallsOptions {
   toolCalls: ToolCall[];
@@ -31,16 +34,26 @@ interface HandleToolCallsOptions {
   callbacks: StreamCallbacks | undefined;
   isHeadless: boolean;
   usage?: any;
+  executionContext?: StreamExecutionContext;
 }
 
 export async function handleToolCalls(
   options: HandleToolCallsOptions,
 ): Promise<boolean> {
-  const { toolCalls, chatHistory, content, callbacks, isHeadless, usage } =
-    options;
+  const {
+    toolCalls,
+    chatHistory,
+    content,
+    callbacks,
+    isHeadless,
+    usage,
+    executionContext,
+  } = options;
   const chatHistorySvc = services.chatHistory;
   const useService =
-    typeof chatHistorySvc?.isReady === "function" && chatHistorySvc.isReady();
+    executionContext?.useChatHistoryService !== false &&
+    typeof chatHistorySvc?.isReady === "function" &&
+    chatHistorySvc.isReady();
   if (toolCalls.length === 0) {
     if (content) {
       if (useService) {
@@ -153,6 +166,7 @@ export async function handleToolCalls(
     preprocessedCalls,
     callbacks,
     isHeadless,
+    executionContext,
   );
 
   if (isHeadless && hasRejection) {
@@ -169,19 +183,25 @@ export async function handleToolCalls(
   return false;
 }
 
-export async function getRequestTools(isHeadless: boolean) {
+export async function getRequestTools(
+  isHeadless: boolean,
+  executionContext?: StreamExecutionContext,
+) {
   const availableTools = await getAllAvailableTools(isHeadless);
 
-  const permissionsState =
-    await serviceContainer.get<ToolPermissionServiceState>(
-      SERVICE_NAMES.TOOL_PERMISSIONS,
-    );
+  const permissions =
+    executionContext?.permissions ??
+    (
+      await serviceContainer.get<ToolPermissionServiceState>(
+        SERVICE_NAMES.TOOL_PERMISSIONS,
+      )
+    ).permissions;
 
   const allowedTools: Tool[] = [];
   for (const tool of availableTools) {
     const result = checkToolPermission(
       { name: tool.name, arguments: {} },
-      permissionsState.permissions,
+      permissions,
     );
 
     if (
