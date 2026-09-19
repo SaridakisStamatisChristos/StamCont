@@ -162,12 +162,41 @@ export async function handleToolCalls(
   // Execute the valid preprocessed tool calls
   // Note: executeStreamedToolCalls adds tool results to toolCallStates via
   // services.chatHistory.addToolResult() internally
-  const { hasRejection } = await executeStreamedToolCalls(
-    preprocessedCalls,
-    callbacks,
-    isHeadless,
-    executionContext,
-  );
+  const { hasRejection, chatHistoryEntries } =
+    await executeStreamedToolCalls(
+      preprocessedCalls,
+      callbacks,
+      isHeadless,
+      executionContext,
+    );
+
+  if (!useService && chatHistoryEntries.length > 0) {
+    const lastAssistantIndex = chatHistory.findLastIndex(
+      (item) => item.message.role === "assistant" && item.toolCallStates,
+    );
+    if (
+      lastAssistantIndex >= 0 &&
+      chatHistory[lastAssistantIndex].toolCallStates
+    ) {
+      for (const entry of chatHistoryEntries) {
+        const state = chatHistory[lastAssistantIndex].toolCallStates!.find(
+          (toolState) => toolState.toolCallId === entry.tool_call_id,
+        );
+        if (!state) {
+          continue;
+        }
+        const content = stripImages(entry.content) || "";
+        state.status = entry.status;
+        state.output = [
+          {
+            content,
+            name: "Tool Result",
+            description: "Tool execution result",
+          },
+        ];
+      }
+    }
+  }
 
   if (isHeadless && hasRejection) {
     logger.debug(
