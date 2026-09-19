@@ -94,15 +94,15 @@ export async function evaluateToolPolicies(
           toolCallState,
         }))
       : await Promise.all(
-    generatedToolCalls.map((toolCallState) =>
-      evaluateToolPolicy(
-        ideMessenger,
-        activeTools,
-        toolCallState,
-        toolPolicies,
-      ),
-        ),
-      );
+          generatedToolCalls.map((toolCallState) =>
+            evaluateToolPolicy(
+              ideMessenger,
+              activeTools,
+              toolCallState,
+              toolPolicies,
+            ),
+          ),
+        );
 
   const disabledResults = policyResults.filter(
     ({ policy }) => policy === "disabled",
