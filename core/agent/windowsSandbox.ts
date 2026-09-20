@@ -47,7 +47,6 @@ Write-StamContDiagnostic -Stage "before-add-type"
 
 Add-Type -Language CSharp -TypeDefinition @'
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
@@ -717,7 +716,9 @@ public static class StamContAppContainer
         string commandInterpreter,
         string commandUtf8Base64,
         string workingDirectory,
-        IDictionary environment,
+        string environmentUtf8Base64,
+        string profileHome,
+        string profileTemp,
         string diagnosticsPath)
     {
         byte[] commandBytes = Convert.FromBase64String(commandUtf8Base64);
@@ -727,7 +728,9 @@ public static class StamContAppContainer
             commandInterpreter,
             commandText,
             workingDirectory,
-            environment,
+            environmentUtf8Base64,
+            profileHome,
+            profileTemp,
             diagnosticsPath);
     }
 
@@ -736,7 +739,9 @@ public static class StamContAppContainer
         string commandInterpreter,
         string commandText,
         string workingDirectory,
-        IDictionary environment,
+        string environmentUtf8Base64,
+        string profileHome,
+        string profileTemp,
         string diagnosticsPath)
     {
         IntPtr appContainerSid = IntPtr.Zero;
@@ -951,28 +956,56 @@ public static class StamContAppContainer
             startup.StartupInfo.hStdError = childStdErr;
             startup.lpAttributeList = attributeList;
 
-            // The trusted broker needs its own Windows runtime environment.
-            // The lowbox gets only the separately filtered child environment;
-            // never inherit PowerShell's host profile or loader variables.
-            var variables = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            foreach (DictionaryEntry variable in environment)
+            // Decode the lowbox environment natively. PowerShell never
+            // materializes environment values as PSObject instances, avoiding
+            // both expensive ConvertFrom-Json property expansion and CLR
+            // binder/cast ambiguity at the C# boundary.
+            byte[] environmentBytes =
+                Convert.FromBase64String(environmentUtf8Base64);
+            string environmentText = Encoding.UTF8.GetString(environmentBytes);
+            var variables = new SortedDictionary<string, string>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (string entry in environmentText.Split(
+                new char[] { '\0' },
+                StringSplitOptions.RemoveEmptyEntries))
             {
-                string key = (string)variable.Key;
-                string value = (string)variable.Value;
-                if (String.IsNullOrEmpty(key) || key.IndexOf('=') >= 0 ||
-                    key.IndexOf('\0') >= 0 || value.IndexOf('\0') >= 0)
+                int separator = entry.IndexOf('=');
+                if (separator <= 0)
                 {
-                    throw new ArgumentException("Invalid sandbox environment entry");
+                    throw new ArgumentException(
+                        "Invalid sandbox environment entry");
+                }
+
+                string key = entry.Substring(0, separator);
+                string value = entry.Substring(separator + 1);
+                if (key.IndexOf('=') >= 0 ||
+                    key.IndexOf('\0') >= 0 ||
+                    value.IndexOf('\0') >= 0)
+                {
+                    throw new ArgumentException(
+                        "Invalid sandbox environment entry");
                 }
                 variables[key] = value;
             }
+
+            variables["HOME"] = profileHome;
+            variables["USERPROFILE"] = profileHome;
+            variables["APPDATA"] = profileHome;
+            variables["LOCALAPPDATA"] = profileHome;
+            variables["TEMP"] = profileTemp;
+            variables["TMP"] = profileTemp;
+            variables["TMPDIR"] = profileTemp;
+
             var entries = new List<string>();
             foreach (var variable in variables)
             {
                 entries.Add(variable.Key + "=" + variable.Value);
             }
-            // StringToHGlobalUni appends the second NUL terminator.
-            environmentBlock = Marshal.StringToHGlobalUni(String.Join("\0", entries.ToArray()) + "\0");
+            // The explicit trailing NUL plus StringToHGlobalUni's own
+            // terminator produces the double-NUL-terminated Unicode block
+            // required by CreateProcessW.
+            environmentBlock = Marshal.StringToHGlobalUni(
+                String.Join("\0", entries.ToArray()) + "\0");
 
             Diagnostic(diagnosticsPath, profileName, "before-create-process");
             if (!CreateProcessW(
@@ -1317,18 +1350,6 @@ try {
   $profileTemp = Join-Path $profileHome "Temp"
   [IO.Directory]::CreateDirectory($profileTemp) | Out-Null
 
-  $childEnvironment = @{}
-  foreach ($entry in $config.Environment.psobject.Properties) {
-    $childEnvironment[$entry.Name] = [string]$entry.Value
-  }
-  $childEnvironment.HOME = $profileHome
-  $childEnvironment.USERPROFILE = $profileHome
-  $childEnvironment.APPDATA = $profileHome
-  $childEnvironment.LOCALAPPDATA = $profileHome
-  $childEnvironment.TEMP = $profileTemp
-  $childEnvironment.TMP = $profileTemp
-  $childEnvironment.TMPDIR = $profileTemp
-
   $commandText = [Text.Encoding]::UTF8.GetString(
     [Convert]::FromBase64String([string]$config.CommandUtf8Base64)
   )
@@ -1361,7 +1382,9 @@ try {
       [string]$config.CommandInterpreter,
       [string]$config.CommandUtf8Base64,
       [string]$config.Cwd,
-      $childEnvironment,
+      [string]$config.EnvironmentUtf8Base64,
+      [string]$profileHome,
+      [string]$profileTemp,
       [string]$config.DiagnosticsPath
     )
 
@@ -1468,6 +1491,18 @@ export function spawnWindowsAppContainerShell(
     PATH: sandboxPathEntries.join(path.delimiter),
   };
 
+  const environmentPayload = Object.entries(sandboxEnv)
+    .filter(
+      (entry): entry is [string, string] =>
+        typeof entry[1] === "string" &&
+        entry[0].length > 0 &&
+        !entry[0].includes("=") &&
+        !entry[0].includes("\0") &&
+        !entry[1].includes("\0"),
+    )
+    .map(([key, value]) => `${key}=${value}`)
+    .join("\0");
+
   const config = {
     ProfileName: profileName,
     Roots: [...options.roots],
@@ -1476,7 +1511,10 @@ export function spawnWindowsAppContainerShell(
     HomeDirectory: options.homeDirectory,
     TempDirectory: options.tempDirectory,
     CommandInterpreter: commandInterpreter,
-    Environment: sandboxEnv,
+    EnvironmentUtf8Base64: Buffer.from(
+      environmentPayload,
+      "utf8",
+    ).toString("base64"),
     CommandUtf8Base64: Buffer.from(command, "utf8").toString("base64"),
     CommandUtf8Length: Buffer.byteLength(command, "utf8"),
     CommandSha256: createHash("sha256").update(command, "utf8").digest("hex"),
