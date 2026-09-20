@@ -6,6 +6,13 @@ export async function resolveClientToolExistingPath(
   filepath: string,
   extras: ClientToolExtras,
 ): Promise<string> {
+  if (!filepath || typeof filepath !== "string") {
+    throw new ContinueError(
+      ContinueErrorReason.FindAndReplaceMissingFilepath,
+      "filepath (string) is required",
+    );
+  }
+
   const executionProfile =
     extras.getState().session?.executionProfile ?? "interactive";
   const result = await extras.ideMessenger.request("tools/resolvePath", {
