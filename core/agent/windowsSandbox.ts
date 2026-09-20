@@ -26,7 +26,6 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
-using Microsoft.Win32.SafeHandles;
 
 public static class StamContAppContainer
 {
@@ -37,6 +36,7 @@ public static class StamContAppContainer
     private const uint DUPLICATE_SAME_ACCESS = 0x00000002;
     private const uint HANDLE_FLAG_INHERIT = 0x00000001;
     private const uint CREATE_NO_WINDOW = 0x08000000;
+    private const int ERROR_BROKEN_PIPE = 109;
     private const int STD_INPUT_HANDLE = -10;
     private const int STD_OUTPUT_HANDLE = -11;
     private const int STD_ERROR_HANDLE = -12;
@@ -328,33 +328,99 @@ public static class StamContAppContainer
         uint dwMask,
         uint dwFlags);
 
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool PeekNamedPipe(
+        IntPtr hNamedPipe,
+        IntPtr lpBuffer,
+        uint nBufferSize,
+        IntPtr lpBytesRead,
+        out uint lpTotalBytesAvail,
+        IntPtr lpBytesLeftThisMessage);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool ReadFile(
+        IntPtr hFile,
+        byte[] lpBuffer,
+        uint nNumberOfBytesToRead,
+        out uint lpNumberOfBytesRead,
+        IntPtr lpOverlapped);
+
     private static void PumpPipe(
         IntPtr readHandle,
         Stream destination,
-        bool isStdout)
+        bool isStdout,
+        ManualResetEventSlim stop)
     {
-        using (var safe = new SafeFileHandle(readHandle, false))
-        using (var input = new FileStream(safe, FileAccess.Read, 4096, false))
+        byte[] buffer = new byte[8192];
+
+        while (true)
         {
-            byte[] buffer = new byte[8192];
-            while (true)
+            uint available;
+            if (!PeekNamedPipe(
+                    readHandle,
+                    IntPtr.Zero,
+                    0,
+                    IntPtr.Zero,
+                    out available,
+                    IntPtr.Zero))
             {
-                int count = input.Read(buffer, 0, buffer.Length);
-                if (count <= 0)
+                int error = Marshal.GetLastWin32Error();
+                if (error == ERROR_BROKEN_PIPE)
                 {
                     break;
                 }
-                if (isStdout)
-                {
-                    Interlocked.Add(ref LastStdoutBytes, count);
-                }
-                else
-                {
-                    Interlocked.Add(ref LastStderrBytes, count);
-                }
-                destination.Write(buffer, 0, count);
-                destination.Flush();
+                throw new Win32Exception(
+                    error,
+                    "PeekNamedPipe failed for sandbox output");
             }
+
+            if (available == 0)
+            {
+                if (stop.IsSet)
+                {
+                    break;
+                }
+                Thread.Sleep(2);
+                continue;
+            }
+
+            uint requested = Math.Min((uint)buffer.Length, available);
+            uint read;
+            if (!ReadFile(
+                    readHandle,
+                    buffer,
+                    requested,
+                    out read,
+                    IntPtr.Zero))
+            {
+                int error = Marshal.GetLastWin32Error();
+                if (error == ERROR_BROKEN_PIPE)
+                {
+                    break;
+                }
+                throw new Win32Exception(
+                    error,
+                    "ReadFile failed for sandbox output");
+            }
+            if (read == 0)
+            {
+                if (stop.IsSet)
+                {
+                    break;
+                }
+                continue;
+            }
+
+            if (isStdout)
+            {
+                Interlocked.Add(ref LastStdoutBytes, (long)read);
+            }
+            else
+            {
+                Interlocked.Add(ref LastStderrBytes, (long)read);
+            }
+            destination.Write(buffer, 0, (int)read);
+            destination.Flush();
         }
     }
 
@@ -642,6 +708,9 @@ public static class StamContAppContainer
         IntPtr stderrRead = IntPtr.Zero;
         Thread stdoutThread = null;
         Thread stderrThread = null;
+        ManualResetEventSlim outputStop = new ManualResetEventSlim(false);
+        Exception stdoutPumpError = null;
+        Exception stderrPumpError = null;
         PROCESS_INFORMATION processInfo = new PROCESS_INFORMATION();
 
         try
@@ -877,9 +946,35 @@ public static class StamContAppContainer
             childStdErr = IntPtr.Zero;
 
             stdoutThread = new Thread(() =>
-                PumpPipe(stdoutRead, Console.OpenStandardOutput(), true));
+            {
+                try
+                {
+                    PumpPipe(
+                        stdoutRead,
+                        Console.OpenStandardOutput(),
+                        true,
+                        outputStop);
+                }
+                catch (Exception error)
+                {
+                    stdoutPumpError = error;
+                }
+            });
             stderrThread = new Thread(() =>
-                PumpPipe(stderrRead, Console.OpenStandardError(), false));
+            {
+                try
+                {
+                    PumpPipe(
+                        stderrRead,
+                        Console.OpenStandardError(),
+                        false,
+                        outputStop);
+                }
+                catch (Exception error)
+                {
+                    stderrPumpError = error;
+                }
+            });
             stdoutThread.IsBackground = true;
             stderrThread.IsBackground = true;
             stdoutThread.Start();
@@ -902,12 +997,30 @@ public static class StamContAppContainer
                 job = IntPtr.Zero;
             }
 
+            // No new writers can survive the closed job. Tell the pump loops
+            // to finish once all currently buffered bytes have been drained;
+            // do not wait for pipe EOF, because inherited write handles are not
+            // a reliable lifecycle signal across AppContainer descendants.
+            outputStop.Set();
+
             bool stdoutClosed = stdoutThread.Join(5000);
             bool stderrClosed = stderrThread.Join(5000);
             if (!stdoutClosed || !stderrClosed)
             {
                 throw new TimeoutException(
-                    "Sandbox output pipes did not close after process-tree teardown");
+                    "Sandbox output pumps did not stop after process-tree teardown");
+            }
+            if (stdoutPumpError != null)
+            {
+                throw new IOException(
+                    "Sandbox stdout pump failed",
+                    stdoutPumpError);
+            }
+            if (stderrPumpError != null)
+            {
+                throw new IOException(
+                    "Sandbox stderr pump failed",
+                    stderrPumpError);
             }
             return unchecked((int)exitCode);
         }
@@ -960,6 +1073,7 @@ public static class StamContAppContainer
             {
                 CloseHandle(stderrRead);
             }
+            outputStop.Dispose();
             if (jobListPtr != IntPtr.Zero)
             {
                 Marshal.FreeHGlobal(jobListPtr);
