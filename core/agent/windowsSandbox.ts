@@ -871,7 +871,9 @@ public static class StamContAppContainer
                 job = IntPtr.Zero;
             }
 
-            if (!stdoutThread.Join(5000) || !stderrThread.Join(5000))
+            bool stdoutClosed = stdoutThread.Join(5000);
+            bool stderrClosed = stderrThread.Join(5000);
+            if (!stdoutClosed || !stderrClosed)
             {
                 throw new TimeoutException(
                     "Sandbox output pipes did not close after process-tree teardown");
