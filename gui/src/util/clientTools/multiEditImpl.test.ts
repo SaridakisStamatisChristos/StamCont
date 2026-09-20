@@ -1,8 +1,10 @@
 import { ContinueError, ContinueErrorReason } from "core/util/errors";
-import * as clientPathResolver from "./resolveClientToolPath";
 import { beforeEach, describe, expect, it, Mock, vi } from "vitest";
+
 import { applyForEditTool } from "../../redux/thunks/handleApplyStateUpdate";
+
 import { ClientToolExtras } from "./callClientTool";
+import * as clientPathResolver from "./resolveClientToolPath";
 import { multiEditImpl } from "./multiEditImpl";
 
 vi.mock("uuid", () => ({
