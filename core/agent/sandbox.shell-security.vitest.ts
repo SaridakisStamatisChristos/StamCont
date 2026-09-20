@@ -149,7 +149,10 @@ describe("sandbox shell security properties", () => {
       const backend = new SandboxExecutionBackend(ideWithWorkspace(workspace), {
         readOnly: true,
       });
-      const sanity = await runSandboxCommand(backend, "true");
+      const sanity = await runSandboxCommand(
+        backend,
+        "$ErrorActionPreference='Stop'; $null = $true",
+      );
       expect(sanity.code, sanity.stderr).toBe(0);
 
       const result = await runSandboxCommand(
