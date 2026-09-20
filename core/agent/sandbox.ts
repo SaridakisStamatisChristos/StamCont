@@ -956,6 +956,23 @@ export class SandboxExecutionBackend implements ExecutionBackend {
       return [fileURLToPath(trimmed)];
     }
     const expanded = untildify(trimmed);
+    if (
+      process.platform === "win32" &&
+      (expanded.startsWith("\\\\") || expanded.startsWith("//")) &&
+      !expanded.startsWith("\\\\?\\")
+    ) {
+      throw new SandboxViolationError(
+        `Sandbox rejects UNC/network path: ${inputPath}`,
+      );
+    }
+    if (
+      process.platform === "win32" &&
+      /^\\\\\?\\UNC\\/i.test(expanded)
+    ) {
+      throw new SandboxViolationError(
+        `Sandbox rejects extended UNC/network path: ${inputPath}`,
+      );
+    }
     if (/^[a-zA-Z]:(?:$|[^\\/])/.test(expanded)) {
       throw new SandboxViolationError(
         `Sandbox rejects ambiguous drive-relative path: ${inputPath}`,
