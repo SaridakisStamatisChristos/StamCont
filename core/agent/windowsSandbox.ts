@@ -854,7 +854,7 @@ try {
   )
   [IO.File]::WriteAllText(
     $commandPath,
-    "@echo off`r`n" + $commandText + "`r`nexit /b %errorlevel%`r`n",
+    "@echo off" + [Environment]::NewLine + $commandText + [Environment]::NewLine + "exit /b %errorlevel%" + [Environment]::NewLine,
     [Text.UTF8Encoding]::new($false)
   )
 
