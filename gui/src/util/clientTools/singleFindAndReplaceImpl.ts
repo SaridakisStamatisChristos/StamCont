@@ -1,5 +1,6 @@
 import { validateSingleEdit } from "core/edit/searchAndReplace/findAndReplaceUtils";
 import { executeFindAndReplace } from "core/edit/searchAndReplace/performReplace";
+import { ContinueError, ContinueErrorReason } from "core/util/errors";
 import { v4 as uuid } from "uuid";
 
 import { applyForEditTool } from "../../redux/thunks/handleApplyStateUpdate";
@@ -12,6 +13,13 @@ export const singleFindAndReplaceImpl: ClientToolImpl = async (
   toolCallId,
   extras,
 ) => {
+  if (!args.filepath || typeof args.filepath !== "string") {
+    throw new ContinueError(
+      ContinueErrorReason.FindAndReplaceMissingFilepath,
+      "filepath (string) is required",
+    );
+  }
+
   // Note that this is fully duplicate of what occurs in args preprocessing
   // This is to handle cases where file changes while tool call is pending
   const { oldString, newString, replaceAll } = validateSingleEdit(
