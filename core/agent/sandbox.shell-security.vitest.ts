@@ -93,6 +93,29 @@ afterEach(async () => {
 
 describe("sandbox shell security properties", () => {
   it.skipIf(process.platform !== "win32")(
+    "uses an AppContainer-compatible PowerShell runtime",
+    async () => {
+      const workspace = await tempDir("stamcont-win-pwsh-version-");
+      const backend = new SandboxExecutionBackend(ideWithWorkspace(workspace));
+
+      const result = await runSandboxCommand(
+        backend,
+        "$PSVersionTable.PSVersion.ToString()",
+      );
+
+      expect(result.code, result.stderr).toBe(0);
+      const match = result.stdout.trim().match(/^(\d+)\.(\d+)\.(\d+)/);
+      expect(match).not.toBeNull();
+      const version = match!.slice(1, 4).map(Number);
+      expect(
+        version[0] > 7 ||
+          (version[0] === 7 &&
+            (version[1] > 6 || (version[1] === 6 && version[2] >= 2))),
+      ).toBe(true);
+    },
+  );
+
+  it.skipIf(process.platform !== "win32")(
     "enforces Windows AppContainer workspace and outside-file boundaries",
     async () => {
       const workspace = await tempDir("stamcont-win-workspace-");
@@ -151,7 +174,7 @@ describe("sandbox shell security properties", () => {
           "$ErrorActionPreference='Stop'",
           'cmd.exe /d /c "echo cmd-child>cmd-child.txt"',
           "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
-          'powershell.exe -NoProfile -NonInteractive -Command "Set-Content -LiteralPath ps-child.txt -Value ps-child -NoNewline"',
+          'pwsh.exe -NoLogo -NoProfile -NonInteractive -Command "Set-Content -LiteralPath ps-child.txt -Value ps-child -NoNewline"',
           "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
         ].join("; "),
       );
@@ -251,7 +274,7 @@ describe("sandbox shell security properties", () => {
         process.platform === "win32"
           ? [
               "$ErrorActionPreference='Stop'",
-              "$child = Start-Process powershell.exe -PassThru -ArgumentList @('-NoProfile','-NonInteractive','-Command','Start-Sleep -Milliseconds 1600; Set-Content -LiteralPath child-after-kill.txt -Value escaped -NoNewline')",
+              "$child = Start-Process pwsh.exe -PassThru -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-Command','Start-Sleep -Milliseconds 1600; Set-Content -LiteralPath child-after-kill.txt -Value escaped -NoNewline')",
               "Start-Sleep -Seconds 10",
             ].join("; ")
           : "(sleep 1.6; printf escaped > child-after-kill.txt) & sleep 10";
