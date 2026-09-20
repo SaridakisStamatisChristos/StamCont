@@ -94,6 +94,44 @@ function pathWithin(root: string, candidate: string): boolean {
   );
 }
 
+function canonicalExistingPath(value: string): string {
+  try {
+    return realpathSync.native(value);
+  } catch {
+    return path.resolve(value);
+  }
+}
+
+function assertWindowsWorkspaceIsNotVirtualized(
+  roots: readonly string[],
+  cwd: string,
+  env: Env,
+): void {
+  if (process.platform !== "win32") {
+    return;
+  }
+
+  const userProfile = getEnvironmentValue(env, "USERPROFILE");
+  const virtualizedRoots = [
+    getEnvironmentValue(env, "LOCALAPPDATA"),
+    getEnvironmentValue(env, "APPDATA"),
+    userProfile ? path.join(userProfile, "AppData") : undefined,
+  ]
+    .filter((value): value is string => Boolean(value))
+    .map(canonicalExistingPath);
+
+  const requested = [...roots, cwd].map(canonicalExistingPath);
+  const virtualized = requested.find((candidate) =>
+    virtualizedRoots.some((root) => pathWithin(root, candidate)),
+  );
+
+  if (virtualized) {
+    throw new SandboxViolationError(
+      `Windows AppContainer cannot provide host-visible workspace writes under AppData because Windows virtualizes those writes into per-container storage. Move the workspace outside AppData or use Full Access explicitly. Blocked path: ${virtualized}`,
+    );
+  }
+}
+
 function findExecutable(name: string, env: Env): string | undefined {
   const pathValue = env.PATH ?? process.env.PATH ?? "";
   const extensions =
@@ -640,6 +678,9 @@ function spawnSandboxedShell(
   }
 
   if (process.platform === "win32") {
+    const sourceEnv = (options.env as Env | undefined) ?? process.env;
+    assertWindowsWorkspaceIsNotVirtualized(roots, cwd, sourceEnv);
+
     const tempRoot = createPrivateTempDirectory();
     const homeDirectory = path.join(tempRoot, "home");
     const tempDirectory = path.join(tempRoot, "tmp");
