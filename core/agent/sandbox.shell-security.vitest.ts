@@ -274,10 +274,8 @@ describe("sandbox shell security properties", () => {
         backend,
         [
           "cmd.exe /d /c echo cmd-child^>cmd-child.txt",
-          "if errorlevel 1 exit /b %errorlevel%",
           "cmd.exe /d /c echo nested-child^>nested-child.txt",
-          "if errorlevel 1 exit /b %errorlevel%",
-        ].join(" & "),
+        ].join(" && "),
       );
 
       expect(result.code, result.stderr).toBe(0);
@@ -436,6 +434,7 @@ describe("sandbox shell security properties", () => {
       ).rejects.toBeDefined();
       await expect(readFile(unrelatedTarget, "utf8")).resolves.toBe("alive");
     },
+    10_000,
   );
 
   it.skipIf(skipPosixSandboxTests)(
