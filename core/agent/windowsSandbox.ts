@@ -426,13 +426,15 @@ public static class StamContAppContainer
                 "WindowsPowerShell",
                 "v1.0",
                 "powershell.exe");
-            string escapedScriptPath =
-                commandScriptPath.Replace("\\", "\\\\").Replace("\"", "\\\"");
+            // lpApplicationName already identifies powershell.exe, but argv[0]
+            // still belongs in the mutable command line. Use normal Windows
+            // quoting here; literal backslashes before quote characters become
+            // part of the argument and can cause PowerShell to ignore -File.
             StringBuilder commandLine = new StringBuilder(
-                "\\"" + powerShell + "\\"" +
+                "\"" + powerShell + "\"" +
                 " -NoLogo -NoProfile -NonInteractive" +
-                " -ExecutionPolicy Bypass -File \\"" +
-                escapedScriptPath + "\\"");
+                " -ExecutionPolicy Bypass -File \"" +
+                commandScriptPath + "\"");
 
             STARTUPINFOEX startup = new STARTUPINFOEX();
             startup.StartupInfo.cb =
