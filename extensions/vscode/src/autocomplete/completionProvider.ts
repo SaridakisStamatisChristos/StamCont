@@ -31,12 +31,6 @@ import {
   stopStatusBarLoading,
 } from "./statusBar";
 
-interface VsCodeCompletionInput {
-  document: vscode.TextDocument;
-  position: vscode.Position;
-  context: vscode.InlineCompletionContext;
-}
-
 export class ContinueCompletionProvider
   implements vscode.InlineCompletionItemProvider
 {
