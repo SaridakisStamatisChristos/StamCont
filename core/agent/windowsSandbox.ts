@@ -29,8 +29,6 @@ using System.Text;
 public static class StamContAppContainer
 {
     private const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
-    private const uint CREATE_SUSPENDED = 0x00000004;
-    private const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
     private const uint FILE_GENERIC_READ = 0x00120089;
     private const uint FILE_GENERIC_EXECUTE = 0x001200A0;
     private const uint FILE_ALL_ACCESS = 0x001F01FF;
@@ -47,13 +45,10 @@ public static class StamContAppContainer
     private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
     private const int JobObjectExtendedLimitInformation = 9;
     private const uint INFINITE = 0xFFFFFFFF;
-    private const uint TOKEN_QUERY = 0x0008;
-    private const uint TOKEN_ADJUST_DEFAULT = 0x0080;
-    private const int TokenMandatoryPolicy = 27;
-    private const int TokenIsAppContainer = 29;
-    private const uint TOKEN_MANDATORY_POLICY_OFF = 0x00000000;
     private static readonly IntPtr PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES =
         new IntPtr(0x00020009);
+    private static readonly IntPtr PROC_THREAD_ATTRIBUTE_JOB_LIST =
+        new IntPtr(0x0002000D);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct SECURITY_CAPABILITIES
@@ -111,12 +106,6 @@ public static class StamContAppContainer
     {
         public STARTUPINFO StartupInfo;
         public IntPtr lpAttributeList;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct TOKEN_MANDATORY_POLICY
-    {
-        public uint Policy;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -268,19 +257,6 @@ public static class StamContAppContainer
         uint cbJobObjectInfoLength);
 
     [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool AssignProcessToJobObject(
-        IntPtr hJob,
-        IntPtr hProcess);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool TerminateProcess(
-        IntPtr hProcess,
-        uint uExitCode);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern uint ResumeThread(IntPtr hThread);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
     private static extern uint WaitForSingleObject(
         IntPtr hHandle,
         uint dwMilliseconds);
@@ -289,27 +265,6 @@ public static class StamContAppContainer
     private static extern bool GetExitCodeProcess(
         IntPtr hProcess,
         out uint lpExitCode);
-
-    [DllImport("advapi32.dll", SetLastError = true)]
-    private static extern bool OpenProcessToken(
-        IntPtr ProcessHandle,
-        uint DesiredAccess,
-        out IntPtr TokenHandle);
-
-    [DllImport("advapi32.dll", SetLastError = true)]
-    private static extern bool GetTokenInformation(
-        IntPtr TokenHandle,
-        int TokenInformationClass,
-        IntPtr TokenInformation,
-        uint TokenInformationLength,
-        out uint ReturnLength);
-
-    [DllImport("advapi32.dll", SetLastError = true)]
-    private static extern bool SetTokenInformation(
-        IntPtr TokenHandle,
-        int TokenInformationClass,
-        ref TOKEN_MANDATORY_POLICY TokenInformation,
-        uint TokenInformationLength);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr hObject);
@@ -523,10 +478,8 @@ public static class StamContAppContainer
         IntPtr securityCapabilitiesPtr = IntPtr.Zero;
         IntPtr job = IntPtr.Zero;
         IntPtr jobInfoPtr = IntPtr.Zero;
-        IntPtr environmentPtr = IntPtr.Zero;
-        IntPtr processToken = IntPtr.Zero;
+        IntPtr jobListPtr = IntPtr.Zero;
         PROCESS_INFORMATION processInfo = new PROCESS_INFORMATION();
-        bool processCreated = false;
 
         try
         {
@@ -555,13 +508,13 @@ public static class StamContAppContainer
             IntPtr attributeListSize = IntPtr.Zero;
             InitializeProcThreadAttributeList(
                 IntPtr.Zero,
-                1,
+                2,
                 0,
                 ref attributeListSize);
             attributeList = Marshal.AllocHGlobal(attributeListSize);
             if (!InitializeProcThreadAttributeList(
                 attributeList,
-                1,
+                2,
                 0,
                 ref attributeListSize))
             {
@@ -611,8 +564,29 @@ public static class StamContAppContainer
                     "SetInformationJobObject failed");
             }
 
-            // Keep process creation minimal: SECURITY_CAPABILITIES is the
-            // only extended attribute. The untrusted command lives in a
+            // Assign the child to StamCont's kill-on-close Job Object as a
+            // process-creation attribute. Windows performs this assignment
+            // before the initial thread is allowed to run, eliminating the
+            // suspended-create/assign/resume window entirely.
+            jobListPtr = Marshal.AllocHGlobal(IntPtr.Size);
+            Marshal.WriteIntPtr(jobListPtr, job);
+            if (!UpdateProcThreadAttribute(
+                attributeList,
+                0,
+                PROC_THREAD_ATTRIBUTE_JOB_LIST,
+                jobListPtr,
+                new IntPtr(IntPtr.Size),
+                IntPtr.Zero,
+                IntPtr.Zero))
+            {
+                throw new Win32Exception(
+                    Marshal.GetLastWin32Error(),
+                    "Setting AppContainer Job Object attribute failed");
+            }
+
+            // Keep process creation narrow: SECURITY_CAPABILITIES establishes
+            // the AppContainer and JOB_LIST atomically attaches the owned
+            // kill-on-close process tree. The untrusted command lives in a
             // sandbox-private .cmd file. cmd.exe itself opens the capture files
             // after entering the AppContainer, avoiding cross-boundary handle
             // inheritance entirely.
@@ -625,27 +599,6 @@ public static class StamContAppContainer
                 quote + " 1>" + quote + stdoutPath +
                 quote + " 2>" + quote + stderrPath + quote);
 
-            // A contained process gets an explicit UTF-16 environment block.
-            // The outer launcher already runs with StamCont's scrubbed
-            // environment, so rebuilding that environment here preserves the
-            // allowlist while making the lowbox spawn self-contained.
-            IDictionary inheritedEnvironment = Environment.GetEnvironmentVariables();
-            List<string> environmentEntries = new List<string>();
-            foreach (DictionaryEntry entry in inheritedEnvironment)
-            {
-                string name = entry.Key == null ? "" : entry.Key.ToString();
-                if (String.IsNullOrEmpty(name))
-                {
-                    continue;
-                }
-                string value = entry.Value == null ? "" : entry.Value.ToString();
-                environmentEntries.Add(name + "=" + value);
-            }
-            environmentEntries.Sort(StringComparer.OrdinalIgnoreCase);
-            string environmentBlock =
-                String.Join("\0", environmentEntries.ToArray()) + "\0\0";
-            environmentPtr = Marshal.StringToHGlobalUni(environmentBlock);
-
             STARTUPINFOEX startup = new STARTUPINFOEX();
             startup.StartupInfo.cb =
                 (uint)Marshal.SizeOf(typeof(STARTUPINFOEX));
@@ -657,10 +610,8 @@ public static class StamContAppContainer
                 IntPtr.Zero,
                 IntPtr.Zero,
                 false,
-                EXTENDED_STARTUPINFO_PRESENT |
-                    CREATE_UNICODE_ENVIRONMENT |
-                    CREATE_SUSPENDED,
-                environmentPtr,
+                EXTENDED_STARTUPINFO_PRESENT,
+                IntPtr.Zero,
                 workingDirectory,
                 ref startup,
                 out processInfo))
@@ -669,125 +620,6 @@ public static class StamContAppContainer
                     Marshal.GetLastWin32Error(),
                     "CreateProcessW(AppContainer) failed");
             }
-            processCreated = true;
-
-            // AppContainer processes are created at Low integrity. Windows
-            // Mandatory Integrity Control would otherwise deny writes to the
-            // medium-integrity workspace even when the unique AppContainer SID
-            // has an explicit DACL grant. Disable only the token's mandatory
-            // no-write-up policy while the process is still suspended. The
-            // AppContainer identity, capability set, DACL intersection, no-
-            // network posture, and Job Object remain the security boundary.
-            if (!OpenProcessToken(
-                processInfo.hProcess,
-                TOKEN_QUERY | TOKEN_ADJUST_DEFAULT,
-                out processToken))
-            {
-                int error = Marshal.GetLastWin32Error();
-                TerminateProcess(processInfo.hProcess, 125);
-                throw new Win32Exception(
-                    error,
-                    "OpenProcessToken(AppContainer child) failed");
-            }
-
-            IntPtr tokenIsAppContainerPtr = Marshal.AllocHGlobal(sizeof(uint));
-            try
-            {
-                uint returnedLength;
-                if (!GetTokenInformation(
-                    processToken,
-                    TokenIsAppContainer,
-                    tokenIsAppContainerPtr,
-                    sizeof(uint),
-                    out returnedLength))
-                {
-                    int error = Marshal.GetLastWin32Error();
-                    TerminateProcess(processInfo.hProcess, 125);
-                    throw new Win32Exception(
-                        error,
-                        "GetTokenInformation(TokenIsAppContainer) failed");
-                }
-                if (Marshal.ReadInt32(tokenIsAppContainerPtr) == 0)
-                {
-                    TerminateProcess(processInfo.hProcess, 125);
-                    throw new InvalidOperationException(
-                        "Windows sandbox child is not an AppContainer token");
-                }
-            }
-            finally
-            {
-                Marshal.FreeHGlobal(tokenIsAppContainerPtr);
-            }
-
-            TOKEN_MANDATORY_POLICY mandatoryPolicy =
-                new TOKEN_MANDATORY_POLICY
-                {
-                    Policy = TOKEN_MANDATORY_POLICY_OFF,
-                };
-            if (!SetTokenInformation(
-                processToken,
-                TokenMandatoryPolicy,
-                ref mandatoryPolicy,
-                (uint)Marshal.SizeOf(typeof(TOKEN_MANDATORY_POLICY))))
-            {
-                int error = Marshal.GetLastWin32Error();
-                TerminateProcess(processInfo.hProcess, 125);
-                throw new Win32Exception(
-                    error,
-                    "SetTokenInformation(TokenMandatoryPolicy) failed");
-            }
-
-            IntPtr mandatoryPolicyPtr =
-                Marshal.AllocHGlobal(Marshal.SizeOf(typeof(TOKEN_MANDATORY_POLICY)));
-            try
-            {
-                uint returnedLength;
-                if (!GetTokenInformation(
-                    processToken,
-                    TokenMandatoryPolicy,
-                    mandatoryPolicyPtr,
-                    (uint)Marshal.SizeOf(typeof(TOKEN_MANDATORY_POLICY)),
-                    out returnedLength))
-                {
-                    int error = Marshal.GetLastWin32Error();
-                    TerminateProcess(processInfo.hProcess, 125);
-                    throw new Win32Exception(
-                        error,
-                        "GetTokenInformation(TokenMandatoryPolicy) failed");
-                }
-
-                TOKEN_MANDATORY_POLICY verifiedPolicy =
-                    (TOKEN_MANDATORY_POLICY)Marshal.PtrToStructure(
-                        mandatoryPolicyPtr,
-                        typeof(TOKEN_MANDATORY_POLICY));
-                if (verifiedPolicy.Policy != TOKEN_MANDATORY_POLICY_OFF)
-                {
-                    TerminateProcess(processInfo.hProcess, 125);
-                    throw new InvalidOperationException(
-                        "Windows sandbox mandatory-integrity policy did not switch off");
-                }
-            }
-            finally
-            {
-                Marshal.FreeHGlobal(mandatoryPolicyPtr);
-            }
-
-            if (!AssignProcessToJobObject(job, processInfo.hProcess))
-            {
-                int error = Marshal.GetLastWin32Error();
-                TerminateProcess(processInfo.hProcess, 125);
-                throw new Win32Exception(
-                    error,
-                    "AssignProcessToJobObject failed");
-            }
-
-            if (ResumeThread(processInfo.hThread) == 0xFFFFFFFF)
-            {
-                int error = Marshal.GetLastWin32Error();
-                TerminateProcess(processInfo.hProcess, 125);
-                throw new Win32Exception(error, "ResumeThread failed");
-            }
-
             WaitForSingleObject(processInfo.hProcess, INFINITE);
             uint exitCode;
             if (!GetExitCodeProcess(processInfo.hProcess, out exitCode))
@@ -800,14 +632,6 @@ public static class StamContAppContainer
         }
         finally
         {
-            if (processToken != IntPtr.Zero)
-            {
-                CloseHandle(processToken);
-            }
-            if (environmentPtr != IntPtr.Zero)
-            {
-                Marshal.FreeHGlobal(environmentPtr);
-            }
             if (processInfo.hThread != IntPtr.Zero)
             {
                 CloseHandle(processInfo.hThread);
@@ -830,6 +654,10 @@ public static class StamContAppContainer
             if (securityCapabilitiesPtr != IntPtr.Zero)
             {
                 Marshal.FreeHGlobal(securityCapabilitiesPtr);
+            }
+            if (jobListPtr != IntPtr.Zero)
+            {
+                Marshal.FreeHGlobal(jobListPtr);
             }
             if (jobInfoPtr != IntPtr.Zero)
             {
