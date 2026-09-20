@@ -457,10 +457,10 @@ public static class StamContAppContainer
 
             if (available == 0)
             {
-                if (stop.IsSet)
-                {
-                    break;
-                }
+                // Do not use stop.IsSet as an EOF substitute. The final bytes
+                // written by cmd.exe may become visible just after the process
+                // handle signals. Once the Job Object is closed every writer
+                // is gone, and PeekNamedPipe will report ERROR_BROKEN_PIPE.
                 Thread.Sleep(2);
                 continue;
             }
@@ -485,10 +485,7 @@ public static class StamContAppContainer
             }
             if (read == 0)
             {
-                if (stop.IsSet)
-                {
-                    break;
-                }
+                Thread.Sleep(1);
                 continue;
             }
 
@@ -1155,12 +1152,9 @@ public static class StamContAppContainer
             }
             Diagnostic(diagnosticsPath, profileName, "job-closed");
 
-            // No new writers can survive the closed job. Tell the pump loops
-            // to finish once all currently buffered bytes have been drained;
-            // do not wait for pipe EOF, because inherited write handles are not
-            // a reliable lifecycle signal across AppContainer descendants.
-            outputStop.Set();
-
+            // No writer can survive the closed Job Object. Drain until the
+            // pipe reports a real broken-pipe EOF so final command output is
+            // never lost in a process-exit race.
             bool stdoutClosed = stdoutThread.Join(5000);
             bool stderrClosed = stderrThread.Join(5000);
             if (!stdoutClosed || !stderrClosed)
@@ -1392,6 +1386,24 @@ try {
   $profileHome = [StamContAppContainer]::GetProfileFolderPath(
     [string]$config.ProfileName
   )
+
+  # Some hosts expose the package root while others expose the AC local-appdata
+  # directory directly. Follow Windows' documented AC layout when present.
+  if (-not [IO.Path]::GetFileName($profileHome).Equals(
+    "AC",
+    [StringComparison]::OrdinalIgnoreCase
+  )) {
+    $acCandidate = [IO.Path]::Combine($profileHome, "AC")
+    if ([IO.Directory]::Exists($acCandidate)) {
+      $profileHome = $acCandidate
+    }
+  }
+
+  # This is an ephemeral per-profile directory, not user/workspace state.
+  # Grant the package SID explicit inherited access so TEMP/HOME remain private
+  # and writable even on runners with stricter profile-root ACL inheritance.
+  Grant-ProfileFullAccess -TargetPath $profileHome -Required
+
   $profileTemp = [IO.Path]::Combine($profileHome, "Temp")
   [IO.Directory]::CreateDirectory($profileTemp) | Out-Null
 
