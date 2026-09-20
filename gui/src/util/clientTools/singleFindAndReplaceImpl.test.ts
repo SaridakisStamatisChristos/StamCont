@@ -1,4 +1,4 @@
-import { ContinueErrorReason } from "core/util/errors";
+import { ContinueError, ContinueErrorReason } from "core/util/errors";
 import * as clientPathResolver from "./resolveClientToolPath";
 import { beforeEach, describe, expect, it, Mock, vi } from "vitest";
 import { applyForEditTool } from "../../redux/thunks/handleApplyStateUpdate";
@@ -120,7 +120,12 @@ describe("singleFindAndReplaceImpl", () => {
 
   describe("file resolution", () => {
     it("should throw error if file does not exist", async () => {
-      mockResolveClientToolExistingPath.mockResolvedValue(null);
+      mockResolveClientToolExistingPath.mockRejectedValue(
+        new ContinueError(
+          ContinueErrorReason.FileNotFound,
+          "File nonexistent.txt does not exist or is not accessible",
+        ),
+      );
 
       const args = {
         filepath: "nonexistent.txt",
