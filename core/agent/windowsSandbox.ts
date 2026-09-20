@@ -282,7 +282,7 @@ public static class StamContAppContainer
 
     public static int Run(
         string profileName,
-        string encodedCommand,
+        string commandScriptPath,
         string workingDirectory)
     {
         IntPtr appContainerSid = IntPtr.Zero;
@@ -426,11 +426,13 @@ public static class StamContAppContainer
                 "WindowsPowerShell",
                 "v1.0",
                 "powershell.exe");
+            string escapedScriptPath =
+                commandScriptPath.Replace("\\", "\\\\").Replace("\"", "\\\"");
             StringBuilder commandLine = new StringBuilder(
-                """ + powerShell + """ +
+                "\\"" + powerShell + "\\"" +
                 " -NoLogo -NoProfile -NonInteractive" +
-                " -ExecutionPolicy Bypass -EncodedCommand " +
-                encodedCommand);
+                " -ExecutionPolicy Bypass -File \\"" +
+                escapedScriptPath + "\\"");
 
             STARTUPINFOEX startup = new STARTUPINFOEX();
             startup.StartupInfo.cb =
@@ -529,6 +531,7 @@ public static class StamContAppContainer
 
 $sid = $null
 $grantedPaths = [System.Collections.Generic.List[string]]::new()
+$deniedPaths = [System.Collections.Generic.List[string]]::new()
 
 function Grant-SandboxAcl {
   param(
@@ -557,12 +560,42 @@ function Grant-SandboxAcl {
   }
 }
 
+function Deny-SandboxWrites {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$TargetPath
+  )
+
+  # A deny ACE for the AppContainer SID wins over any broad user/group allow
+  # ACE inherited by the current-user workspace. This makes Plan read-only at
+  # the Windows kernel ACL boundary, not only in StamCont tool dispatch.
+  & icacls.exe $TargetPath /deny "*$($sid):(OI)(CI)(W,D,DC)" /C /Q | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    throw "Unable to enforce read-only AppContainer ACL on $TargetPath"
+  }
+  $deniedPaths.Add($TargetPath)
+}
+
 try {
   $sid = [StamContAppContainer]::CreateProfile([string]$config.ProfileName)
+
+  $commandText = [Text.Encoding]::UTF8.GetString(
+    [Convert]::FromBase64String([string]$config.CommandUtf8Base64)
+  )
+  $commandPath = Join-Path ([string]$config.HomeDirectory) "command.ps1"
+  [IO.File]::WriteAllText(
+    $commandPath,
+    $commandText,
+    [Text.UTF8Encoding]::new($false)
+  )
+
   $workspaceRights = if ([bool]$config.ReadOnly) { "RX" } else { "M" }
 
   foreach ($root in @($config.Roots)) {
     Grant-SandboxAcl -TargetPath ([string]$root) -Rights $workspaceRights -Required
+    if ([bool]$config.ReadOnly) {
+      Deny-SandboxWrites -TargetPath ([string]$root)
+    }
   }
 
   Grant-SandboxAcl -TargetPath ([string]$config.HomeDirectory) -Rights "M" -Required
@@ -577,13 +610,16 @@ try {
 
   $exitCode = [StamContAppContainer]::Run(
     [string]$config.ProfileName,
-    [string]$config.CommandBase64,
+    [string]$commandPath,
     [string]$config.Cwd
   )
   exit $exitCode
 }
 finally {
   if ($sid) {
+    foreach ($denied in $deniedPaths) {
+      & icacls.exe $denied /remove:d "*$sid" /C /Q | Out-Null
+    }
     foreach ($granted in $grantedPaths) {
       & icacls.exe $granted /remove:g "*$sid" /C /Q | Out-Null
     }
@@ -640,7 +676,7 @@ export function spawnWindowsAppContainerShell(
     HomeDirectory: options.homeDirectory,
     TempDirectory: options.tempDirectory,
     PathEntries: pathEntries,
-    CommandBase64: Buffer.from(command, "utf16le").toString("base64"),
+    CommandUtf8Base64: Buffer.from(command, "utf8").toString("base64"),
   };
   const configBase64 = Buffer.from(
     JSON.stringify(config),
