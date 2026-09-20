@@ -97,14 +97,20 @@ export async function fetchwithRequestOptions(
   // Check if should bypass proxy based on requestOptions or NO_PROXY env var
   const shouldBypass = shouldBypassProxy(url.hostname, requestOptions);
 
-  // Create agent
+  // Create agent. Security-sensitive callers (for example the StamCont
+  // restricted-network backend) may provide an explicit agent in RequestInit
+  // to bind DNS validation to the actual connection. When present, it must win
+  // over ambient proxy configuration so the caller's transport guarantee is
+  // not silently replaced by a second DNS/connect path.
   const protocol = url.protocol === "https:" ? https : http;
+  const explicitAgent = (init as any)?.agent;
   const agent =
-    proxy && !shouldBypass
+    explicitAgent ??
+    (proxy && !shouldBypass
       ? protocol === https
         ? new HttpsProxyAgent(proxy, agentOptions)
         : new HttpProxyAgent(proxy, agentOptions)
-      : new protocol.Agent(agentOptions);
+      : new protocol.Agent(agentOptions));
 
   let headers: { [key: string]: string } = {};
 

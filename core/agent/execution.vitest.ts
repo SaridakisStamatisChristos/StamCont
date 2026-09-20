@@ -1,4 +1,10 @@
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  realpath,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -10,7 +16,7 @@ import {
   createExecutionBackend,
   HostExecutionBackend,
 } from "./execution";
-import { SandboxExecutionBackend } from "./sandbox";
+import { SandboxExecutionBackend, SandboxViolationError } from "./sandbox";
 
 const tempRoots: string[] = [];
 
@@ -42,6 +48,15 @@ afterEach(async () => {
 });
 
 describe("HostExecutionBackend", () => {
+  it("leaves Full Access networking unrestricted", async () => {
+    const workspace = await tempDir("stamcont-workspace-");
+    const backend = new HostExecutionBackend(ideWithWorkspace(workspace));
+    const delegate = (async () => ({ status: 200 })) as any;
+
+    expect(backend.enforceSensitivePathChecks).toBe(false);
+    expect(backend.wrapFetch(delegate)).toBe(delegate);
+  });
+
   it("reads files outside the opened workspace", async () => {
     const workspace = await tempDir("stamcont-workspace-");
     const outside = await tempDir("stamcont-outside-");
@@ -110,27 +125,41 @@ describe("HostExecutionBackend", () => {
       });
     });
 
-    const normalize = (value: string) =>
+    const canonicalOutput = await realpath(output);
+    const canonicalOutside = await realpath(outside);
+    expect(
       process.platform === "win32"
-        ? path.resolve(value).toLowerCase()
-        : path.resolve(value);
-    expect(normalize(output)).toBe(normalize(outside));
+        ? canonicalOutput.toLowerCase()
+        : canonicalOutput,
+    ).toBe(
+      process.platform === "win32"
+        ? canonicalOutside.toLowerCase()
+        : canonicalOutside,
+    );
   });
 });
 
 describe("execution backend selection", () => {
-  it("selects host execution only for full access", async () => {
+  it("selects host execution only for full access and keeps Plan read-only", async () => {
     const workspace = await tempDir("stamcont-workspace-");
     const ide = ideWithWorkspace(workspace);
 
-    expect(createExecutionBackend("full_access", ide)).toBeInstanceOf(
-      HostExecutionBackend,
-    );
-    expect(createExecutionBackend("interactive", ide)).toBeInstanceOf(
-      SandboxExecutionBackend,
-    );
-    expect(createExecutionBackend("plan", ide)).toBeInstanceOf(
-      SandboxExecutionBackend,
+    const host = createExecutionBackend("full_access", ide);
+    const interactive = createExecutionBackend("interactive", ide);
+    const plan = createExecutionBackend("plan", ide);
+
+    expect(host).toBeInstanceOf(HostExecutionBackend);
+    expect(interactive).toBeInstanceOf(SandboxExecutionBackend);
+    expect(plan).toBeInstanceOf(SandboxExecutionBackend);
+
+    const canonicalWorkspace = await realpath(workspace);
+    await expect(
+      interactive.resolveWritablePath("interactive.txt"),
+    ).resolves.toMatchObject({
+      displayPath: path.join(canonicalWorkspace, "interactive.txt"),
+    });
+    await expect(plan.resolveWritablePath("plan.txt")).rejects.toBeInstanceOf(
+      SandboxViolationError,
     );
   });
 });

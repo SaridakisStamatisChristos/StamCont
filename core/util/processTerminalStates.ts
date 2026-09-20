@@ -28,7 +28,15 @@ export function terminateProcessTree(
 
   if (process.platform === "win32" && child.pid) {
     const args = ["/PID", String(child.pid), "/T"];
-    if (signal === "SIGKILL") {
+    // Windows has no POSIX-style SIGTERM semantics for a hidden broker
+    // process. StamCont-owned isolated trees must terminate deterministically
+    // so the broker closes its kill-on-close Job Object and descendants cannot
+    // escape cancellation. Preserve the softer behavior for ordinary host
+    // children.
+    if (
+      signal === "SIGKILL" ||
+      (child as StamContChildProcess).__stamcontIsolatedProcessGroup
+    ) {
       args.push("/F");
     }
     const killer = spawn("taskkill", args, {

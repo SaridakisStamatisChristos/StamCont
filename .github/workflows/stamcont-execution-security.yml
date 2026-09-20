@@ -1,0 +1,116 @@
+name: StamCont Execution Security
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stamcont-execution-security-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: "true"
+  IGNORE_API_KEY_TESTS: "true"
+  STAMCONT_REQUIRE_OS_SANDBOX_TESTS: "1"
+
+jobs:
+  windows-launcher-probe:
+    name: Windows launcher startup probe
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: Probe native launcher without package setup
+        run: node scripts/stamcont-windows-probe.cjs
+
+  execution-security:
+    name: Security / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Linux sandbox primitive
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap apparmor-utils
+
+          # Ubuntu 24.04+ restricts unprivileged user namespaces through
+          # AppArmor. Give only the bwrap executable permission to create the
+          # namespaces the product sandbox requires; do not disable the host
+          # restriction globally.
+          sudo tee /etc/apparmor.d/stamcont-bwrap >/dev/null <<'EOF'
+          abi <abi/4.0>,
+          include <tunables/global>
+
+          profile stamcont-bwrap /usr/bin/bwrap flags=(unconfined) {
+            userns,
+            include if exists <local/stamcont-bwrap>
+          }
+          EOF
+          sudo apparmor_parser -r /etc/apparmor.d/stamcont-bwrap
+
+      - name: Build local packages
+        uses: ./.github/actions/setup-packages
+
+      - name: Setup core
+        uses: ./.github/actions/setup-component
+        with:
+          component: core
+          include-root: true
+
+      - name: Typecheck sandbox security surface
+        working-directory: core
+        run: npm run tsc:check
+
+      - name: Lint sandbox security surface
+        working-directory: core
+        run: npm run lint
+
+      - name: Run execution security property tests
+        working-directory: core
+        run: npm run vitest -- agent/sandbox.vitest.ts agent/sandbox.shell-security.vitest.ts agent/execution.vitest.ts
+
+      - name: Dump Windows sandbox diagnostics
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $path = Join-Path $env:RUNNER_TEMP 'stamcont-windows-sandbox-debug.log'
+          if (Test-Path -LiteralPath $path) {
+            Get-Content -LiteralPath $path
+          } else {
+            Write-Host 'No Windows sandbox diagnostics file was produced.'
+          }
+
+      - name: Test restricted fetch transport
+        working-directory: packages/fetch
+        run: npm test -- src/fetch.test.ts
+
+  security-gate:
+    name: Execution security gate
+    if: always()
+    runs-on: ubuntu-latest
+    needs:
+      - execution-security
+    steps:
+      - name: Require cross-platform execution security
+        shell: bash
+        run: test "${{ needs.execution-security.result }}" = "success"
