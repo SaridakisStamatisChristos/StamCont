@@ -22,6 +22,7 @@ import type { FetchFunction, IDE } from "..";
 import type { ExecutionBackend } from "./execution";
 import type { ResolvedPath } from "../util/pathResolver";
 import { markIsolatedProcessGroup } from "../util/processTerminalStates";
+import { spawnWindowsAppContainerShell } from "./windowsSandbox";
 
 export class SandboxViolationError extends Error {
   constructor(message: string) {
@@ -425,6 +426,7 @@ function buildMacSandboxProfile(
 function createPrivateTempDirectory(): string {
   const tempRoot = mkdtempSync(path.join(os.tmpdir(), "stamcont-sandbox-"));
   mkdirSync(path.join(tempRoot, "home"), { recursive: true });
+  mkdirSync(path.join(tempRoot, "tmp"), { recursive: true });
   return tempRoot;
 }
 
@@ -501,6 +503,39 @@ function spawnSandboxedShell(
     );
   }
 
+  if (process.platform === "win32") {
+    const tempRoot = createPrivateTempDirectory();
+    const homeDirectory = path.join(tempRoot, "home");
+    const tempDirectory = path.join(tempRoot, "tmp");
+    const env = sanitizeSandboxEnvironment(
+      options.env as Env | undefined,
+      homeDirectory,
+      tempDirectory,
+    );
+
+    try {
+      const child = markIsolatedProcessGroup(
+        spawnWindowsAppContainerShell(command, {
+          roots,
+          cwd,
+          readOnly,
+          homeDirectory,
+          tempDirectory,
+          env,
+          spawnOptions: options,
+        }),
+      );
+      return attachTempCleanup(child, tempRoot);
+    } catch (error) {
+      rmSync(tempRoot, { recursive: true, force: true });
+      throw new SandboxViolationError(
+        `Windows AppContainer sandbox launch failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
   if (process.platform === "darwin") {
     const sandboxExec = "/usr/bin/sandbox-exec";
     if (!existsSync(sandboxExec)) {
@@ -542,7 +577,7 @@ function spawnSandboxedShell(
   }
 
   throw new SandboxViolationError(
-    `Interactive shell sandbox is not yet enforceable on ${process.platform}; use Full Access explicitly for shell execution.`,
+    `Interactive shell sandbox is not enforceable on ${process.platform}; use Full Access explicitly for shell execution.`,
   );
 }
 
