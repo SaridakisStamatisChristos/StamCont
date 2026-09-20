@@ -69,6 +69,9 @@ test(
     ideMessenger.responses["getWorkspaceDirs"] = [EDIT_WORKSPACE_DIR];
     // Provide empty open files to avoid MockIdeMessenger throwing on getOpenFiles
     ideMessenger.responses["getOpenFiles"] = [] as any;
+    ideMessenger.responses["tools/resolvePath"] = {
+      uri: EDIT_FILE_URI,
+    };
     ideMessenger.responses["tools/evaluatePolicy"] = {
       policy: "allowedWithPermission",
     };
