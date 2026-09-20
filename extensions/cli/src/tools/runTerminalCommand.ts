@@ -1,10 +1,10 @@
 import { ChildProcess, spawn } from "node:child_process";
+
 import fs from "node:fs";
 import {
   evaluateTerminalCommandSecurity,
   type ToolPolicy,
 } from "@continuedev/terminal-security";
-
 import { terminateProcessTree } from "core/util/processTerminalStates.js";
 
 import { backgroundJobService } from "../services/BackgroundJobService.js";
