@@ -4,7 +4,7 @@ import {
   type SpawnOptions,
 } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const WINDOWS_SANDBOX_LAUNCHER = String.raw`
@@ -1591,7 +1591,7 @@ export function spawnWindowsAppContainerShell(
     mode: 0o600,
   });
 
-  const powerShell =
+  const windowsPowerShell =
     process.env.SystemRoot || process.env.WINDIR
       ? path.join(
           process.env.SystemRoot || process.env.WINDIR || "C:\\Windows",
@@ -1601,6 +1601,17 @@ export function spawnWindowsAppContainerShell(
           "powershell.exe",
         )
       : "powershell.exe";
+  const programFiles =
+    process.env.ProgramFiles || process.env.PROGRAMFILES || "C:\\Program Files";
+  const modernPowerShell = path.join(
+    programFiles,
+    "PowerShell",
+    "7",
+    "pwsh.exe",
+  );
+  const powerShell = existsSync(modernPowerShell)
+    ? modernPowerShell
+    : windowsPowerShell;
 
   // PowerShell's module discovery/cache requires real Windows runtime paths.
   // Do not give it the synthetic lowbox USERPROFILE used by the command, and
@@ -1628,12 +1639,15 @@ export function spawnWindowsAppContainerShell(
   }
   const brokerSystemRoot =
     brokerEnv.SYSTEMROOT || brokerEnv.WINDIR || "C:\\Windows";
-  const brokerPowerShellHome = path.join(
-    brokerSystemRoot,
-    "System32",
-    "WindowsPowerShell",
-    "v1.0",
-  );
+  const brokerPowerShellHome =
+    powerShell === modernPowerShell
+      ? path.dirname(modernPowerShell)
+      : path.join(
+          brokerSystemRoot,
+          "System32",
+          "WindowsPowerShell",
+          "v1.0",
+        );
   brokerEnv.PATH = [
     path.join(brokerSystemRoot, "System32"),
     brokerSystemRoot,
