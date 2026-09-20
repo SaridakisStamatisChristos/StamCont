@@ -10,16 +10,50 @@ import path from "node:path";
 const WINDOWS_SANDBOX_LAUNCHER = String.raw`
 param(
   [Parameter(Mandatory = $true)]
-  [string]$ConfigBase64
+  [string]$ConfigPath
 )
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
-$configJson = [Text.Encoding]::UTF8.GetString(
-  [Convert]::FromBase64String($ConfigBase64)
-)
-$config = $configJson | ConvertFrom-Json
+# Parse a deliberately tiny broker protocol rather than ConvertFrom-Json.
+# Windows PowerShell 5.1 can spend tens of seconds materializing a large JSON
+# environment object. Every value is independently Base64-encoded UTF-8, so
+# paths and command data require no shell escaping.
+$configValues = @{}
+foreach ($line in [IO.File]::ReadAllLines(
+  $ConfigPath,
+  [Text.Encoding]::UTF8
+)) {
+  if ([string]::IsNullOrWhiteSpace($line)) {
+    continue
+  }
+  $separator = $line.IndexOf("=")
+  if ($separator -le 0) {
+    throw "Invalid StamCont broker config record"
+  }
+
+  $key = $line.Substring(0, $separator)
+  $encoded = $line.Substring($separator + 1)
+  $configValues[$key] = [Text.Encoding]::UTF8.GetString(
+    [Convert]::FromBase64String($encoded)
+  )
+}
+
+$configValues["ReadOnly"] = [string]$configValues["ReadOnly"] -eq "1"
+$configValues["Diagnostics"] =
+  [string]$configValues["Diagnostics"] -eq "1"
+$rootsText = [string]$configValues["RootsUtf8"]
+$configValues["Roots"] = if ([string]::IsNullOrEmpty($rootsText)) {
+  @()
+}
+else {
+  @($rootsText.Split(
+    [char]0,
+    [StringSplitOptions]::RemoveEmptyEntries
+  ))
+}
+$config = $configValues
 
 function Write-StamContDiagnostic {
   param([Parameter(Mandatory = $true)][string]$Stage)
@@ -1503,11 +1537,21 @@ export function spawnWindowsAppContainerShell(
     .map(([key, value]) => `${key}=${value}`)
     .join("\0");
 
-  const config = {
+  const diagnosticsEnabled =
+    process.env.STAMCONT_REQUIRE_OS_SANDBOX_TESTS === "1";
+  const diagnosticsPath =
+    diagnosticsEnabled && process.env.RUNNER_TEMP
+      ? path.join(
+          process.env.RUNNER_TEMP,
+          "stamcont-windows-sandbox-debug.log",
+        )
+      : "";
+
+  const configRecords: Record<string, string> = {
     ProfileName: profileName,
-    Roots: [...options.roots],
+    RootsUtf8: options.roots.join("\0"),
     Cwd: options.cwd,
-    ReadOnly: options.readOnly,
+    ReadOnly: options.readOnly ? "1" : "0",
     HomeDirectory: options.homeDirectory,
     TempDirectory: options.tempDirectory,
     CommandInterpreter: commandInterpreter,
@@ -1516,21 +1560,25 @@ export function spawnWindowsAppContainerShell(
       "utf8",
     ).toString("base64"),
     CommandUtf8Base64: Buffer.from(command, "utf8").toString("base64"),
-    CommandUtf8Length: Buffer.byteLength(command, "utf8"),
+    CommandUtf8Length: String(Buffer.byteLength(command, "utf8")),
     CommandSha256: createHash("sha256").update(command, "utf8").digest("hex"),
-    Diagnostics: process.env.STAMCONT_REQUIRE_OS_SANDBOX_TESTS === "1",
-    DiagnosticsPath:
-      process.env.STAMCONT_REQUIRE_OS_SANDBOX_TESTS === "1" &&
-      process.env.RUNNER_TEMP
-        ? path.join(
-            process.env.RUNNER_TEMP,
-            "stamcont-windows-sandbox-debug.log",
-          )
-        : "",
+    Diagnostics: diagnosticsEnabled ? "1" : "0",
+    DiagnosticsPath: diagnosticsPath,
   };
-  const configBase64 = Buffer.from(JSON.stringify(config), "utf8").toString(
-    "base64",
+  const configPayload = Object.entries(configRecords)
+    .map(
+      ([key, value]) =>
+        `${key}=${Buffer.from(value, "utf8").toString("base64")}`,
+    )
+    .join("\n");
+  const configPath = path.join(
+    path.dirname(options.homeDirectory),
+    "stamcont-appcontainer-config.txt",
   );
+  writeFileSync(configPath, configPayload, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
 
   const powerShell =
     process.env.SystemRoot || process.env.WINDIR
@@ -1594,8 +1642,8 @@ export function spawnWindowsAppContainerShell(
       "Bypass",
       "-File",
       launcherPath,
-      "-ConfigBase64",
-      configBase64,
+      "-ConfigPath",
+      configPath,
     ],
     {
       ...options.spawnOptions,
