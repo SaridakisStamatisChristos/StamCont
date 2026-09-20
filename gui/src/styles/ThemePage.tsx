@@ -79,7 +79,6 @@ function ThemePage() {
       // VS Code: find actual missing CSS variables
       const notFound: string[] = [];
       Object.entries(THEME_COLORS).forEach(([colorName, themeVals], idx) => {
-        let found = false;
         themeVals.vars.forEach((cssVar) => {
           const value = getComputedStyle(
             document.documentElement,
