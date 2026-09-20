@@ -282,7 +282,7 @@ public static class StamContAppContainer
 
     public static int Run(
         string profileName,
-        string commandScriptPath,
+        string encodedCommand,
         string workingDirectory)
     {
         IntPtr appContainerSid = IntPtr.Zero;
@@ -426,15 +426,15 @@ public static class StamContAppContainer
                 "WindowsPowerShell",
                 "v1.0",
                 "powershell.exe");
-            // lpApplicationName already identifies powershell.exe, but argv[0]
-            // still belongs in the mutable command line. Use normal Windows
-            // quoting here; literal backslashes before quote characters become
-            // part of the argument and can cause PowerShell to ignore -File.
+            // Pass the model-controlled command with PowerShell's
+            // EncodedCommand transport. It is UTF-16LE base64, contains no
+            // shell metacharacters, and avoids depending on an AppContainer-
+            // readable command file outside the workspace.
             StringBuilder commandLine = new StringBuilder(
                 "\"" + powerShell + "\"" +
                 " -NoLogo -NoProfile -NonInteractive" +
-                " -ExecutionPolicy Bypass -File \"" +
-                commandScriptPath + "\"");
+                " -ExecutionPolicy Bypass -EncodedCommand " +
+                encodedCommand);
 
             STARTUPINFOEX startup = new STARTUPINFOEX();
             startup.StartupInfo.cb =
@@ -581,16 +581,6 @@ function Deny-SandboxWrites {
 try {
   $sid = [StamContAppContainer]::CreateProfile([string]$config.ProfileName)
 
-  $commandText = [Text.Encoding]::UTF8.GetString(
-    [Convert]::FromBase64String([string]$config.CommandUtf8Base64)
-  )
-  $commandPath = Join-Path ([string]$config.HomeDirectory) "command.ps1"
-  [IO.File]::WriteAllText(
-    $commandPath,
-    $commandText,
-    [Text.UTF8Encoding]::new($false)
-  )
-
   $workspaceRights = if ([bool]$config.ReadOnly) { "RX" } else { "M" }
 
   foreach ($root in @($config.Roots)) {
@@ -612,7 +602,7 @@ try {
 
   $exitCode = [StamContAppContainer]::Run(
     [string]$config.ProfileName,
-    [string]$commandPath,
+    [string]$config.CommandBase64,
     [string]$config.Cwd
   )
   exit $exitCode
@@ -678,7 +668,8 @@ export function spawnWindowsAppContainerShell(
     HomeDirectory: options.homeDirectory,
     TempDirectory: options.tempDirectory,
     PathEntries: pathEntries,
-    CommandUtf8Base64: Buffer.from(command, "utf8").toString("base64"),
+    // Windows PowerShell -EncodedCommand requires UTF-16LE.
+    CommandBase64: Buffer.from(command, "utf16le").toString("base64"),
   };
   const configBase64 = Buffer.from(
     JSON.stringify(config),
