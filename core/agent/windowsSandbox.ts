@@ -31,6 +31,8 @@ public static class StamContAppContainer
 {
     public static long LastStdoutBytes = 0;
     public static long LastStderrBytes = 0;
+    public static string LastStdoutBase64 = "";
+    public static string LastStderrBase64 = "";
     private const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
     private const uint STARTF_USESTDHANDLES = 0x00000100;
     private const uint DUPLICATE_SAME_ACCESS = 0x00000002;
@@ -347,7 +349,7 @@ public static class StamContAppContainer
 
     private static void PumpPipe(
         IntPtr readHandle,
-        Stream destination,
+        MemoryStream destination,
         bool isStdout,
         ManualResetEventSlim stop)
     {
@@ -420,7 +422,6 @@ public static class StamContAppContainer
                 Interlocked.Add(ref LastStderrBytes, (long)read);
             }
             destination.Write(buffer, 0, (int)read);
-            destination.Flush();
         }
     }
 
@@ -711,12 +712,16 @@ public static class StamContAppContainer
         ManualResetEventSlim outputStop = new ManualResetEventSlim(false);
         Exception stdoutPumpError = null;
         Exception stderrPumpError = null;
+        MemoryStream stdoutBuffer = new MemoryStream();
+        MemoryStream stderrBuffer = new MemoryStream();
         PROCESS_INFORMATION processInfo = new PROCESS_INFORMATION();
 
         try
         {
             Interlocked.Exchange(ref LastStdoutBytes, 0);
             Interlocked.Exchange(ref LastStderrBytes, 0);
+            LastStdoutBase64 = "";
+            LastStderrBase64 = "";
 
             int hr = DeriveAppContainerSidFromAppContainerName(
                 profileName,
@@ -951,7 +956,7 @@ public static class StamContAppContainer
                 {
                     PumpPipe(
                         stdoutRead,
-                        Console.OpenStandardOutput(),
+                        stdoutBuffer,
                         true,
                         outputStop);
                 }
@@ -966,7 +971,7 @@ public static class StamContAppContainer
                 {
                     PumpPipe(
                         stderrRead,
-                        Console.OpenStandardError(),
+                        stderrBuffer,
                         false,
                         outputStop);
                 }
@@ -1022,6 +1027,11 @@ public static class StamContAppContainer
                     "Sandbox stderr pump failed",
                     stderrPumpError);
             }
+
+            LastStdoutBase64 =
+                Convert.ToBase64String(stdoutBuffer.ToArray());
+            LastStderrBase64 =
+                Convert.ToBase64String(stderrBuffer.ToArray());
             return unchecked((int)exitCode);
         }
         finally
@@ -1087,6 +1097,8 @@ public static class StamContAppContainer
                 CloseHandle(stderrRead);
             }
             outputStop.Dispose();
+            stdoutBuffer.Dispose();
+            stderrBuffer.Dispose();
             if (jobListPtr != IntPtr.Zero)
             {
                 Marshal.FreeHGlobal(jobListPtr);
@@ -1283,6 +1295,35 @@ try {
     }
   }
 
+  function Invoke-StamContUserCommand {
+    $exitCode = [StamContAppContainer]::RunBase64(
+      [string]$config.ProfileName,
+      [string]$config.CommandInterpreter,
+      [string]$config.CommandUtf8Base64,
+      [string]$config.Cwd
+    )
+
+    $stdoutBase64 = [StamContAppContainer]::LastStdoutBase64
+    if (-not [string]::IsNullOrEmpty($stdoutBase64)) {
+      $stdoutText = [Text.Encoding]::UTF8.GetString(
+        [Convert]::FromBase64String($stdoutBase64)
+      )
+      [Console]::Out.Write($stdoutText)
+      [Console]::Out.Flush()
+    }
+
+    $stderrBase64 = [StamContAppContainer]::LastStderrBase64
+    if (-not [string]::IsNullOrEmpty($stderrBase64)) {
+      $stderrText = [Text.Encoding]::UTF8.GetString(
+        [Convert]::FromBase64String($stderrBase64)
+      )
+      [Console]::Error.Write($stderrText)
+      [Console]::Error.Flush()
+    }
+
+    return $exitCode
+  }
+
   if ([bool]$config.Diagnostics) {
     # Probe 1: native lowbox creation plus compound cmd.exe parsing.
     $probeExitCode = [StamContAppContainer]::Run(
@@ -1336,12 +1377,7 @@ try {
               $processExitCode = 245
             }
             else {
-              $processExitCode = [StamContAppContainer]::RunBase64(
-                [string]$config.ProfileName,
-                [string]$config.CommandInterpreter,
-                [string]$config.CommandUtf8Base64,
-                [string]$config.Cwd
-              )
+              $processExitCode = Invoke-StamContUserCommand
             }
           }
           else {
@@ -1362,12 +1398,7 @@ try {
             }
             else {
               Remove-Item -LiteralPath $probePath -Force
-              $processExitCode = [StamContAppContainer]::RunBase64(
-                [string]$config.ProfileName,
-                [string]$config.CommandInterpreter,
-                [string]$config.CommandUtf8Base64,
-                [string]$config.Cwd
-              )
+              $processExitCode = Invoke-StamContUserCommand
             }
           }
         }
@@ -1375,12 +1406,7 @@ try {
     }
   }
   else {
-    $processExitCode = [StamContAppContainer]::RunBase64(
-      [string]$config.ProfileName,
-      [string]$config.CommandInterpreter,
-      [string]$config.CommandUtf8Base64,
-      [string]$config.Cwd
-    )
+    $processExitCode = Invoke-StamContUserCommand
   }
 
   if ([bool]$config.Diagnostics) {
