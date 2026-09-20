@@ -53,6 +53,7 @@ using System.Threading;
 
 public static class StamContAppContainer
 {
+    public static string DiagnosticsPath = "";
     public static long LastStdoutBytes = 0;
     public static long LastStderrBytes = 0;
     public static string LastStdoutBase64 = "";
@@ -476,6 +477,7 @@ public static class StamContAppContainer
 
         try
         {
+            Diagnostic(DiagnosticsPath, profileName, "acl-before-derive target=" + targetPath);
             int hr = DeriveAppContainerSidFromAppContainerName(
                 profileName,
                 out sid);
@@ -484,9 +486,12 @@ public static class StamContAppContainer
                 Marshal.ThrowExceptionForHR(hr);
             }
 
+            Diagnostic(DiagnosticsPath, profileName, "acl-after-derive target=" + targetPath);
+
             IntPtr owner;
             IntPtr group;
             IntPtr sacl;
+            Diagnostic(DiagnosticsPath, profileName, "acl-before-get-security target=" + targetPath);
             uint result = GetNamedSecurityInfoW(
                 targetPath,
                 SE_FILE_OBJECT,
@@ -502,6 +507,7 @@ public static class StamContAppContainer
                     unchecked((int)result),
                     "GetNamedSecurityInfoW failed for " + targetPath);
             }
+            Diagnostic(DiagnosticsPath, profileName, "acl-after-get-security target=" + targetPath);
 
             EXPLICIT_ACCESS entry = new EXPLICIT_ACCESS
             {
@@ -520,6 +526,7 @@ public static class StamContAppContainer
                 },
             };
 
+            Diagnostic(DiagnosticsPath, profileName, "acl-before-set-entries target=" + targetPath);
             result = SetEntriesInAclW(1, ref entry, oldDacl, out newDacl);
             if (result != 0)
             {
@@ -527,7 +534,9 @@ public static class StamContAppContainer
                     unchecked((int)result),
                     "SetEntriesInAclW failed for " + targetPath);
             }
+            Diagnostic(DiagnosticsPath, profileName, "acl-after-set-entries target=" + targetPath);
 
+            Diagnostic(DiagnosticsPath, profileName, "acl-before-set-security target=" + targetPath);
             result = SetNamedSecurityInfoW(
                 targetPath,
                 SE_FILE_OBJECT,
@@ -542,6 +551,7 @@ public static class StamContAppContainer
                     unchecked((int)result),
                     "SetNamedSecurityInfoW failed for " + targetPath);
             }
+            Diagnostic(DiagnosticsPath, profileName, "acl-after-set-security target=" + targetPath);
         }
         finally
         {
@@ -1171,6 +1181,7 @@ public static class StamContAppContainer
 '@
 
 Write-StamContDiagnostic -Stage "after-add-type"
+[StamContAppContainer]::DiagnosticsPath = [string]$config.DiagnosticsPath
 
 $sid = $null
 $grantedPaths = [System.Collections.Generic.List[string]]::new()
@@ -1260,14 +1271,17 @@ function Grant-TraverseAncestors {
   while ($null -ne $current) {
     $ancestor = $current.FullName
     if ($grantedPathSet.Add($ancestor)) {
+      Write-StamContDiagnostic -Stage ("ancestor-begin target=" + $TargetPath + " ancestor=" + $ancestor)
       try {
         [StamContAppContainer]::GrantProfileTraverse(
           [string]$config.ProfileName,
           $ancestor
         )
         $grantedPaths.Add($ancestor)
+        Write-StamContDiagnostic -Stage ("ancestor-complete ancestor=" + $ancestor)
       }
       catch {
+        Write-StamContDiagnostic -Stage ("ancestor-error ancestor=" + $ancestor + " error=" + $_.Exception.Message)
         # Ancestors above the current user's ownership boundary (for example
         # a volume root) may not be mutable. Windows normally permits traversal
         # through those system ancestors; required target grants below remain
@@ -1292,6 +1306,7 @@ try {
     @($config.PathEntries)
   )) {
     if (-not [string]::IsNullOrWhiteSpace([string]$target)) {
+      Write-StamContDiagnostic -Stage ("target-begin path=" + ([string]$target))
       Grant-TraverseAncestors -TargetPath ([string]$target)
     }
   }
