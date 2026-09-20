@@ -64,11 +64,16 @@ function Write-StamContDiagnostic {
   }
 
   try {
-    Add-Content -LiteralPath $diagnosticsPath -Encoding UTF8 -Value (
+    $line =
       ([DateTime]::UtcNow.ToString("O")) +
       " pid=" + $PID +
       " profile=" + ([string]$config.ProfileName) +
-      " stage=" + $Stage
+      " stage=" + $Stage +
+      [Environment]::NewLine
+    [IO.File]::AppendAllText(
+      $diagnosticsPath,
+      $line,
+      [Text.UTF8Encoding]::new($false)
     )
   }
   catch {
@@ -1298,7 +1303,10 @@ function Grant-ProfileReadExecute {
     [switch]$Required
   )
 
-  if (-not (Test-Path -LiteralPath $TargetPath)) {
+  if (-not (
+    [IO.File]::Exists($TargetPath) -or
+    [IO.Directory]::Exists($TargetPath)
+  )) {
     if ($Required) {
       throw "Sandbox ACL target does not exist: $TargetPath"
     }
@@ -1327,7 +1335,10 @@ function Grant-ProfileFullAccess {
     [switch]$Required
   )
 
-  if (-not (Test-Path -LiteralPath $TargetPath)) {
+  if (-not (
+    [IO.File]::Exists($TargetPath) -or
+    [IO.Directory]::Exists($TargetPath)
+  )) {
     if ($Required) {
       throw "Sandbox ACL target does not exist: $TargetPath"
     }
@@ -1381,7 +1392,7 @@ try {
   $profileHome = [StamContAppContainer]::GetProfileFolderPath(
     [string]$config.ProfileName
   )
-  $profileTemp = Join-Path $profileHome "Temp"
+  $profileTemp = [IO.Path]::Combine($profileHome, "Temp")
   [IO.Directory]::CreateDirectory($profileTemp) | Out-Null
 
   $commandText = [Text.Encoding]::UTF8.GetString(
