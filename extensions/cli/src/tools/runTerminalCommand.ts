@@ -1,9 +1,10 @@
+import { ChildProcess, spawn } from "child_process";
+import fs from "fs";
+
 import {
   evaluateTerminalCommandSecurity,
   type ToolPolicy,
 } from "@continuedev/terminal-security";
-import { ChildProcess, spawn } from "child_process";
-import fs from "fs";
 
 import { terminateProcessTree } from "core/util/processTerminalStates.js";
 
