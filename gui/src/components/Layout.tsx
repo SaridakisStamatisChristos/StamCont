@@ -19,7 +19,6 @@ import TextDialog from "./dialogs";
 import { useMainEditor } from "./mainInput/TipTapEditor";
 import {
   isNewUserOnboarding,
-  OnboardingCard,
   useOnboardingCard,
 } from "./OnboardingCard";
 import OSRContextMenu from "./OSRContextMenu";

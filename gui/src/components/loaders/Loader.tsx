@@ -1,7 +1,5 @@
-import { useSelector } from "react-redux";
-import { RootState } from "../../redux/store";
-import styled from "styled-components";
 import { PlayIcon } from "@heroicons/react/24/outline";
+import styled from "styled-components";
 
 const DEFAULT_SIZE = "28px";
 
