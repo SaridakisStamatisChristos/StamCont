@@ -1026,6 +1026,11 @@ public static class StamContAppContainer
         }
         finally
         {
+            // Exceptional paths must also release pump threads. Signal them
+            // before closing their read handles; normal paths already joined
+            // them above, so these joins return immediately there.
+            outputStop.Set();
+
             if (processInfo.hThread != IntPtr.Zero)
             {
                 CloseHandle(processInfo.hThread);
@@ -1039,6 +1044,14 @@ public static class StamContAppContainer
             if (job != IntPtr.Zero)
             {
                 CloseHandle(job);
+            }
+            if (stdoutThread != null && stdoutThread.IsAlive)
+            {
+                stdoutThread.Join(1000);
+            }
+            if (stderrThread != null && stderrThread.IsAlive)
+            {
+                stderrThread.Join(1000);
             }
             if (attributeList != IntPtr.Zero)
             {
