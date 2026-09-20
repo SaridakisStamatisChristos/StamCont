@@ -48,6 +48,15 @@ afterEach(async () => {
 });
 
 describe("HostExecutionBackend", () => {
+  it("leaves Full Access networking unrestricted", async () => {
+    const workspace = await tempDir("stamcont-workspace-");
+    const backend = new HostExecutionBackend(ideWithWorkspace(workspace));
+    const delegate = (async () => ({ status: 200 })) as any;
+
+    expect(backend.enforceSensitivePathChecks).toBe(false);
+    expect(backend.wrapFetch(delegate)).toBe(delegate);
+  });
+
   it("reads files outside the opened workspace", async () => {
     const workspace = await tempDir("stamcont-workspace-");
     const outside = await tempDir("stamcont-outside-");
