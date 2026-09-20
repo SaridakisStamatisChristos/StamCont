@@ -43,9 +43,6 @@ export function UserSettingsSection() {
     setFormDisableAutocomplete(disableAutocompleteInFiles);
   }, [disableAutocompleteInFiles]);
 
-  // Workspace prompts
-  const promptPath = config.experimental?.promptPath || "";
-
   // TODO defaults are in multiple places, should be consolidated and probably not explicit here
   const showSessionTabs = config.ui?.showSessionTabs ?? false;
   const continueAfterToolRejection =
@@ -63,7 +60,6 @@ export function UserSettingsSection() {
     config.experimental?.onlyUseSystemMessageTools ?? false;
   const codebaseToolCallingOnly =
     config.experimental?.codebaseToolCallingOnly ?? false;
-  const allowAnonymousTelemetry = config.allowAnonymousTelemetry ?? true;
 
   const useAutocompleteMultilineCompletions =
     config.tabAutocompleteOptions?.multilineCompletions ?? "auto";
@@ -82,8 +78,6 @@ export function UserSettingsSection() {
         .filter((val) => !!val),
     });
   };
-
-  const disableTelemetryToggle = false;
 
   return (
     <div>
