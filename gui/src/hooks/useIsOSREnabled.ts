@@ -1,6 +1,5 @@
 import { useState, useEffect, useContext } from "react";
 import { isJetBrains } from "../util";
-import { useWebviewListener } from "./useWebviewListener";
 import { IdeMessengerContext } from "../context/IdeMessenger";
 
 export default function useIsOSREnabled() {
