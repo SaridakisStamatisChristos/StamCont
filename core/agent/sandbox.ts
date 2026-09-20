@@ -388,11 +388,28 @@ function addLinuxRuntimeBindings(args: string[]): void {
 }
 
 function addParentDirectories(args: string[], roots: string[]): void {
+  const preexistingMounts = [
+    "/tmp",
+    "/proc",
+    "/dev",
+    "/usr",
+    "/bin",
+    "/sbin",
+    "/lib",
+    "/lib64",
+    "/nix/store",
+  ].filter((candidate) => existsSync(candidate));
   const dirs = new Set<string>();
   for (const root of roots) {
     let current = path.dirname(root);
     while (current !== path.parse(current).root) {
-      dirs.add(current);
+      if (
+        !preexistingMounts.some(
+          (mount) => current === mount || pathWithin(mount, current),
+        )
+      ) {
+        dirs.add(current);
+      }
       current = path.dirname(current);
     }
   }
