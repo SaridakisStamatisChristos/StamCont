@@ -11,7 +11,6 @@ import { BaseLLM } from "../index.js";
 import {
   AskSageTool,
   AskSageToolChoice,
-  AskSageToolCall,
   AskSageResponse,
   AskSageTokenResponse,
 } from "@continuedev/openai-adapters";

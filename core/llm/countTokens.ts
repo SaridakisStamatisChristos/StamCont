@@ -11,7 +11,6 @@ import { autodetectTemplateType } from "./autodetect.js";
 import {
   addSpaceToAnyEmptyMessages,
   chatMessageIsEmpty,
-  isUserOrToolMsg,
   messageHasToolCallId,
 } from "./messages.js";
 

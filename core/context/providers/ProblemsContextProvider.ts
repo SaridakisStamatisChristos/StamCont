@@ -3,7 +3,6 @@ import {
   ContextProviderDescription,
   ContextProviderExtras,
 } from "../../index.js";
-import { isSecurityConcern } from "../../indexing/ignore.js";
 import { getUriDescription } from "../../util/uri.js";
 import { BaseContextProvider } from "../index.js";
 

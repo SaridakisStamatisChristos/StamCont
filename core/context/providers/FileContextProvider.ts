@@ -6,7 +6,6 @@ import {
   ContextSubmenuItem,
   LoadSubmenuItemsArgs,
 } from "../../";
-import { isSecurityConcern } from "../../indexing/ignore";
 import { walkDirs } from "../../indexing/walkDir";
 import {
   getShortestUniqueRelativeUriPaths,
