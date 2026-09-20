@@ -778,6 +778,8 @@ function Grant-TraverseAncestors {
   }
 }
 
+$processExitCode = 125
+
 try {
   $sid = [StamContAppContainer]::CreateProfile([string]$config.ProfileName)
 
@@ -823,8 +825,31 @@ try {
     "@echo off" + [Environment]::NewLine + $commandText + [Environment]::NewLine + "exit /b %errorlevel%" + [Environment]::NewLine,
     [Text.UTF8Encoding]::new($false)
   )
+  [IO.File]::WriteAllText($stdoutPath, "", [Text.UTF8Encoding]::new($false))
+  [IO.File]::WriteAllText($stderrPath, "", [Text.UTF8Encoding]::new($false))
 
-  $exitCode = [StamContAppContainer]::Run(
+  # Do not rely on directory-ACE inheritance for the three broker-created
+  # files. Grant the unique AppContainer SID exactly what each file needs.
+  [StamContAppContainer]::GrantProfileReadExecute(
+    [string]$config.ProfileName,
+    $commandPath,
+    $false
+  )
+  Register-GrantedPath -TargetPath $commandPath
+  [StamContAppContainer]::GrantProfileFullAccess(
+    [string]$config.ProfileName,
+    $stdoutPath,
+    $false
+  )
+  Register-GrantedPath -TargetPath $stdoutPath
+  [StamContAppContainer]::GrantProfileFullAccess(
+    [string]$config.ProfileName,
+    $stderrPath,
+    $false
+  )
+  Register-GrantedPath -TargetPath $stderrPath
+
+  $processExitCode = [StamContAppContainer]::Run(
     [string]$config.ProfileName,
     [string]$config.CommandInterpreter,
     $commandPath,
@@ -839,7 +864,7 @@ try {
     $stdoutLength = if ($stdoutExists) { (Get-Item -LiteralPath $stdoutPath).Length } else { -1 }
     $stderrLength = if ($stderrExists) { (Get-Item -LiteralPath $stderrPath).Length } else { -1 }
     [Console]::Error.WriteLine(
-      "[stamcont-sandbox-debug] exit=$exitCode commandExists=$(Test-Path -LiteralPath $commandPath) stdoutExists=$stdoutExists stdoutLength=$stdoutLength stderrExists=$stderrExists stderrLength=$stderrLength"
+      "[stamcont-sandbox-debug] exit=$processExitCode commandExists=$(Test-Path -LiteralPath $commandPath) stdoutExists=$stdoutExists stdoutLength=$stdoutLength stderrExists=$stderrExists stderrLength=$stderrLength"
     )
     if ($stderrExists -and $stderrLength -gt 0) {
       $debugStderr = [IO.File]::ReadAllText($stderrPath)
@@ -860,7 +885,6 @@ try {
       [Console]::Error.Write($stderrText)
     }
   }
-  exit $exitCode
 }
 finally {
   if ($sid) {
@@ -883,6 +907,8 @@ finally {
     Write-Error "Failed to delete StamCont AppContainer profile: $_"
   }
 }
+
+exit $processExitCode
 `;
 
 export interface WindowsSandboxSpawnOptions {
