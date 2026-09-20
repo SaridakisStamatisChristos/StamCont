@@ -1,9 +1,11 @@
 import { validateSingleEdit } from "core/edit/searchAndReplace/findAndReplaceUtils";
 import { executeFindAndReplace } from "core/edit/searchAndReplace/performReplace";
-import { validateSearchAndReplaceFilepath } from "core/edit/searchAndReplace/validateArgs";
 import { v4 as uuid } from "uuid";
+
 import { applyForEditTool } from "../../redux/thunks/handleApplyStateUpdate";
+
 import { ClientToolImpl } from "./callClientTool";
+import { resolveClientToolExistingPath } from "./resolveClientToolPath";
 
 export const singleFindAndReplaceImpl: ClientToolImpl = async (
   args,
@@ -17,12 +19,9 @@ export const singleFindAndReplaceImpl: ClientToolImpl = async (
     args.new_string,
     args.replace_all,
   );
-  const executionProfile = extras.getState().session?.executionProfile;
-  const fileUri = await validateSearchAndReplaceFilepath(
+  const fileUri = await resolveClientToolExistingPath(
     args.filepath,
-    extras.ideMessenger.ide,
-    executionProfile === "full_access",
-    executionProfile === "interactive",
+    extras,
   );
 
   const editingFileContents = await extras.ideMessenger.ide.readFile(fileUri);
