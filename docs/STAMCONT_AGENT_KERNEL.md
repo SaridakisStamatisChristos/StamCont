@@ -116,17 +116,18 @@ The sandbox enforces workspace-scoped execution across both IDE and CLI surfaces
 - writable-path validation against the nearest existing ancestor before directories/files are created;
 - host-side Core path authorization for GUI edit tools, returning the canonical URI that the webview is allowed to use;
 - CLI argument preprocessing and execution-time revalidation through the same profile-selected backend;
-- filtered child-process environments with `HOME` / `USERPROFILE` relocated into the workspace;
+- strict child-process environment allowlisting that strips API credentials, cloud tokens, SSH-agent handles, language/runtime injection variables, and host temp-directory pointers;
+- sandbox-owned `HOME` / `USERPROFILE` and temporary directories rather than exposing host user state;
 - owned process-group tracking and descendant process-tree termination on cancellation;
-- restricted native HTTP(S) fetches that reject localhost, private, link-local, multicast, and other reserved targets and revalidate redirects.
+- restricted native HTTP(S) fetches that reject localhost, private, link-local, multicast, and other reserved targets, reject mixed public/private DNS answers, pin the actual connection lookup to the validated address, preserve the original hostname for HTTP Host/TLS SNI/certificate validation, and revalidate redirects.
 
 Sandboxed shell execution is OS-enforced where a supported containment primitive is available:
 
-- Linux uses `bubblewrap` with isolated namespaces and `--unshare-net`;
-- macOS uses `sandbox-exec` with workspace file rules and denied network access;
+- Linux uses `bubblewrap` with isolated namespaces, a private tmpfs, `--unshare-net`, and workspace binds; Plan mounts those workspace binds read-only;
+- macOS uses `sandbox-exec` with workspace rules, a per-process private temp directory, denied network access, and read-only workspace rules for Plan;
 - unsupported platforms fail closed for Interactive/Plan shell execution rather than silently falling back to an unrestricted host shell.
 
-Plan and Interactive therefore share the same filesystem/process sandbox boundary, while the kernel capability profile still distinguishes what the model is permitted to do. In particular, Plan retains read-only filesystem capability even though it uses the same sandbox backend.
+Plan and Interactive share the same confinement implementation but not the same write authority. Interactive receives writable workspace mounts. Plan is read-only both at the kernel capability layer and at the OS sandbox/filesystem-backend layer, so a Plan shell cannot bypass tool-level write denial by redirecting output to a workspace file.
 
 ## Capability and enforcement boundary
 
@@ -136,7 +137,11 @@ The capability model distinguishes workspace-scoped and unrestricted filesystem/
 - **Interactive** selects `SandboxExecutionBackend` with workspace read/write, sandboxed shell execution, restricted HTTP(S), environment filtering, and owned process cancellation.
 - **Plan** also selects `SandboxExecutionBackend`, but its kernel capabilities continue to deny filesystem writes.
 
-The sandbox is intentionally fail-closed when process isolation cannot be enforced. Remaining hardening work includes native Windows shell containment, broader cross-platform enforcement coverage, and stronger HTTP DNS-pinning/connection binding against DNS-rebinding races.
+The sandbox is intentionally fail-closed when process isolation cannot be enforced. Restricted HTTP now binds policy resolution to connection establishment using a pinned lookup agent, so an attacker cannot pass policy validation with one DNS answer and cause the HTTP stack to connect using a later private answer.
+
+Filesystem writes revalidate the nearest existing ancestor immediately before creation and use a no-follow final-component open where the platform exposes `O_NOFOLLOW`. This materially narrows symlink races, but it does not claim to eliminate every parent-directory replacement TOCTOU race on every filesystem. The OS process sandbox remains the authoritative boundary for shell-originated writes.
+
+Native Windows shell containment remains a hardening requirement. Until a real Windows isolation primitive is wired in and verified, Interactive/Plan shell execution on Windows remains fail-closed; Full Access is unaffected.
 
 ## Current API
 
@@ -166,8 +171,8 @@ const result = await kernel.executeTool(
 
 The major remaining product-facing work is:
 
-- harden the execution backends across supported platforms, especially native Windows process containment and remaining platform-specific edge cases;
-- strengthen restricted HTTP transport against DNS-rebinding/connection-race classes beyond target prevalidation and redirect revalidation;
-- continue promoting the streamed model loop toward a provider-neutral `AgentLoop` contract now that Host and Sandbox execution backends are established.
+- complete native Windows AppContainer/process-tree containment and Windows junction/process/network torture coverage;
+- finish the cross-platform execution-security matrix and final residual-risk audit;
+- only after hardening is merged and green, continue promoting the streamed model loop toward a provider-neutral `AgentLoop` contract.
 
 The separate Orchestrator repository remains a later higher-level planning/DAG/durability layer and is not a dependency of the kernel.
