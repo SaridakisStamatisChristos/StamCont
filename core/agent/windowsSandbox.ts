@@ -1005,6 +1005,21 @@ try {
     [string]$config.Cwd
   )
 
+  if ([bool]$config.Diagnostics) {
+    $stdoutExists = Test-Path -LiteralPath $stdoutPath
+    $stderrExists = Test-Path -LiteralPath $stderrPath
+    $stdoutLength = if ($stdoutExists) { (Get-Item -LiteralPath $stdoutPath).Length } else { -1 }
+    $stderrLength = if ($stderrExists) { (Get-Item -LiteralPath $stderrPath).Length } else { -1 }
+    [Console]::Error.WriteLine(
+      "[stamcont-sandbox-debug] exit=$exitCode commandExists=$(Test-Path -LiteralPath $commandPath) stdoutExists=$stdoutExists stdoutLength=$stdoutLength stderrExists=$stderrExists stderrLength=$stderrLength"
+    )
+    if ($stderrExists -and $stderrLength -gt 0) {
+      $debugStderr = [IO.File]::ReadAllText($stderrPath)
+      if ($debugStderr.Length -gt 1000) { $debugStderr = $debugStderr.Substring(0, 1000) }
+      [Console]::Error.WriteLine("[stamcont-sandbox-debug] child-stderr=$debugStderr")
+    }
+  }
+
   if (Test-Path -LiteralPath $stdoutPath) {
     $stdoutText = [IO.File]::ReadAllText($stdoutPath)
     if ($stdoutText.Length -gt 0) {
@@ -1100,6 +1115,7 @@ export function spawnWindowsAppContainerShell(
     PathEntries: sandboxPathEntries,
     CommandInterpreter: commandInterpreter,
     CommandUtf8Base64: Buffer.from(command, "utf8").toString("base64"),
+    Diagnostics: process.env.STAMCONT_REQUIRE_OS_SANDBOX_TESTS === "1",
   };
   const configBase64 = Buffer.from(
     JSON.stringify(config),
