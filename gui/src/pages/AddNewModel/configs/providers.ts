@@ -1,8 +1,7 @@
 import { HTMLInputTypeAttribute } from "react";
 import { ModelProviderTags } from "../../../components/modelSelection/utils";
 import { completionParamsInputs } from "./completionParamsInputs";
-import type { ModelPackage } from "./models";
-import { models } from "./models";
+import { models, type ModelPackage } from "./models";
 
 export interface InputDescriptor {
   inputType: HTMLInputTypeAttribute;
