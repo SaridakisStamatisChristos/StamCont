@@ -70,6 +70,18 @@ async function buildPackage(packageName, cleanNodeModules = false) {
 }
 
 async function buildPackagesInParallel(packages, cleanNodeModules = false) {
+  // Multiple concurrent npm ci processes sharing the Windows npm cache can
+  // collide on _cacache temporary files (EEXIST/EPERM). Keep the fast parallel
+  // path on POSIX, but make Windows deterministic rather than relying on CI
+  // retries for cache races.
+  if (process.platform === "win32") {
+    const results = [];
+    for (const pkg of packages) {
+      results.push(await buildPackage(pkg, cleanNodeModules));
+    }
+    return results;
+  }
+
   const buildPromises = packages.map((pkg) =>
     buildPackage(pkg, cleanNodeModules),
   );

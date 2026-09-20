@@ -116,17 +116,19 @@ The sandbox enforces workspace-scoped execution across both IDE and CLI surfaces
 - writable-path validation against the nearest existing ancestor before directories/files are created;
 - host-side Core path authorization for GUI edit tools, returning the canonical URI that the webview is allowed to use;
 - CLI argument preprocessing and execution-time revalidation through the same profile-selected backend;
-- filtered child-process environments with `HOME` / `USERPROFILE` relocated into the workspace;
+- strict child-process environment allowlisting that strips API credentials, cloud tokens, SSH-agent handles, language/runtime injection variables, and host temp-directory pointers;
+- sandbox-owned `HOME` / `USERPROFILE` and temporary directories rather than exposing host user state;
 - owned process-group tracking and descendant process-tree termination on cancellation;
-- restricted native HTTP(S) fetches that reject localhost, private, link-local, multicast, and other reserved targets and revalidate redirects.
+- restricted native HTTP(S) fetches that reject localhost, private, link-local, multicast, and other reserved targets, reject mixed public/private DNS answers, pin the actual connection lookup to the validated address, preserve the original hostname for HTTP Host/TLS SNI/certificate validation, and revalidate redirects.
 
 Sandboxed shell execution is OS-enforced where a supported containment primitive is available:
 
-- Linux uses `bubblewrap` with isolated namespaces and `--unshare-net`;
-- macOS uses `sandbox-exec` with workspace file rules and denied network access;
-- unsupported platforms fail closed for Interactive/Plan shell execution rather than silently falling back to an unrestricted host shell.
+- Linux uses `bubblewrap` with isolated namespaces, a private tmpfs, `--unshare-net`, and workspace binds; Plan mounts those workspace binds read-only;
+- macOS uses `sandbox-exec` with workspace rules, a per-process private temp directory, denied network access, and read-only workspace rules for Plan;
+- Windows uses an ephemeral AppContainer profile, workspace-scoped ACL grants, non-inheriting ancestor traverse grants, no network capability, a private HOME/TEMP area, explicit sandbox-owned stdout/stderr capture handles, and a Job Object configured to kill the owned process tree when the launcher closes; Plan adds an AppContainer-SID deny-write ACL so read-only behavior is enforced at the OS boundary. Model-controlled shell commands run through the native Windows `COMSPEC` contract (normally `cmd.exe`) inside the AppContainer;
+- platforms without an enforceable sandbox primitive fail closed for Interactive/Plan shell execution rather than silently falling back to an unrestricted host shell.
 
-Plan and Interactive therefore share the same filesystem/process sandbox boundary, while the kernel capability profile still distinguishes what the model is permitted to do. In particular, Plan retains read-only filesystem capability even though it uses the same sandbox backend.
+Plan and Interactive share the same confinement implementation but not the same write authority. Interactive receives writable workspace mounts. Plan is read-only both at the kernel capability layer and at the OS sandbox/filesystem-backend layer, so a Plan shell cannot bypass tool-level write denial by redirecting output to a workspace file.
 
 ## Capability and enforcement boundary
 
@@ -136,7 +138,15 @@ The capability model distinguishes workspace-scoped and unrestricted filesystem/
 - **Interactive** selects `SandboxExecutionBackend` with workspace read/write, sandboxed shell execution, restricted HTTP(S), environment filtering, and owned process cancellation.
 - **Plan** also selects `SandboxExecutionBackend`, but its kernel capabilities continue to deny filesystem writes.
 
-The sandbox is intentionally fail-closed when process isolation cannot be enforced. Remaining hardening work includes native Windows shell containment, broader cross-platform enforcement coverage, and stronger HTTP DNS-pinning/connection binding against DNS-rebinding races.
+The sandbox is intentionally fail-closed when process isolation cannot be enforced. Restricted HTTP now binds policy resolution to connection establishment using a pinned lookup agent, so an attacker cannot pass policy validation with one DNS answer and cause the HTTP stack to connect using a later private answer.
+
+Filesystem writes revalidate the nearest existing ancestor immediately before creation and use a no-follow final-component open where the platform exposes `O_NOFOLLOW`. This materially narrows symlink races, but it does not claim to eliminate every parent-directory replacement TOCTOU race on every filesystem. The OS process sandbox remains the authoritative boundary for shell-originated writes.
+
+Residual-risk boundary: built-in host-process filesystem operations cannot make a universal race-free path guarantee using Node path APIs alone on every supported filesystem. Canonicalization, nearest-existing-ancestor checks, final-component no-follow where available, and the profile capability layer substantially narrow that surface; shell-originated operations are additionally constrained by the OS sandbox. Full Access intentionally does not receive those workspace restrictions.
+
+Windows shell containment is implemented through AppContainer plus Job Objects rather than a policy-only wrapper. The launcher creates a unique profile per sandbox process, grants workspace/private runtime access plus read/execute access to selected executable PATH entries required for developer tooling, and grants only non-inheriting traverse/read-attributes access on ancestors needed to reach those explicitly authorized targets. Model-controlled commands are passed directly to the native Windows `COMSPEC` interpreter inside the AppContainer rather than through the privileged orchestration script. Standard output and error are captured through sandbox-owned files and replayed by the outer launcher, avoiding inherited host-pipe ambiguity at the lowbox boundary. The process is assigned to an owned kill-on-close Job Object, and temporary profile/ACL entries are removed during teardown. AppContainer is created without network capabilities, so shell-originated outbound networking remains denied while approved built-in HTTP continues through the restricted fetch path.
+
+The focused execution-security workflow is authoritative for OS-boundary claims. It runs the adversarial execution suite on Ubuntu, macOS, and Windows and sets `STAMCONT_REQUIRE_OS_SANDBOX_TESTS=1`, so missing containment primitives fail the security job instead of converting integration coverage into skips.
 
 ## Current API
 
@@ -164,10 +174,15 @@ const result = await kernel.executeTool(
 
 ## Remaining Phase 2 work
 
-The major remaining product-facing work is:
+The execution-hardening implementation is complete when both the focused cross-platform execution-security workflow and the normal StamCont baseline are green on the PR and again on merged `main`.
 
-- harden the execution backends across supported platforms, especially native Windows process containment and remaining platform-specific edge cases;
-- strengthen restricted HTTP transport against DNS-rebinding/connection-race classes beyond target prevalidation and redirect revalidation;
-- continue promoting the streamed model loop toward a provider-neutral `AgentLoop` contract now that Host and Sandbox execution backends are established.
+The final hardening gate covers:
+
+- Windows AppContainer filesystem, Plan read-only, descendant-process, environment, temp-isolation, cancellation, and network-denial properties;
+- Linux/macOS sandbox filesystem, read-only, nested-shell, environment, temp-isolation, cancellation, and network-denial properties;
+- restricted HTTP DNS-to-connect pinning, redirect revalidation, cross-origin credential stripping, and caller `Host`/proxy-auth suppression;
+- Full Access regression coverage proving that host-wide current-user filesystem/shell semantics remain unrestricted.
+
+After that gate is merged and green, the next architecture phase is the provider-neutral `AgentLoop`. The separate Orchestrator repository remains out of scope until the AgentLoop is stable.
 
 The separate Orchestrator repository remains a later higher-level planning/DAG/durability layer and is not a dependency of the kernel.
