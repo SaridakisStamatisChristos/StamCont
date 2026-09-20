@@ -17,6 +17,30 @@ $configJson = [Text.Encoding]::UTF8.GetString(
 )
 $config = $configJson | ConvertFrom-Json
 
+function Write-StamContDiagnostic {
+  param([Parameter(Mandatory = $true)][string]$Stage)
+
+  $diagnosticsPath = [string]$config.DiagnosticsPath
+  if ([string]::IsNullOrWhiteSpace($diagnosticsPath)) {
+    return
+  }
+
+  try {
+    Add-Content -LiteralPath $diagnosticsPath -Encoding UTF8 -Value (
+      ([DateTime]::UtcNow.ToString("O")) +
+      " pid=" + $PID +
+      " profile=" + ([string]$config.ProfileName) +
+      " stage=" + $Stage
+    )
+  }
+  catch {
+    # Diagnostics are strictly best-effort.
+  }
+}
+
+Write-StamContDiagnostic -Stage "powershell-config-parsed"
+Write-StamContDiagnostic -Stage "before-add-type"
+
 Add-Type -Language CSharp -TypeDefinition @'
 using System;
 using System.Collections;
@@ -33,6 +57,32 @@ public static class StamContAppContainer
     public static long LastStderrBytes = 0;
     public static string LastStdoutBase64 = "";
     public static string LastStderrBase64 = "";
+
+    private static void Diagnostic(
+        string diagnosticsPath,
+        string profileName,
+        string stage)
+    {
+        if (String.IsNullOrWhiteSpace(diagnosticsPath))
+        {
+            return;
+        }
+
+        try
+        {
+            string line =
+                DateTime.UtcNow.ToString("O") +
+                " pid=" + System.Diagnostics.Process.GetCurrentProcess().Id +
+                " profile=" + profileName +
+                " stage=" + stage +
+                Environment.NewLine;
+            File.AppendAllText(diagnosticsPath, line, Encoding.UTF8);
+        }
+        catch
+        {
+            // Diagnostics must never change sandbox behavior.
+        }
+    }
     private const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
     private const uint CREATE_SUSPENDED = 0x00000004;
     private const uint STARTF_USESTDHANDLES = 0x00000100;
@@ -665,7 +715,8 @@ public static class StamContAppContainer
         string profileName,
         string commandInterpreter,
         string commandUtf8Base64,
-        string workingDirectory)
+        string workingDirectory,
+        string diagnosticsPath)
     {
         byte[] commandBytes = Convert.FromBase64String(commandUtf8Base64);
         string commandText = Encoding.UTF8.GetString(commandBytes);
@@ -673,14 +724,16 @@ public static class StamContAppContainer
             profileName,
             commandInterpreter,
             commandText,
-            workingDirectory);
+            workingDirectory,
+            diagnosticsPath);
     }
 
     public static int Run(
         string profileName,
         string commandInterpreter,
         string commandText,
-        string workingDirectory)
+        string workingDirectory,
+        string diagnosticsPath)
     {
         IntPtr appContainerSid = IntPtr.Zero;
         IntPtr attributeList = IntPtr.Zero;
@@ -705,6 +758,7 @@ public static class StamContAppContainer
 
         try
         {
+            Diagnostic(diagnosticsPath, profileName, "run-start");
             Interlocked.Exchange(ref LastStdoutBytes, 0);
             Interlocked.Exchange(ref LastStderrBytes, 0);
             LastStdoutBase64 = "";
@@ -717,6 +771,7 @@ public static class StamContAppContainer
             {
                 Marshal.ThrowExceptionForHR(hr);
             }
+            Diagnostic(diagnosticsPath, profileName, "sid-derived");
 
             SECURITY_CAPABILITIES capabilities = new SECURITY_CAPABILITIES
             {
@@ -763,6 +818,7 @@ public static class StamContAppContainer
                     Marshal.GetLastWin32Error(),
                     "Setting AppContainer security capabilities failed");
             }
+            Diagnostic(diagnosticsPath, profileName, "security-capabilities-ready");
 
             job = CreateJobObjectW(IntPtr.Zero, null);
             if (job == IntPtr.Zero)
@@ -790,6 +846,7 @@ public static class StamContAppContainer
                     Marshal.GetLastWin32Error(),
                     "SetInformationJobObject failed");
             }
+            Diagnostic(diagnosticsPath, profileName, "job-ready");
 
             // The child will be created suspended, attached to this Job
             // Object, and only then resumed. No untrusted instruction executes
@@ -867,6 +924,7 @@ public static class StamContAppContainer
                     Marshal.GetLastWin32Error(),
                     "Setting sandbox standard-handle whitelist failed");
             }
+            Diagnostic(diagnosticsPath, profileName, "stdio-and-handle-list-ready");
 
             // Keep process creation narrow: SECURITY_CAPABILITIES establishes
             // the AppContainer and HANDLE_LIST exposes only stdin plus the two
@@ -881,12 +939,14 @@ public static class StamContAppContainer
             STARTUPINFOEX startup = new STARTUPINFOEX();
             startup.StartupInfo.cb =
                 (uint)Marshal.SizeOf(typeof(STARTUPINFOEX));
+            startup.StartupInfo.lpDesktop = "winsta0\\default";
             startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
             startup.StartupInfo.hStdInput = childStdIn;
             startup.StartupInfo.hStdOutput = childStdOut;
             startup.StartupInfo.hStdError = childStdErr;
             startup.lpAttributeList = attributeList;
 
+            Diagnostic(diagnosticsPath, profileName, "before-create-process");
             if (!CreateProcessW(
                 shell,
                 commandLine,
@@ -903,6 +963,10 @@ public static class StamContAppContainer
                     Marshal.GetLastWin32Error(),
                     "CreateProcessW(AppContainer) failed");
             }
+            Diagnostic(
+                diagnosticsPath,
+                profileName,
+                "after-create-process childPid=" + processInfo.dwProcessId);
 
             if (!AssignProcessToJobObject(job, processInfo.hProcess))
             {
@@ -910,6 +974,7 @@ public static class StamContAppContainer
                     Marshal.GetLastWin32Error(),
                     "AssignProcessToJobObject failed");
             }
+            Diagnostic(diagnosticsPath, profileName, "job-assigned");
 
             uint previousSuspendCount = ResumeThread(processInfo.hThread);
             if (previousSuspendCount == 0xFFFFFFFF)
@@ -918,6 +983,7 @@ public static class StamContAppContainer
                     Marshal.GetLastWin32Error(),
                     "ResumeThread failed for AppContainer child");
             }
+            Diagnostic(diagnosticsPath, profileName, "child-resumed");
 
             // The child owns its inherited stdin read handle. Drop both broker
             // copies so the child immediately observes EOF if it attempts to
@@ -969,7 +1035,9 @@ public static class StamContAppContainer
             stdoutThread.Start();
             stderrThread.Start();
 
+            Diagnostic(diagnosticsPath, profileName, "before-wait");
             WaitForSingleObject(processInfo.hProcess, INFINITE);
+            Diagnostic(diagnosticsPath, profileName, "after-wait");
             uint exitCode;
             if (!GetExitCodeProcess(processInfo.hProcess, out exitCode))
             {
@@ -985,6 +1053,7 @@ public static class StamContAppContainer
                 CloseHandle(job);
                 job = IntPtr.Zero;
             }
+            Diagnostic(diagnosticsPath, profileName, "job-closed");
 
             // No new writers can survive the closed job. Tell the pump loops
             // to finish once all currently buffered bytes have been drained;
@@ -1016,6 +1085,7 @@ public static class StamContAppContainer
                 Convert.ToBase64String(stdoutBuffer.ToArray());
             LastStderrBase64 =
                 Convert.ToBase64String(stderrBuffer.ToArray());
+            Diagnostic(diagnosticsPath, profileName, "run-return");
             return unchecked((int)exitCode);
         }
         finally
@@ -1099,6 +1169,8 @@ public static class StamContAppContainer
     }
 }
 '@
+
+Write-StamContDiagnostic -Stage "after-add-type"
 
 $sid = $null
 $grantedPaths = [System.Collections.Generic.List[string]]::new()
@@ -1209,7 +1281,9 @@ function Grant-TraverseAncestors {
 $processExitCode = 125
 
 try {
+  Write-StamContDiagnostic -Stage "before-profile-create"
   $sid = [StamContAppContainer]::CreateProfile([string]$config.ProfileName)
+  Write-StamContDiagnostic -Stage "after-profile-create"
 
   foreach ($target in @(
     @($config.Roots) +
@@ -1222,6 +1296,8 @@ try {
     }
   }
 
+  Write-StamContDiagnostic -Stage "after-ancestor-grants"
+
   foreach ($root in @($config.Roots)) {
     if ([bool]$config.ReadOnly) {
       Grant-ProfileReadExecute -TargetPath ([string]$root) -Required
@@ -1230,12 +1306,16 @@ try {
     }
   }
 
+  Write-StamContDiagnostic -Stage "after-root-grants"
+
   # Developer-tool PATH directories receive specific read/execute rights only.
   # Optional grants fail closed for the tool itself but do not prevent shell
   # startup when a system-protected PATH entry cannot be modified.
   foreach ($pathEntry in @($config.PathEntries)) {
     Grant-ProfileReadExecute -TargetPath ([string]$pathEntry)
   }
+
+  Write-StamContDiagnostic -Stage "after-path-grants"
 
   # Bootstrap inside the AppContainer's own profile storage rather than
   # under the host user's temp tree. Windows creates this location specifically
@@ -1284,7 +1364,8 @@ try {
       [string]$config.ProfileName,
       [string]$config.CommandInterpreter,
       [string]$config.CommandUtf8Base64,
-      [string]$config.Cwd
+      [string]$config.Cwd,
+      [string]$config.DiagnosticsPath
     )
 
     $stdoutBase64 = [StamContAppContainer]::LastStdoutBase64
@@ -1308,11 +1389,13 @@ try {
     return $exitCode
   }
 
+  Write-StamContDiagnostic -Stage "before-user-command"
   $processExitCode = Invoke-StamContUserCommand
-
+  Write-StamContDiagnostic -Stage "after-user-command"
 
 }
 finally {
+  Write-StamContDiagnostic -Stage "before-acl-revoke"
   if ($sid) {
     for ($i = $grantedPaths.Count - 1; $i -ge 0; $i--) {
       try {
@@ -1326,8 +1409,11 @@ finally {
       }
     }
   }
+  Write-StamContDiagnostic -Stage "after-acl-revoke"
   try {
+    Write-StamContDiagnostic -Stage "before-profile-delete"
     [StamContAppContainer]::DeleteProfile([string]$config.ProfileName)
+    Write-StamContDiagnostic -Stage "after-profile-delete"
   }
   catch {
     Write-Error "Failed to delete StamCont AppContainer profile: $_"
@@ -1398,6 +1484,14 @@ export function spawnWindowsAppContainerShell(
     CommandUtf8Length: Buffer.byteLength(command, "utf8"),
     CommandSha256: createHash("sha256").update(command, "utf8").digest("hex"),
     Diagnostics: process.env.STAMCONT_REQUIRE_OS_SANDBOX_TESTS === "1",
+    DiagnosticsPath:
+      process.env.STAMCONT_REQUIRE_OS_SANDBOX_TESTS === "1" &&
+      process.env.RUNNER_TEMP
+        ? path.join(
+            process.env.RUNNER_TEMP,
+            "stamcont-windows-sandbox-debug.log",
+          )
+        : "",
   };
   const configBase64 = Buffer.from(
     JSON.stringify(config),
