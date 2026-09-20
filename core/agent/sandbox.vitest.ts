@@ -121,6 +121,28 @@ describe("SandboxExecutionBackend filesystem confinement", () => {
     ).rejects.toBeInstanceOf(SandboxViolationError);
   });
 
+  it.skipIf(process.platform !== "win32")(
+    "rejects Windows drive-relative and unrelated drive or UNC-style paths",
+    async () => {
+      const workspace = await tempDir("stamcont-win-paths-");
+      const backend = new SandboxExecutionBackend(ideWithWorkspaces(workspace));
+
+      await expect(
+        backend.resolveExistingPath("C:relative.txt"),
+      ).rejects.toBeInstanceOf(SandboxViolationError);
+
+      const workspaceDrive = path.parse(workspace).root.slice(0, 2);
+      const otherDrive = workspaceDrive.toUpperCase() === "C:" ? "D:" : "C:";
+      await expect(
+        backend.resolveWritablePath(`${otherDrive}\\unrelated\\file.txt`),
+      ).rejects.toBeInstanceOf(SandboxViolationError);
+
+      await expect(
+        backend.resolveWritablePath("\\\\server\\share\\file.txt"),
+      ).rejects.toBeInstanceOf(SandboxViolationError);
+    },
+  );
+
   it("rejects creation through an outside absolute path", async () => {
     const workspace = await tempDir("stamcont-sandbox-workspace-");
     const outside = await tempDir("stamcont-sandbox-outside-");
