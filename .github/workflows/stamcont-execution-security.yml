@@ -64,7 +64,7 @@ jobs:
 
       - name: Run execution security property tests
         working-directory: core
-        run: npm run vitest -- agent/sandbox.vitest.ts agent/execution.vitest.ts
+        run: npm run vitest -- agent/sandbox.vitest.ts agent/sandbox.shell-security.vitest.ts agent/execution.vitest.ts
 
       - name: Test restricted fetch transport
         working-directory: packages/fetch
