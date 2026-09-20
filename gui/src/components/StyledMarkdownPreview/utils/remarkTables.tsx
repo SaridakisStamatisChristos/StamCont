@@ -176,7 +176,6 @@ export function remarkTables() {
           });
         }
 
-        lastIndex = tableRegex.lastIndex;
       }
 
       if (failed) {
