@@ -66,7 +66,7 @@ export class ContinueServerClient implements IContinueServerClient {
     const url = new URL("indexing/cache", this.url);
 
     try {
-      await fetch(url, {
+      const response = await fetch(url, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${await this.userToken}`,
