@@ -303,6 +303,8 @@ describe("sandbox shell security properties", () => {
           "if defined GITHUB_TOKEN exit /b 9",
           "if defined AWS_SECRET_ACCESS_KEY exit /b 9",
           "if defined NODE_OPTIONS exit /b 9",
+          "if defined PSModulePath exit /b 9",
+          "if defined PSExecutionPolicyPreference exit /b 9",
           "echo clean",
         ].join(" & "),
         {
@@ -311,6 +313,7 @@ describe("sandbox shell security properties", () => {
           GITHUB_TOKEN: "secret",
           AWS_SECRET_ACCESS_KEY: "secret",
           NODE_OPTIONS: "--require hostile.js",
+          PSModulePath: "C:\\hostile-modules",
         },
       );
       expect(envResult.code).toBe(0);
