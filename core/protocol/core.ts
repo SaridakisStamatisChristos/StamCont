@@ -327,6 +327,15 @@ export type ToCoreFromIdeOrWebviewProtocol = {
     },
     { policy: ToolPolicy; displayValue?: string },
   ];
+  "tools/resolvePath": [
+    {
+      filepath: string;
+      executionProfile?: ExecutionProfileId;
+    },
+    {
+      uri: string | null;
+    },
+  ];
   "tools/preprocessArgs": [
     { toolName: string; args: Record<string, unknown> },
     {
