@@ -93,25 +93,18 @@ afterEach(async () => {
 
 describe("sandbox shell security properties", () => {
   it.skipIf(process.platform !== "win32")(
-    "uses an AppContainer-compatible PowerShell runtime",
+    "runs the native Windows command interpreter inside AppContainer",
     async () => {
-      const workspace = await tempDir("stamcont-win-pwsh-version-");
+      const workspace = await tempDir("stamcont-win-comspec-");
       const backend = new SandboxExecutionBackend(ideWithWorkspace(workspace));
 
       const result = await runSandboxCommand(
         backend,
-        "$PSVersionTable.PSVersion.ToString()",
+        "echo stamcont-appcontainer-cmd",
       );
 
       expect(result.code, result.stderr).toBe(0);
-      const match = result.stdout.trim().match(/^(\d+)\.(\d+)\.(\d+)/);
-      expect(match).not.toBeNull();
-      const version = match!.slice(1, 4).map(Number);
-      expect(
-        version[0] > 7 ||
-          (version[0] === 7 &&
-            (version[1] > 6 || (version[1] === 6 && version[2] >= 2))),
-      ).toBe(true);
+      expect(result.stdout).toContain("stamcont-appcontainer-cmd");
     },
   );
 
@@ -126,17 +119,16 @@ describe("sandbox shell security properties", () => {
 
       const writeResult = await runSandboxCommand(
         backend,
-        "$ErrorActionPreference='Stop'; Set-Content -LiteralPath 'shell-write.txt' -Value 'sandboxed' -NoNewline",
+        "echo sandboxed>shell-write.txt",
       );
       expect(writeResult.code).toBe(0);
       await expect(
         readFile(path.join(workspace, "shell-write.txt"), "utf8"),
-      ).resolves.toBe("sandboxed");
+      ).resolves.toContain("sandboxed");
 
-      const escapedPath = outsideSecret.replaceAll("'", "''");
       const readResult = await runSandboxCommand(
         backend,
-        `$ErrorActionPreference='Stop'; Get-Content -LiteralPath '${escapedPath}' | Out-Null`,
+        `type "${outsideSecret}" >nul 2>&1`,
       );
       expect(readResult.code).not.toBe(0);
     },
@@ -149,15 +141,12 @@ describe("sandbox shell security properties", () => {
       const backend = new SandboxExecutionBackend(ideWithWorkspace(workspace), {
         readOnly: true,
       });
-      const sanity = await runSandboxCommand(
-        backend,
-        "$ErrorActionPreference='Stop'; $null = $true",
-      );
+      const sanity = await runSandboxCommand(backend, "ver >nul");
       expect(sanity.code, sanity.stderr).toBe(0);
 
       const result = await runSandboxCommand(
         backend,
-        "$ErrorActionPreference='Stop'; Set-Content -LiteralPath 'plan-write.txt' -Value 'forbidden' -NoNewline",
+        "echo forbidden>plan-write.txt",
       );
 
       expect(result.code).not.toBe(0);
@@ -166,7 +155,7 @@ describe("sandbox shell security properties", () => {
   );
 
   it.skipIf(process.platform !== "win32")(
-    "keeps Windows cmd and nested PowerShell children inside the sandbox",
+    "keeps nested Windows shell children inside the sandbox",
     async () => {
       const workspace = await tempDir("stamcont-win-children-");
       const backend = new SandboxExecutionBackend(ideWithWorkspace(workspace));
@@ -174,21 +163,20 @@ describe("sandbox shell security properties", () => {
       const result = await runSandboxCommand(
         backend,
         [
-          "$ErrorActionPreference='Stop'",
-          'cmd.exe /d /c "echo cmd-child>cmd-child.txt"',
-          "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
-          'pwsh.exe -NoLogo -NoProfile -NonInteractive -Command "Set-Content -LiteralPath ps-child.txt -Value ps-child -NoNewline"',
-          "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
-        ].join("; "),
+          "cmd.exe /d /c echo cmd-child^>cmd-child.txt",
+          "if errorlevel 1 exit /b %errorlevel%",
+          "cmd.exe /d /c echo nested-child^>nested-child.txt",
+          "if errorlevel 1 exit /b %errorlevel%",
+        ].join(" & "),
       );
 
-      expect(result.code).toBe(0);
+      expect(result.code, result.stderr).toBe(0);
       await expect(
         readFile(path.join(workspace, "cmd-child.txt"), "utf8"),
       ).resolves.toContain("cmd-child");
       await expect(
-        readFile(path.join(workspace, "ps-child.txt"), "utf8"),
-      ).resolves.toBe("ps-child");
+        readFile(path.join(workspace, "nested-child.txt"), "utf8"),
+      ).resolves.toContain("nested-child");
     },
   );
 
@@ -201,10 +189,12 @@ describe("sandbox shell security properties", () => {
       const envResult = await runSandboxCommand(
         backend,
         [
-          "$ErrorActionPreference='Stop'",
-          "if ($env:OPENAI_API_KEY -or $env:GITHUB_TOKEN -or $env:AWS_SECRET_ACCESS_KEY -or $env:NODE_OPTIONS) { exit 9 }",
-          "Write-Output clean",
-        ].join("; "),
+          "if defined OPENAI_API_KEY exit /b 9",
+          "if defined GITHUB_TOKEN exit /b 9",
+          "if defined AWS_SECRET_ACCESS_KEY exit /b 9",
+          "if defined NODE_OPTIONS exit /b 9",
+          "echo clean",
+        ].join(" & "),
         {
           ...process.env,
           OPENAI_API_KEY: "secret",
@@ -218,7 +208,7 @@ describe("sandbox shell security properties", () => {
 
       const networkResult = await runSandboxCommand(
         backend,
-        "$ErrorActionPreference='Stop'; Invoke-WebRequest -UseBasicParsing -TimeoutSec 3 -Uri 'http://1.1.1.1/' | Out-Null",
+        "curl.exe --connect-timeout 2 --max-time 3 -fsS http://1.1.1.1/ >nul 2>&1",
       );
       expect(networkResult.code).not.toBe(0);
     },
@@ -232,11 +222,11 @@ describe("sandbox shell security properties", () => {
 
       const firstCommand =
         process.platform === "win32"
-          ? "$ErrorActionPreference='Stop'; Set-Content -LiteralPath (Join-Path $env:TEMP 'session-marker') -Value private -NoNewline"
+          ? 'echo private>"%TEMP%\\session-marker"'
           : 'printf private > "$TMPDIR/session-marker"';
       const secondCommand =
         process.platform === "win32"
-          ? "$ErrorActionPreference='Stop'; if (Test-Path -LiteralPath (Join-Path $env:TEMP 'session-marker')) { exit 9 }"
+          ? 'if exist "%TEMP%\\session-marker" exit /b 9'
           : 'test ! -e "$TMPDIR/session-marker"';
 
       const first = await runSandboxCommand(backend, firstCommand);
@@ -276,10 +266,9 @@ describe("sandbox shell security properties", () => {
       const descendantCommand =
         process.platform === "win32"
           ? [
-              "$ErrorActionPreference='Stop'",
-              "$child = Start-Process pwsh.exe -PassThru -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-Command','Start-Sleep -Milliseconds 1600; Set-Content -LiteralPath child-after-kill.txt -Value escaped -NoNewline')",
-              "Start-Sleep -Seconds 10",
-            ].join("; ")
+              'start "" /b cmd.exe /d /s /c "echo child-started>child-started.txt & choice.exe /c Y /d Y /t 2 /n >nul & echo escaped>child-after-kill.txt"',
+              "choice.exe /c Y /d Y /t 10 /n >nul",
+            ].join(" & ")
           : "(sleep 1.6; printf escaped > child-after-kill.txt) & sleep 10";
 
       const unrelatedClose = new Promise<void>((resolve, reject) => {
@@ -303,7 +292,16 @@ describe("sandbox shell security properties", () => {
         child.once("close", () => resolve());
       });
 
-      await new Promise((resolve) => setTimeout(resolve, 350));
+      if (process.platform === "win32") {
+        const started = path.join(workspace, "child-started.txt");
+        const deadline = Date.now() + 2_000;
+        while (Date.now() < deadline && !existsSync(started)) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        expect(existsSync(started)).toBe(true);
+      } else {
+        await new Promise((resolve) => setTimeout(resolve, 350));
+      }
       terminateProcessTree(child, "SIGTERM");
 
       await Promise.race([
