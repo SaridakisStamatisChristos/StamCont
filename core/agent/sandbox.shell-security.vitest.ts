@@ -169,7 +169,7 @@ describe("sandbox shell security properties", () => {
 
       const readResult = await runSandboxCommand(
         backend,
-        `type "${outsideSecret}" >nul 2>&1`,
+        `type "${outsideSecret}"`,
       );
       expect(readResult.code).not.toBe(0);
     },
@@ -182,7 +182,7 @@ describe("sandbox shell security properties", () => {
       const backend = new SandboxExecutionBackend(ideWithWorkspace(workspace), {
         readOnly: true,
       });
-      const sanity = await runSandboxCommand(backend, "ver >nul");
+      const sanity = await runSandboxCommand(backend, "ver");
       expect(sanity.code, sanity.stderr).toBe(0);
 
       const result = await runSandboxCommand(
@@ -249,7 +249,7 @@ describe("sandbox shell security properties", () => {
 
       const networkResult = await runSandboxCommand(
         backend,
-        "curl.exe --connect-timeout 2 --max-time 3 -fsS http://1.1.1.1/ >nul 2>&1",
+        "curl.exe --connect-timeout 2 --max-time 3 -fsS http://1.1.1.1/",
       );
       expect(networkResult.code).not.toBe(0);
     },
@@ -307,8 +307,8 @@ describe("sandbox shell security properties", () => {
       const descendantCommand =
         process.platform === "win32"
           ? [
-              'start "" /b cmd.exe /d /s /c "echo child-started>child-started.txt & choice.exe /c Y /d Y /t 2 /n >nul & echo escaped>child-after-kill.txt"',
-              "choice.exe /c Y /d Y /t 10 /n >nul",
+              'start "" /b cmd.exe /d /s /c "echo child-started>child-started.txt & choice.exe /c Y /d Y /t 2 /n & echo escaped>child-after-kill.txt"',
+              "choice.exe /c Y /d Y /t 10 /n",
             ].join(" & ")
           : "(sleep 1.6; printf escaped > child-after-kill.txt) & sleep 10";
 
