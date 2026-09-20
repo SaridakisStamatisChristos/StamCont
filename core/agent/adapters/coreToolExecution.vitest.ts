@@ -152,6 +152,37 @@ describe("CoreToolKernelBridge", () => {
     ]);
   });
 
+  it("aborts an in-flight tool when its Core session is closed", async () => {
+    const bridge = new CoreToolKernelBridge();
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+
+    const execution = bridge.execute({
+      tool: tool("run_terminal_command", false),
+      sessionId: "chat-cancel",
+      profile: "full_access",
+      execute: async (context) => {
+        markStarted();
+        await new Promise<void>((_resolve, reject) => {
+          context.signal.addEventListener(
+            "abort",
+            () => reject(new Error("execution aborted")),
+            { once: true },
+          );
+        });
+        return "unreachable";
+      },
+    });
+
+    await started;
+    await expect(
+      bridge.closeSession("chat-cancel", "full_access"),
+    ).resolves.toBe(true);
+    await expect(execution).rejects.toThrow("execution aborted");
+  });
+
   it("closes every active IDE chat session during host shutdown", async () => {
     const closed: string[] = [];
     const bridge = new CoreToolKernelBridge();

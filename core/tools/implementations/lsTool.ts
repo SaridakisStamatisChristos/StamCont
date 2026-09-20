@@ -1,9 +1,6 @@
-import ignore from "ignore";
-
 import { ToolImpl } from ".";
-import { walkDir } from "../../indexing/walkDir";
+import { getExecutionBackend } from "../../agent/execution";
 import { ContinueError, ContinueErrorReason } from "../../util/errors";
-import { resolveInputPath } from "../../util/pathResolver";
 
 export function resolveLsToolDirPath(dirPath: string | undefined) {
   if (!dirPath || dirPath === ".") {
@@ -16,7 +13,8 @@ const MAX_LS_TOOL_LINES = 200;
 
 export const lsToolImpl: ToolImpl = async (args, extras) => {
   const dirPath = resolveLsToolDirPath(args?.dirPath);
-  const resolvedPath = await resolveInputPath(extras.ide, dirPath);
+  const backend = getExecutionBackend(extras);
+  const resolvedPath = await backend.resolveExistingPath(dirPath);
   if (!resolvedPath) {
     throw new ContinueError(
       ContinueErrorReason.DirectoryNotFound,
@@ -24,12 +22,11 @@ export const lsToolImpl: ToolImpl = async (args, extras) => {
     );
   }
 
-  const entries = await walkDir(resolvedPath.uri, extras.ide, {
-    returnRelativeUrisPaths: true,
-    include: "both",
-    recursive: args?.recursive ?? false,
-    overrideDefaultIgnores: ignore(), // Show all directories including dist/, build/, etc.
-  });
+  const entries = await backend.listDirectory(
+    resolvedPath,
+    args?.recursive ?? false,
+    MAX_LS_TOOL_LINES + 1,
+  );
 
   const lines = entries.slice(0, MAX_LS_TOOL_LINES);
 

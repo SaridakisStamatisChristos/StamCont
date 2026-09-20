@@ -32,7 +32,7 @@ export const editFileTool: Tool = {
         filepath: {
           type: "string",
           description:
-            "The path of the file to edit, relative to the root of the workspace.",
+            "The path of the file to edit, relative to the workspace root, or an absolute/~/ path in Full Access.",
         },
         changes: {
           type: "string",
@@ -44,7 +44,7 @@ export const editFileTool: Tool = {
   defaultToolPolicy: "allowedWithPermission",
   systemMessageDescription: {
     prefix: `To edit an EXISTING file, use the ${BuiltInToolNames.EditExistingFile} tool with
-- filepath: the relative filepath to the file.
+- filepath: a workspace-relative filepath, or an absolute/~/ path in Full Access.
 - changes: ${CHANGES_DESCRIPTION}
 Only use this tool if you already know the contents of the file. Otherwise, use the ${BuiltInToolNames.ReadFile} or ${BuiltInToolNames.ReadCurrentlyOpenFile} tool to read it first.
 For example:`,
