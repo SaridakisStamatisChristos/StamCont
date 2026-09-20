@@ -101,6 +101,8 @@ describe("sandbox shell security properties", () => {
       const backend = new SandboxExecutionBackend(ideWithWorkspace(workspace), {
         readOnly: true,
       });
+      const sanity = await runSandboxCommand(backend, "true");
+      expect(sanity.code, sanity.stderr).toBe(0);
 
       const result = await runSandboxCommand(
         backend,
@@ -185,7 +187,7 @@ describe("sandbox shell security properties", () => {
         backend,
         "printf sandboxed > shell-write.txt",
       );
-      expect(allowed.code).toBe(0);
+      expect(allowed.code, allowed.stderr).toBe(0);
       await expect(
         readFile(path.join(workspace, "shell-write.txt"), "utf8"),
       ).resolves.toBe("sandboxed");
@@ -205,6 +207,8 @@ describe("sandbox shell security properties", () => {
       const outside = await tempDir("stamcont-shell-outside-");
       const outsideTarget = path.join(outside, "escaped.txt");
       const backend = new SandboxExecutionBackend(ideWithWorkspace(workspace));
+      const sanity = await runSandboxCommand(backend, "true");
+      expect(sanity.code, sanity.stderr).toBe(0);
 
       const result = await runSandboxCommand(
         backend,
@@ -266,7 +270,7 @@ describe("sandbox shell security properties", () => {
         },
       );
 
-      expect(result.code).toBe(0);
+      expect(result.code, result.stderr).toBe(0);
       expect(result.stdout).toContain("clean");
     },
   );
@@ -276,6 +280,8 @@ describe("sandbox shell security properties", () => {
     async () => {
       const workspace = await tempDir("stamcont-shell-network-");
       const backend = new SandboxExecutionBackend(ideWithWorkspace(workspace));
+      const sanity = await runSandboxCommand(backend, "true");
+      expect(sanity.code, sanity.stderr).toBe(0);
 
       const result = await runSandboxCommand(
         backend,
