@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -8,6 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { IDE } from "..";
 import { SandboxExecutionBackend } from "./sandbox";
+import { terminateProcessTree } from "../util/processTerminalStates";
 
 const tempRoots: string[] = [];
 
@@ -193,6 +195,100 @@ describe("sandbox shell security properties", () => {
         "$ErrorActionPreference='Stop'; Invoke-WebRequest -UseBasicParsing -TimeoutSec 3 -Uri 'http://1.1.1.1/' | Out-Null",
       );
       expect(networkResult.code).not.toBe(0);
+    },
+  );
+
+  it.skipIf(process.platform !== "win32" && skipPosixSandboxTests)(
+    "isolates temporary state between sandbox shell invocations",
+    async () => {
+      const workspace = await tempDir("stamcont-shell-temp-isolation-");
+      const backend = new SandboxExecutionBackend(ideWithWorkspace(workspace));
+
+      const firstCommand =
+        process.platform === "win32"
+          ? "$ErrorActionPreference='Stop'; Set-Content -LiteralPath (Join-Path $env:TEMP 'session-marker') -Value private -NoNewline"
+          : 'printf private > "$TMPDIR/session-marker"';
+      const secondCommand =
+        process.platform === "win32"
+          ? "$ErrorActionPreference='Stop'; if (Test-Path -LiteralPath (Join-Path $env:TEMP 'session-marker')) { exit 9 }"
+          : 'test ! -e "$TMPDIR/session-marker"';
+
+      const first = await runSandboxCommand(backend, firstCommand);
+      expect(first.code, first.stderr).toBe(0);
+
+      const second = await runSandboxCommand(backend, secondCommand);
+      expect(second.code, second.stderr).toBe(0);
+    },
+  );
+
+  it.skipIf(process.platform !== "win32" && skipPosixSandboxTests)(
+    "kills the owned descendant tree without touching an unrelated host process",
+    async () => {
+      const workspace = await tempDir("stamcont-shell-tree-cancel-");
+      const backend = new SandboxExecutionBackend(ideWithWorkspace(workspace));
+      const cwd = await backend.resolveWorkingDirectory(".");
+
+      const unrelatedTarget = path.join(workspace, "unrelated-alive.txt");
+      const unrelated = spawn(
+        process.execPath,
+        [
+          "-e",
+          [
+            "const fs = require('node:fs');",
+            "setTimeout(() => {",
+            `  fs.writeFileSync(${JSON.stringify(unrelatedTarget)}, 'alive');`,
+            "}, 700);",
+          ].join("\n"),
+        ],
+        {
+          cwd: workspace,
+          stdio: "ignore",
+          windowsHide: true,
+        },
+      );
+
+      const descendantCommand =
+        process.platform === "win32"
+          ? [
+              "$ErrorActionPreference='Stop'",
+              "$child = Start-Process powershell.exe -PassThru -ArgumentList @('-NoProfile','-NonInteractive','-Command','Start-Sleep -Milliseconds 1600; Set-Content -LiteralPath child-after-kill.txt -Value escaped -NoNewline')",
+              "Start-Sleep -Seconds 10",
+            ].join("; ")
+          : "(sleep 1.6; printf escaped > child-after-kill.txt) & sleep 10";
+
+      const child = backend.spawnShell(descendantCommand, {
+        cwd,
+        env: process.env,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      terminateProcessTree(child, "SIGTERM");
+
+      await Promise.race([
+        new Promise<void>((resolve) => child.once("close", () => resolve())),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error("sandbox process tree did not terminate")),
+            5_000,
+          ),
+        ),
+      ]);
+
+      await new Promise<void>((resolve, reject) => {
+        unrelated.once("error", reject);
+        unrelated.once("close", (code) => {
+          if (code === 0) {
+            resolve();
+          } else {
+            reject(new Error(`unrelated control exited with code ${code}`));
+          }
+        });
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 1_300));
+      await expect(access(path.join(workspace, "child-after-kill.txt"))).rejects.toBeDefined();
+      await expect(readFile(unrelatedTarget, "utf8")).resolves.toBe("alive");
     },
   );
 
