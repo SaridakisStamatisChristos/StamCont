@@ -432,11 +432,20 @@ function buildMacSandboxProfile(
 
   return `(version 1)
 (deny default)
+(import "system.sb")
 (allow process*)
+(allow signal (target same-sandbox))
 (allow sysctl-read)
+(allow mach-host*)
+(allow mach-lookup)
+(allow iokit-open)
+(allow ipc-posix-sem)
+(allow ipc-posix-shm-read*)
+(allow file-ioctl)
 (allow file-read-metadata)
 (allow file-read* (subpath "/usr") (subpath "/bin") (subpath "/sbin") (subpath "/System") (subpath "/Library") (subpath "/opt/homebrew") (subpath "/dev") ${rootSubpaths} (subpath "${quote(privateTemp)}"))
-(allow file-write* ${writableRoots} (subpath "${quote(privateTemp)}") (literal "/dev/null"))
+(allow file-write* ${writableRoots} (subpath "${quote(privateTemp)}") (literal "/dev/null") (literal "/dev/stdout") (literal "/dev/stderr"))
+(deny file-read* (literal "/etc/passwd") (literal "/private/etc/passwd") (literal "/etc/master.passwd") (literal "/private/etc/master.passwd"))
 (deny network*)`;
 }
 
