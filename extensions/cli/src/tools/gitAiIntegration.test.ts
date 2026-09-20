@@ -53,8 +53,8 @@ describe("Git AI Integration - executeToolCall", () => {
       const toolCall: PreprocessedToolCall = {
         id: "test-edit-id",
         name: "Edit",
-        arguments: { file_path: "/test/file.ts" },
-        argumentsStr: JSON.stringify({ file_path: "/test/file.ts" }),
+        arguments: { file_path: "package.json" },
+        argumentsStr: JSON.stringify({ file_path: "package.json" }),
         startNotified: false,
         tool: mockTool as any,
         preprocessResult: {
@@ -95,10 +95,12 @@ describe("Git AI Integration - executeToolCall", () => {
           oldContent: "old",
           newContent: "new",
         },
-        {
+        expect.objectContaining({
           toolCallId: "test-edit-id",
           parallelToolCallCount: 1,
-        },
+          executionBackend: expect.objectContaining({ kind: "sandbox" }),
+          executionSignal: expect.any(AbortSignal),
+        }),
       );
     });
 
@@ -110,13 +112,13 @@ describe("Git AI Integration - executeToolCall", () => {
       const toolCall: PreprocessedToolCall = {
         id: "test-multiedit-id",
         name: "MultiEdit",
-        arguments: { file_path: "/test/file.ts" },
-        argumentsStr: JSON.stringify({ file_path: "/test/file.ts" }),
+        arguments: { file_path: "package.json" },
+        argumentsStr: JSON.stringify({ file_path: "package.json" }),
         startNotified: false,
         tool: mockTool as any,
         preprocessResult: {
           args: {
-            file_path: "/test/file.ts",
+            file_path: "package.json",
             edits: [],
           },
         },
@@ -143,13 +145,13 @@ describe("Git AI Integration - executeToolCall", () => {
       const toolCall: PreprocessedToolCall = {
         id: "test-write-id",
         name: "Write",
-        arguments: { filepath: "/test/newfile.ts" },
-        argumentsStr: JSON.stringify({ filepath: "/test/newfile.ts" }),
+        arguments: { filepath: "git-ai-test-newfile.ts" },
+        argumentsStr: JSON.stringify({ filepath: "git-ai-test-newfile.ts" }),
         startNotified: false,
         tool: mockTool as any,
         preprocessResult: {
           args: {
-            filepath: "/test/newfile.ts",
+            filepath: "git-ai-test-newfile.ts",
             content: "new content",
           },
         },
@@ -233,8 +235,8 @@ describe("Git AI Integration - executeToolCall", () => {
       const toolCall: PreprocessedToolCall = {
         id: "test-read-id",
         name: "Read",
-        arguments: { file_path: "/test/file.ts" },
-        argumentsStr: JSON.stringify({ file_path: "/test/file.ts" }),
+        arguments: { file_path: "package.json" },
+        argumentsStr: JSON.stringify({ file_path: "package.json" }),
         startNotified: false,
         tool: mockTool as any,
       };
