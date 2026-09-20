@@ -618,12 +618,12 @@ public static class StamContAppContainer
             // inheritance entirely.
             string shell = commandInterpreter;
             StringBuilder commandLine = new StringBuilder(
-                "\\\"" + shell + "\\\"" +
-                " /d /s /c call \\\"" +
+                "\"" + shell + "\"" +
+                " /d /s /c call \"" +
                 commandScriptPath +
-                "\\\" 1>\\\"" + stdoutPath +
-                "\\\" 2>\\\"" + stderrPath +
-                "\\\"");
+                "\" 1>\"" + stdoutPath +
+                "\" 2>\"" + stderrPath +
+                "\"");
 
             // A contained process gets an explicit UTF-16 environment block.
             // The outer launcher already runs with StamCont's scrubbed
@@ -652,7 +652,7 @@ public static class StamContAppContainer
             startup.lpAttributeList = attributeList;
 
             if (!CreateProcessW(
-                null,
+                shell,
                 commandLine,
                 IntPtr.Zero,
                 IntPtr.Zero,
