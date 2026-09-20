@@ -617,13 +617,13 @@ public static class StamContAppContainer
             // after entering the AppContainer, avoiding cross-boundary handle
             // inheritance entirely.
             string shell = commandInterpreter;
+            char quote = '"';
             StringBuilder commandLine = new StringBuilder(
-                "\"" + shell + "\"" +
-                " /d /s /c call \"" +
+                quote + shell + quote +
+                " /d /s /c call " + quote +
                 commandScriptPath +
-                "\" 1>\"" + stdoutPath +
-                "\" 2>\"" + stderrPath +
-                "\"");
+                quote + " 1>" + quote + stdoutPath +
+                quote + " 2>" + quote + stderrPath + quote);
 
             // A contained process gets an explicit UTF-16 environment block.
             // The outer launcher already runs with StamCont's scrubbed
