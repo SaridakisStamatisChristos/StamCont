@@ -146,6 +146,40 @@ describe("SandboxExecutionBackend filesystem confinement", () => {
     },
   );
 
+  it.skipIf(process.platform !== "win32")(
+    "canonicalizes Windows file URLs and case aliases and rejects extended-path escapes",
+    async () => {
+      const workspace = await tempDir("stamcont-win-aliases-");
+      const outside = await tempDir("stamcont-win-aliases-outside-");
+      const insideTarget = path.join(workspace, "CaseSensitiveName.txt");
+      const outsideTarget = path.join(outside, "secret.txt");
+      await writeFile(insideTarget, "inside", "utf8");
+      await writeFile(outsideTarget, "outside", "utf8");
+
+      const backend = new SandboxExecutionBackend(ideWithWorkspaces(workspace));
+      const canonicalInside = await realpath(insideTarget);
+
+      const fromFileUrl = await backend.resolveExistingPath(
+        pathToFileURL(insideTarget).href,
+      );
+      expect(fromFileUrl?.displayPath.toLowerCase()).toBe(
+        canonicalInside.toLowerCase(),
+      );
+
+      const fromCaseAlias = await backend.resolveExistingPath(
+        insideTarget.toUpperCase(),
+      );
+      expect(fromCaseAlias?.displayPath.toLowerCase()).toBe(
+        canonicalInside.toLowerCase(),
+      );
+
+      const extendedOutside = `\\\\?\\${outsideTarget}`;
+      await expect(
+        backend.resolveExistingPath(extendedOutside),
+      ).rejects.toBeInstanceOf(SandboxViolationError);
+    },
+  );
+
   it("rejects creation through an outside absolute path", async () => {
     const workspace = await tempDir("stamcont-sandbox-workspace-");
     const outside = await tempDir("stamcont-sandbox-outside-");
