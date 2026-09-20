@@ -117,7 +117,7 @@ describe("sandbox shell security properties", () => {
       );
 
       expect(result.code, result.stderr).toBe(0);
-      expect(result.stdout).toContain("stamcont-appcontainer-cmd");
+      expect(result.stdout, result.stderr).toContain("stamcont-appcontainer-cmd");
     },
   );
 
