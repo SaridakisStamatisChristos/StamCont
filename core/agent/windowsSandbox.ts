@@ -372,9 +372,6 @@ public static class StamContAppContainer
 
         try
         {
-            Interlocked.Exchange(ref LastStdoutBytes, 0);
-            Interlocked.Exchange(ref LastStderrBytes, 0);
-
             int hr = DeriveAppContainerSidFromAppContainerName(
                 profileName,
                 out sid);
@@ -634,6 +631,9 @@ public static class StamContAppContainer
 
         try
         {
+            Interlocked.Exchange(ref LastStdoutBytes, 0);
+            Interlocked.Exchange(ref LastStderrBytes, 0);
+
             int hr = DeriveAppContainerSidFromAppContainerName(
                 profileName,
                 out appContainerSid);
