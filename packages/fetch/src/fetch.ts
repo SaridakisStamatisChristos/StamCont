@@ -103,8 +103,7 @@ export async function fetchwithRequestOptions(
   // over ambient proxy configuration so the caller's transport guarantee is
   // not silently replaced by a second DNS/connect path.
   const protocol = url.protocol === "https:" ? https : http;
-  const explicitAgent = (init as RequestInit & { agent?: unknown } | undefined)
-    ?.agent;
+  const explicitAgent = (init as any)?.agent;
   const agent =
     explicitAgent ??
     (proxy && !shouldBypass
