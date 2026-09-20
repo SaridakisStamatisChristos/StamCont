@@ -22,11 +22,6 @@ import {
 import { DiffChar, DiffLine } from "..";
 import { escapeForSVG, kebabOfThemeStr } from "../util/text";
 
-interface CodeRendererOptions {
-  themesDir?: string;
-  theme?: string;
-}
-
 interface HTMLOptions {
   theme?: string;
   customCSS?: string;

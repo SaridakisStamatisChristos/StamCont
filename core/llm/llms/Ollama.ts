@@ -202,7 +202,6 @@ class Ollama extends BaseLLM implements ModelInstaller {
         }
         const body = await response.json();
         if (body.parameters) {
-          const params = [];
           for (const line of body.parameters.split("\n")) {
             let parts = line.match(/^(\S+)\s+((?:".*")|\S+)$/);
             if (!parts || parts.length < 2) {

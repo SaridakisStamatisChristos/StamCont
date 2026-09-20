@@ -91,18 +91,6 @@ describe("deduplicateArray", () => {
 });
 
 describe("dedentAndGetCommonWhitespace", () => {
-  let originalString: string;
-
-  beforeEach(() => {
-    // Setup any global variables or states if needed
-    originalString = "    line1\n    line2\n    line3";
-  });
-
-  afterEach(() => {
-    // Tear down any changes to global variables or states if needed
-    originalString = "";
-  });
-
   test("should dedent and return common whitespace for a simple case", () => {
     const input = "    line1\n    line2\n    line3";
     const output = dedentAndGetCommonWhitespace(input);

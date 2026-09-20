@@ -368,7 +368,6 @@ export class LLMLogFormatter {
       case "startChat":
         this.logLines(item, "[Chat]");
         this.logOptions(item);
-        let lastMessage = null;
         for (let message of item.messages) {
           this.logMessage(item, message, true);
         }
