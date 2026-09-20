@@ -29,6 +29,11 @@ using System.Text;
 public static class StamContAppContainer
 {
     private const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
+    private const uint STARTF_USESTDHANDLES = 0x00000100;
+    private const uint DUPLICATE_SAME_ACCESS = 0x00000002;
+    private const int STD_INPUT_HANDLE = -10;
+    private const int STD_OUTPUT_HANDLE = -11;
+    private const int STD_ERROR_HANDLE = -12;
     private const uint FILE_GENERIC_READ = 0x00120089;
     private const uint FILE_GENERIC_EXECUTE = 0x001200A0;
     private const uint FILE_ALL_ACCESS = 0x001F01FF;
@@ -49,6 +54,8 @@ public static class StamContAppContainer
         new IntPtr(0x00020009);
     private static readonly IntPtr PROC_THREAD_ATTRIBUTE_JOB_LIST =
         new IntPtr(0x0002000D);
+    private static readonly IntPtr PROC_THREAD_ATTRIBUTE_HANDLE_LIST =
+        new IntPtr(0x00020002);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct SECURITY_CAPABILITIES
@@ -276,6 +283,22 @@ public static class StamContAppContainer
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr hObject);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr GetStdHandle(int nStdHandle);
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr GetCurrentProcess();
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool DuplicateHandle(
+        IntPtr hSourceProcessHandle,
+        IntPtr hSourceHandle,
+        IntPtr hTargetProcessHandle,
+        out IntPtr lpTargetHandle,
+        uint dwDesiredAccess,
+        bool bInheritHandle,
+        uint dwOptions);
 
     private static void ApplyProfileAcl(
         string profileName,
@@ -530,8 +553,6 @@ public static class StamContAppContainer
         string profileName,
         string commandInterpreter,
         string commandScriptPath,
-        string stdoutPath,
-        string stderrPath,
         string directCommand,
         string workingDirectory)
     {
@@ -541,6 +562,10 @@ public static class StamContAppContainer
         IntPtr job = IntPtr.Zero;
         IntPtr jobInfoPtr = IntPtr.Zero;
         IntPtr jobListPtr = IntPtr.Zero;
+        IntPtr handleListPtr = IntPtr.Zero;
+        IntPtr childStdIn = IntPtr.Zero;
+        IntPtr childStdOut = IntPtr.Zero;
+        IntPtr childStdErr = IntPtr.Zero;
         PROCESS_INFORMATION processInfo = new PROCESS_INFORMATION();
 
         try
@@ -570,13 +595,13 @@ public static class StamContAppContainer
             IntPtr attributeListSize = IntPtr.Zero;
             InitializeProcThreadAttributeList(
                 IntPtr.Zero,
-                2,
+                3,
                 0,
                 ref attributeListSize);
             attributeList = Marshal.AllocHGlobal(attributeListSize);
             if (!InitializeProcThreadAttributeList(
                 attributeList,
-                2,
+                3,
                 0,
                 ref attributeListSize))
             {
@@ -646,6 +671,74 @@ public static class StamContAppContainer
                     "Setting AppContainer Job Object attribute failed");
             }
 
+            // Duplicate only the broker's standard streams as inheritable
+            // handles, then whitelist exactly those handles for the lowbox.
+            // This gives the sandbox a direct output channel back to Node
+            // without granting arbitrary broker handles.
+            IntPtr currentProcess = GetCurrentProcess();
+            IntPtr parentStdIn = GetStdHandle(STD_INPUT_HANDLE);
+            IntPtr parentStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
+            IntPtr parentStdErr = GetStdHandle(STD_ERROR_HANDLE);
+            if (parentStdIn == IntPtr.Zero ||
+                parentStdOut == IntPtr.Zero ||
+                parentStdErr == IntPtr.Zero ||
+                parentStdIn == new IntPtr(-1) ||
+                parentStdOut == new IntPtr(-1) ||
+                parentStdErr == new IntPtr(-1))
+            {
+                throw new Win32Exception(
+                    Marshal.GetLastWin32Error(),
+                    "Broker standard handles are unavailable");
+            }
+
+            if (!DuplicateHandle(
+                    currentProcess,
+                    parentStdIn,
+                    currentProcess,
+                    out childStdIn,
+                    0,
+                    true,
+                    DUPLICATE_SAME_ACCESS) ||
+                !DuplicateHandle(
+                    currentProcess,
+                    parentStdOut,
+                    currentProcess,
+                    out childStdOut,
+                    0,
+                    true,
+                    DUPLICATE_SAME_ACCESS) ||
+                !DuplicateHandle(
+                    currentProcess,
+                    parentStdErr,
+                    currentProcess,
+                    out childStdErr,
+                    0,
+                    true,
+                    DUPLICATE_SAME_ACCESS))
+            {
+                throw new Win32Exception(
+                    Marshal.GetLastWin32Error(),
+                    "Duplicating sandbox standard handles failed");
+            }
+
+            handleListPtr = Marshal.AllocHGlobal(IntPtr.Size * 3);
+            Marshal.WriteIntPtr(handleListPtr, 0 * IntPtr.Size, childStdIn);
+            Marshal.WriteIntPtr(handleListPtr, 1 * IntPtr.Size, childStdOut);
+            Marshal.WriteIntPtr(handleListPtr, 2 * IntPtr.Size, childStdErr);
+            if (!UpdateProcThreadAttribute(
+                attributeList,
+                0,
+                PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                handleListPtr,
+                new IntPtr(IntPtr.Size * 3),
+                IntPtr.Zero,
+                IntPtr.Zero))
+            {
+                throw new Win32Exception(
+                    Marshal.GetLastWin32Error(),
+                    "Setting sandbox standard-handle whitelist failed");
+            }
+
             // Keep process creation narrow: SECURITY_CAPABILITIES establishes
             // the AppContainer and JOB_LIST atomically attaches the owned
             // kill-on-close process tree. The untrusted command lives in a
@@ -663,17 +756,23 @@ public static class StamContAppContainer
             }
             else
             {
+                // cmd.exe's documented nested-quote form for executing a
+                // quoted batch-file path. Output is carried by inherited
+                // standard handles rather than filesystem redirection.
                 commandLine = new StringBuilder(
                     quote + shell + quote +
-                    " /d /s /c call " + quote +
+                    " /d /s /c " + quote + quote +
                     commandScriptPath +
-                    quote + " 1>" + quote + stdoutPath +
-                    quote + " 2>" + quote + stderrPath + quote);
+                    quote + quote);
             }
 
             STARTUPINFOEX startup = new STARTUPINFOEX();
             startup.StartupInfo.cb =
                 (uint)Marshal.SizeOf(typeof(STARTUPINFOEX));
+            startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+            startup.StartupInfo.hStdInput = childStdIn;
+            startup.StartupInfo.hStdOutput = childStdOut;
+            startup.StartupInfo.hStdError = childStdErr;
             startup.lpAttributeList = attributeList;
 
             if (!CreateProcessW(
@@ -681,7 +780,7 @@ public static class StamContAppContainer
                 commandLine,
                 IntPtr.Zero,
                 IntPtr.Zero,
-                false,
+                true,
                 EXTENDED_STARTUPINFO_PRESENT,
                 IntPtr.Zero,
                 workingDirectory,
@@ -726,6 +825,22 @@ public static class StamContAppContainer
             if (securityCapabilitiesPtr != IntPtr.Zero)
             {
                 Marshal.FreeHGlobal(securityCapabilitiesPtr);
+            }
+            if (handleListPtr != IntPtr.Zero)
+            {
+                Marshal.FreeHGlobal(handleListPtr);
+            }
+            if (childStdIn != IntPtr.Zero)
+            {
+                CloseHandle(childStdIn);
+            }
+            if (childStdOut != IntPtr.Zero)
+            {
+                CloseHandle(childStdOut);
+            }
+            if (childStdErr != IntPtr.Zero)
+            {
+                CloseHandle(childStdErr);
             }
             if (jobListPtr != IntPtr.Zero)
             {
@@ -897,8 +1012,6 @@ try {
   $env:TMP = $profileTemp
   $env:TMPDIR = $profileTemp
 
-  $stdoutPath = Join-Path $profileHome "sandbox-stdout.txt"
-  $stderrPath = Join-Path $profileHome "sandbox-stderr.txt"
   $commandPath = Join-Path $profileHome "sandbox-command.cmd"
   $commandText = [Text.Encoding]::UTF8.GetString(
     [Convert]::FromBase64String([string]$config.CommandUtf8Base64)
@@ -908,15 +1021,10 @@ try {
     "@echo off" + [Environment]::NewLine + $commandText + [Environment]::NewLine + "exit /b %errorlevel%" + [Environment]::NewLine,
     [Text.UTF8Encoding]::new($false)
   )
-  [IO.File]::WriteAllText($stdoutPath, "", [Text.UTF8Encoding]::new($false))
-  [IO.File]::WriteAllText($stderrPath, "", [Text.UTF8Encoding]::new($false))
-
   if ([bool]$config.Diagnostics) {
     $probeExitCode = [StamContAppContainer]::Run(
       [string]$config.ProfileName,
       [string]$config.CommandInterpreter,
-      "",
-      "",
       "",
       "exit /b 37",
       [string]$config.Cwd
@@ -930,8 +1038,6 @@ try {
         [string]$config.ProfileName,
         [string]$config.CommandInterpreter,
         $commandPath,
-        $stdoutPath,
-        $stderrPath,
         "",
         [string]$config.Cwd
       )
@@ -942,40 +1048,17 @@ try {
       [string]$config.ProfileName,
       [string]$config.CommandInterpreter,
       $commandPath,
-      $stdoutPath,
-      $stderrPath,
       "",
       [string]$config.Cwd
     )
   }
 
   if ([bool]$config.Diagnostics) {
-    $stdoutExists = Test-Path -LiteralPath $stdoutPath
-    $stderrExists = Test-Path -LiteralPath $stderrPath
-    $stdoutLength = if ($stdoutExists) { (Get-Item -LiteralPath $stdoutPath).Length } else { -1 }
-    $stderrLength = if ($stderrExists) { (Get-Item -LiteralPath $stderrPath).Length } else { -1 }
     [Console]::Error.WriteLine(
-      "[stamcont-sandbox-debug] exit=$processExitCode commandExists=$(Test-Path -LiteralPath $commandPath) stdoutExists=$stdoutExists stdoutLength=$stdoutLength stderrExists=$stderrExists stderrLength=$stderrLength"
+      "[stamcont-sandbox-debug] exit=$processExitCode commandExists=$(Test-Path -LiteralPath $commandPath)"
     )
-    if ($stderrExists -and $stderrLength -gt 0) {
-      $debugStderr = [IO.File]::ReadAllText($stderrPath)
-      if ($debugStderr.Length -gt 1000) { $debugStderr = $debugStderr.Substring(0, 1000) }
-      [Console]::Error.WriteLine("[stamcont-sandbox-debug] child-stderr=$debugStderr")
-    }
   }
 
-  if (Test-Path -LiteralPath $stdoutPath) {
-    $stdoutText = [IO.File]::ReadAllText($stdoutPath)
-    if ($stdoutText.Length -gt 0) {
-      [Console]::Out.Write($stdoutText)
-    }
-  }
-  if (Test-Path -LiteralPath $stderrPath) {
-    $stderrText = [IO.File]::ReadAllText($stderrPath)
-    if ($stderrText.Length -gt 0) {
-      [Console]::Error.Write($stderrText)
-    }
-  }
 }
 finally {
   if ($sid) {
