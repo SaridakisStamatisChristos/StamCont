@@ -81,7 +81,20 @@ async function runSandboxCommand(
       stderr += String(chunk);
     });
     child.once("error", reject);
-    child.once("close", (code) => resolve({ code, stdout, stderr }));
+    child.once("close", (code) => {
+      if (
+        process.platform === "win32" &&
+        requireOsSandboxTests &&
+        stderr.includes("[stamcont-sandbox-debug]")
+      ) {
+        const diagnostics = stderr
+          .split(/\r?\n/)
+          .filter((line) => line.includes("[stamcont-sandbox-debug]"))
+          .join("\n");
+        console.error(diagnostics);
+      }
+      resolve({ code, stdout, stderr });
+    });
   });
 }
 
