@@ -125,7 +125,8 @@ Sandboxed shell execution is OS-enforced where a supported containment primitive
 
 - Linux uses `bubblewrap` with isolated namespaces, a private tmpfs, `--unshare-net`, and workspace binds; Plan mounts those workspace binds read-only;
 - macOS uses `sandbox-exec` with workspace rules, a per-process private temp directory, denied network access, and read-only workspace rules for Plan;
-- unsupported platforms fail closed for Interactive/Plan shell execution rather than silently falling back to an unrestricted host shell.
+- Windows uses an ephemeral AppContainer profile, workspace-scoped ACL grants, no network capability, a private HOME/TEMP area, and a Job Object configured to kill the owned process tree when the launcher closes; Plan adds an AppContainer-SID deny-write ACL so read-only behavior is enforced at the OS boundary;
+- platforms without an enforceable sandbox primitive fail closed for Interactive/Plan shell execution rather than silently falling back to an unrestricted host shell.
 
 Plan and Interactive share the same confinement implementation but not the same write authority. Interactive receives writable workspace mounts. Plan is read-only both at the kernel capability layer and at the OS sandbox/filesystem-backend layer, so a Plan shell cannot bypass tool-level write denial by redirecting output to a workspace file.
 
@@ -141,7 +142,11 @@ The sandbox is intentionally fail-closed when process isolation cannot be enforc
 
 Filesystem writes revalidate the nearest existing ancestor immediately before creation and use a no-follow final-component open where the platform exposes `O_NOFOLLOW`. This materially narrows symlink races, but it does not claim to eliminate every parent-directory replacement TOCTOU race on every filesystem. The OS process sandbox remains the authoritative boundary for shell-originated writes.
 
-Native Windows shell containment remains a hardening requirement. Until a real Windows isolation primitive is wired in and verified, Interactive/Plan shell execution on Windows remains fail-closed; Full Access is unaffected.
+Residual-risk boundary: built-in host-process filesystem operations cannot make a universal race-free path guarantee using Node path APIs alone on every supported filesystem. Canonicalization, nearest-existing-ancestor checks, final-component no-follow where available, and the profile capability layer substantially narrow that surface; shell-originated operations are additionally constrained by the OS sandbox. Full Access intentionally does not receive those workspace restrictions.
+
+Windows shell containment is implemented through AppContainer plus Job Objects rather than a policy-only wrapper. The launcher creates a unique profile per sandbox process, grants only the workspace/private runtime paths required for execution, starts the command under AppContainer security capabilities, assigns the process to an owned kill-on-close Job Object, and removes the temporary profile/ACL entries during teardown. AppContainer is created without network capabilities, so shell-originated outbound networking remains denied while approved built-in HTTP continues through the restricted fetch path.
+
+The focused execution-security workflow is authoritative for OS-boundary claims. It runs the adversarial execution suite on Ubuntu, macOS, and Windows and sets `STAMCONT_REQUIRE_OS_SANDBOX_TESTS=1`, so missing containment primitives fail the security job instead of converting integration coverage into skips.
 
 ## Current API
 
@@ -169,10 +174,15 @@ const result = await kernel.executeTool(
 
 ## Remaining Phase 2 work
 
-The major remaining product-facing work is:
+The execution-hardening implementation is complete when both the focused cross-platform execution-security workflow and the normal StamCont baseline are green on the PR and again on merged `main`.
 
-- complete native Windows AppContainer/process-tree containment and Windows junction/process/network torture coverage;
-- finish the cross-platform execution-security matrix and final residual-risk audit;
-- only after hardening is merged and green, continue promoting the streamed model loop toward a provider-neutral `AgentLoop` contract.
+The final hardening gate covers:
+
+- Windows AppContainer filesystem, Plan read-only, descendant-process, environment, temp-isolation, cancellation, and network-denial properties;
+- Linux/macOS sandbox filesystem, read-only, nested-shell, environment, temp-isolation, cancellation, and network-denial properties;
+- restricted HTTP DNS-to-connect pinning, redirect revalidation, cross-origin credential stripping, and caller `Host`/proxy-auth suppression;
+- Full Access regression coverage proving that host-wide current-user filesystem/shell semantics remain unrestricted.
+
+After that gate is merged and green, the next architecture phase is the provider-neutral `AgentLoop`. The separate Orchestrator repository remains out of scope until the AgentLoop is stable.
 
 The separate Orchestrator repository remains a later higher-level planning/DAG/durability layer and is not a dependency of the kernel.
