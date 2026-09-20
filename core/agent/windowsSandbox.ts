@@ -19,6 +19,8 @@ $config = $configJson | ConvertFrom-Json
 
 Add-Type -Language CSharp -TypeDefinition @'
 using System;
+using System.Collections;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -28,6 +30,7 @@ public static class StamContAppContainer
 {
     private const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
     private const uint CREATE_SUSPENDED = 0x00000004;
+    private const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
     private const uint STARTF_USESTDHANDLES = 0x00000100;
     private const uint HANDLE_FLAG_INHERIT = 0x00000001;
     private const uint GENERIC_READ = 0x80000000;
@@ -308,7 +311,7 @@ public static class StamContAppContainer
         IntPtr handleListPtr = IntPtr.Zero;
         IntPtr job = IntPtr.Zero;
         IntPtr jobInfoPtr = IntPtr.Zero;
-        IntPtr stdin = IntPtr.Zero;
+        IntPtr environmentPtr = IntPtr.Zero;
         IntPtr stdout = IntPtr.Zero;
         IntPtr stderr = IntPtr.Zero;
         PROCESS_INFORMATION processInfo = new PROCESS_INFORMATION();
@@ -374,14 +377,6 @@ public static class StamContAppContainer
             // lowbox boundary. AppContainer + redirected parent pipes can fail
             // silently: the process starts, but writes disappear. Use explicit
             // sandbox-owned files and replay them from the outer launcher.
-            stdin = CreateFileW(
-                "NUL",
-                GENERIC_READ,
-                FILE_SHARE_READ | FILE_SHARE_WRITE,
-                IntPtr.Zero,
-                OPEN_EXISTING,
-                FILE_ATTRIBUTE_NORMAL,
-                IntPtr.Zero);
             stdout = CreateFileW(
                 stdoutPath,
                 GENERIC_WRITE,
@@ -399,14 +394,17 @@ public static class StamContAppContainer
                 FILE_ATTRIBUTE_NORMAL,
                 IntPtr.Zero);
             IntPtr invalid = new IntPtr(-1);
-            if (stdin == invalid || stdout == invalid || stderr == invalid)
+            if (stdout == invalid || stderr == invalid)
             {
                 throw new Win32Exception(
                     Marshal.GetLastWin32Error(),
                     "Creating sandbox stdio handles failed");
             }
 
-            IntPtr[] stdHandles = new IntPtr[] { stdin, stdout, stderr };
+            // A null stdin is deliberate. It matches the working AppContainer
+            // contract and avoids making a device handle part of the lowbox
+            // inheritance boundary.
+            IntPtr[] stdHandles = new IntPtr[] { stdout, stderr };
             foreach (IntPtr handle in stdHandles)
             {
                 if (!SetHandleInformation(
@@ -470,33 +468,56 @@ public static class StamContAppContainer
                     "SetInformationJobObject failed");
             }
 
-            // Match StamCont's existing Windows shell contract: COMSPEC/cmd.
-            // The command reaches cmd directly inside the AppContainer; it is
-            // never parsed by the privileged outer launcher.
+            // Match StamCont's existing Windows shell contract and pass the
+            // complete command line verbatim. lpApplicationName is null below
+            // so CreateProcessW resolves argv[0] from this writable buffer,
+            // matching the known-working AppContainer spawn contract.
             string shell = commandInterpreter;
             StringBuilder commandLine = new StringBuilder(
                 "\"" + shell + "\"" +
-                " /d /s /c \"" +
-                command +
-                "\"");
+                " /d /s /c " +
+                command);
+
+            // A contained process gets an explicit UTF-16 environment block.
+            // The outer launcher already runs with StamCont's scrubbed
+            // environment, so rebuilding that environment here preserves the
+            // allowlist while making the lowbox spawn self-contained.
+            IDictionary inheritedEnvironment = Environment.GetEnvironmentVariables();
+            List<string> environmentEntries = new List<string>();
+            foreach (DictionaryEntry entry in inheritedEnvironment)
+            {
+                string name = entry.Key == null ? "" : entry.Key.ToString();
+                if (String.IsNullOrEmpty(name))
+                {
+                    continue;
+                }
+                string value = entry.Value == null ? "" : entry.Value.ToString();
+                environmentEntries.Add(name + "=" + value);
+            }
+            environmentEntries.Sort(StringComparer.OrdinalIgnoreCase);
+            string environmentBlock =
+                String.Join("\0", environmentEntries.ToArray()) + "\0\0";
+            environmentPtr = Marshal.StringToHGlobalUni(environmentBlock);
 
             STARTUPINFOEX startup = new STARTUPINFOEX();
             startup.StartupInfo.cb =
                 (uint)Marshal.SizeOf(typeof(STARTUPINFOEX));
             startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
-            startup.StartupInfo.hStdInput = stdin;
+            startup.StartupInfo.hStdInput = IntPtr.Zero;
             startup.StartupInfo.hStdOutput = stdout;
             startup.StartupInfo.hStdError = stderr;
             startup.lpAttributeList = attributeList;
 
             if (!CreateProcessW(
-                shell,
+                null,
                 commandLine,
                 IntPtr.Zero,
                 IntPtr.Zero,
                 true,
-                EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED,
-                IntPtr.Zero,
+                EXTENDED_STARTUPINFO_PRESENT |
+                    CREATE_UNICODE_ENVIRONMENT |
+                    CREATE_SUSPENDED,
+                environmentPtr,
                 workingDirectory,
                 ref startup,
                 out processInfo))
@@ -535,9 +556,9 @@ public static class StamContAppContainer
         }
         finally
         {
-            if (stdin != IntPtr.Zero && stdin != new IntPtr(-1))
+            if (environmentPtr != IntPtr.Zero)
             {
-                CloseHandle(stdin);
+                Marshal.FreeHGlobal(environmentPtr);
             }
             if (stdout != IntPtr.Zero && stdout != new IntPtr(-1))
             {
