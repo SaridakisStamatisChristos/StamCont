@@ -70,7 +70,6 @@ export class SecretStorage {
       );
     }
 
-    const salt = data.subarray(0, this.saltLength);
     const iv = data.subarray(this.saltLength, this.saltLength + this.ivLength);
     const tag = data.subarray(
       this.saltLength + this.ivLength,
