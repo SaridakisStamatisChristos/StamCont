@@ -80,7 +80,6 @@ export class StaticContextService {
   public async getContext(
     helper: HelperVars,
   ): Promise<AutocompleteStaticSnippet[]> {
-    const start = Date.now();
     const tsFiles = await this.getTypeScriptFilesFromWorkspaces(
       helper.workspaceUris,
     );
@@ -149,11 +148,7 @@ export class StaticContextService {
       relevantTypes: relevantTypesToReturn,
       relevantHeaders: relevantHeadersToReturn,
     };
-    const end = Date.now();
-
     this.logAutocompleteStaticSnippet(ctx);
-
-    // console.log(end - start);
 
     const snippets: AutocompleteStaticSnippet[] = [];
 
