@@ -30,6 +30,8 @@ using Microsoft.Win32.SafeHandles;
 
 public static class StamContAppContainer
 {
+    public static long LastStdoutBytes = 0;
+    public static long LastStderrBytes = 0;
     private const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
     private const uint STARTF_USESTDHANDLES = 0x00000100;
     private const uint DUPLICATE_SAME_ACCESS = 0x00000002;
@@ -326,7 +328,10 @@ public static class StamContAppContainer
         uint dwMask,
         uint dwFlags);
 
-    private static void PumpPipe(IntPtr readHandle, Stream destination)
+    private static void PumpPipe(
+        IntPtr readHandle,
+        Stream destination,
+        bool isStdout)
     {
         using (var safe = new SafeFileHandle(readHandle, false))
         using (var input = new FileStream(safe, FileAccess.Read, 4096, false))
@@ -338,6 +343,14 @@ public static class StamContAppContainer
                 if (count <= 0)
                 {
                     break;
+                }
+                if (isStdout)
+                {
+                    Interlocked.Add(ref LastStdoutBytes, count);
+                }
+                else
+                {
+                    Interlocked.Add(ref LastStderrBytes, count);
                 }
                 destination.Write(buffer, 0, count);
                 destination.Flush();
@@ -359,6 +372,9 @@ public static class StamContAppContainer
 
         try
         {
+            Interlocked.Exchange(ref LastStdoutBytes, 0);
+            Interlocked.Exchange(ref LastStderrBytes, 0);
+
             int hr = DeriveAppContainerSidFromAppContainerName(
                 profileName,
                 out sid);
@@ -846,9 +862,9 @@ public static class StamContAppContainer
             childStdErr = IntPtr.Zero;
 
             stdoutThread = new Thread(() =>
-                PumpPipe(stdoutRead, Console.OpenStandardOutput()));
+                PumpPipe(stdoutRead, Console.OpenStandardOutput(), true));
             stderrThread = new Thread(() =>
-                PumpPipe(stderrRead, Console.OpenStandardError()));
+                PumpPipe(stderrRead, Console.OpenStandardError(), false));
             stdoutThread.IsBackground = true;
             stderrThread.IsBackground = true;
             stdoutThread.Start();
@@ -1104,23 +1120,94 @@ try {
   )
 
   if ([bool]$config.Diagnostics) {
+    # Probe 1: native lowbox creation plus compound cmd.exe parsing.
     $probeExitCode = [StamContAppContainer]::Run(
       [string]$config.ProfileName,
       [string]$config.CommandInterpreter,
-      "exit /b 37",
+      "ver & exit /b 37",
       [string]$config.Cwd
     )
     if ($probeExitCode -ne 37) {
-      # Encode a deterministic CI-visible failure without depending on stderr.
       $processExitCode = 237
     }
     else {
-      $processExitCode = [StamContAppContainer]::Run(
+      # Probe 2: the configured cwd is visible inside the lowbox.
+      $cwdProbe = [StamContAppContainer]::Run(
         [string]$config.ProfileName,
         [string]$config.CommandInterpreter,
-        $commandText,
+        'if not exist "." exit /b 139 & exit /b 39',
         [string]$config.Cwd
       )
+      if ($cwdProbe -ne 39) {
+        $processExitCode = 239
+      }
+      else {
+        # Probe 3: child bytes actually traverse the broker-owned stdout pipe.
+        $pipeProbe = [StamContAppContainer]::Run(
+          [string]$config.ProfileName,
+          [string]$config.CommandInterpreter,
+          "echo stamcont-pipe-probe & exit /b 40",
+          [string]$config.Cwd
+        )
+        $pipeBytes = [StamContAppContainer]::LastStdoutBytes
+        if ($pipeProbe -ne 40) {
+          $processExitCode = 240
+        }
+        elseif ($pipeBytes -le 0) {
+          $processExitCode = 241
+        }
+        else {
+          $probeName = ".stamcont-acl-probe-$($config.ProfileName).tmp"
+          $probePath = Join-Path ([string]$config.Cwd) $probeName
+
+          if ([bool]$config.ReadOnly) {
+            # Probe 4a: Plan mode must reject a workspace write in the lowbox.
+            $writeProbe = [StamContAppContainer]::Run(
+              [string]$config.ProfileName,
+              [string]$config.CommandInterpreter,
+              "echo forbidden>$probeName && exit /b 145 || exit /b 45",
+              [string]$config.Cwd
+            )
+            if (($writeProbe -ne 45) -or (Test-Path -LiteralPath $probePath)) {
+              $processExitCode = 245
+            }
+            else {
+              $processExitCode = [StamContAppContainer]::Run(
+                [string]$config.ProfileName,
+                [string]$config.CommandInterpreter,
+                $commandText,
+                [string]$config.Cwd
+              )
+            }
+          }
+          else {
+            # Probe 4b: Interactive mode must create a host-visible file.
+            $writeProbe = [StamContAppContainer]::Run(
+              [string]$config.ProfileName,
+              [string]$config.CommandInterpreter,
+              "echo stamcont-acl-probe>$probeName && exit /b 41 || exit /b 141",
+              [string]$config.Cwd
+            )
+            if ($writeProbe -ne 41) {
+              $processExitCode = 242
+            }
+            elseif (-not (Test-Path -LiteralPath $probePath)) {
+              # The lowbox reported success but the host namespace cannot see
+              # the file: this is a redirection/virtualization mismatch.
+              $processExitCode = 243
+            }
+            else {
+              Remove-Item -LiteralPath $probePath -Force
+              $processExitCode = [StamContAppContainer]::Run(
+                [string]$config.ProfileName,
+                [string]$config.CommandInterpreter,
+                $commandText,
+                [string]$config.Cwd
+              )
+            }
+          }
+        }
+      }
     }
   }
   else {
@@ -1134,7 +1221,7 @@ try {
 
   if ([bool]$config.Diagnostics) {
     [Console]::Error.WriteLine(
-      "[stamcont-sandbox-debug] exit=$processExitCode"
+      "[stamcont-sandbox-debug] exit=$processExitCode stdoutBytes=$([StamContAppContainer]::LastStdoutBytes) stderrBytes=$([StamContAppContainer]::LastStderrBytes)"
     )
   }
 
