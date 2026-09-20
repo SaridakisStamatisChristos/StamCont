@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -9,6 +10,28 @@ import type { IDE } from "..";
 import { SandboxExecutionBackend } from "./sandbox";
 
 const tempRoots: string[] = [];
+
+const requireOsSandboxTests =
+  process.env.STAMCONT_REQUIRE_OS_SANDBOX_TESTS === "1";
+
+function executableOnPath(name: string): boolean {
+  const fileName = process.platform === "win32" ? `${name}.exe` : name;
+  return (process.env.PATH ?? "")
+    .split(path.delimiter)
+    .filter(Boolean)
+    .some((entry) => existsSync(path.join(entry, fileName)));
+}
+
+const posixSandboxAvailable =
+  process.platform === "linux"
+    ? executableOnPath("bwrap")
+    : process.platform === "darwin"
+      ? existsSync("/usr/bin/sandbox-exec")
+      : false;
+
+const skipPosixSandboxTests =
+  process.platform === "win32" ||
+  (!requireOsSandboxTests && !posixSandboxAvailable);
 
 async function tempDir(prefix: string): Promise<string> {
   const dir = await mkdtemp(path.join(os.tmpdir(), prefix));
@@ -173,7 +196,7 @@ describe("sandbox shell security properties", () => {
     },
   );
 
-  it.skipIf(process.platform === "win32")(
+  it.skipIf(skipPosixSandboxTests)(
     "allows Interactive workspace writes but blocks outside filesystem access",
     async () => {
       const workspace = await tempDir("stamcont-shell-workspace-");
@@ -200,7 +223,7 @@ describe("sandbox shell security properties", () => {
     },
   );
 
-  it.skipIf(process.platform === "win32")(
+  it.skipIf(skipPosixSandboxTests)(
     "blocks nested shells from writing outside the workspace",
     async () => {
       const workspace = await tempDir("stamcont-shell-workspace-");
@@ -220,7 +243,7 @@ describe("sandbox shell security properties", () => {
     },
   );
 
-  it.skipIf(process.platform === "win32")(
+  it.skipIf(skipPosixSandboxTests)(
     "enforces Plan read-only semantics at the process boundary",
     async () => {
       const workspace = await tempDir("stamcont-plan-shell-");
@@ -238,7 +261,7 @@ describe("sandbox shell security properties", () => {
     },
   );
 
-  it.skipIf(process.platform === "win32")(
+  it.skipIf(skipPosixSandboxTests)(
     "filters secrets and loader injection variables from shell children",
     async () => {
       const workspace = await tempDir("stamcont-shell-env-");
@@ -275,7 +298,7 @@ describe("sandbox shell security properties", () => {
     },
   );
 
-  it.skipIf(process.platform === "win32")(
+  it.skipIf(skipPosixSandboxTests)(
     "denies outbound network access from sandbox shell processes",
     async () => {
       const workspace = await tempDir("stamcont-shell-network-");
