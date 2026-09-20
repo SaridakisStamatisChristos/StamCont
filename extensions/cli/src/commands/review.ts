@@ -7,13 +7,10 @@ import { configureConsoleForHeadless } from "../init.js";
 import { logger } from "../util/logger.js";
 
 import { ExtendedCommandOptions } from "./BaseCommandOptions.js";
-import type { DiffContext } from "./review/diffContext.js";
-import { computeDiffContext } from "./review/diffContext.js";
-import type { ReviewResult } from "./review/renderReport.js";
-import { renderReport } from "./review/renderReport.js";
+import { computeDiffContext, type DiffContext } from "./review/diffContext.js";
+import { renderReport, type ReviewResult } from "./review/renderReport.js";
 import { resolveReviews } from "./review/resolveReviews.js";
-import { ReviewProgress } from "./review/ReviewProgress.js";
-import type { ReviewState } from "./review/ReviewProgress.js";
+import { ReviewProgress, type ReviewState } from "./review/ReviewProgress.js";
 import type { WorkerConfig, WorkerResult } from "./review/reviewWorker.js";
 import { createWorktree, cleanupWorktree } from "./review/worktree.js";
 
