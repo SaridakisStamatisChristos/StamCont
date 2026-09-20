@@ -772,6 +772,9 @@ public static class StamContAppContainer
         string commandUtf8Base64,
         string workingDirectory,
         string environmentUtf8Base64,
+        string hostLocalAppData,
+        string hostAppData,
+        string hostTemp,
         string profileHome,
         string profileTemp,
         string diagnosticsPath)
@@ -784,6 +787,9 @@ public static class StamContAppContainer
             commandText,
             workingDirectory,
             environmentUtf8Base64,
+            hostLocalAppData,
+            hostAppData,
+            hostTemp,
             profileHome,
             profileTemp,
             diagnosticsPath);
@@ -795,6 +801,9 @@ public static class StamContAppContainer
         string commandText,
         string workingDirectory,
         string environmentUtf8Base64,
+        string hostLocalAppData,
+        string hostAppData,
+        string hostTemp,
         string profileHome,
         string profileTemp,
         string diagnosticsPath)
@@ -1054,6 +1063,19 @@ public static class StamContAppContainer
             variables.Remove("TEMP");
             variables.Remove("TMP");
             variables.Remove("TMPDIR");
+            if (!String.IsNullOrWhiteSpace(hostLocalAppData))
+            {
+                variables["LOCALAPPDATA"] = hostLocalAppData;
+            }
+            if (!String.IsNullOrWhiteSpace(hostAppData))
+            {
+                variables["APPDATA"] = hostAppData;
+            }
+            if (!String.IsNullOrWhiteSpace(hostTemp))
+            {
+                variables["TEMP"] = hostTemp;
+                variables["TMP"] = hostTemp;
+            }
             variables["HOME"] = profileHome;
 
             var entries = new List<string>();
@@ -1080,8 +1102,13 @@ public static class StamContAppContainer
                 ref startup,
                 out processInfo))
             {
+                int createProcessError = Marshal.GetLastWin32Error();
+                Diagnostic(
+                    diagnosticsPath,
+                    profileName,
+                    "create-process-failed error=" + createProcessError);
                 throw new Win32Exception(
-                    Marshal.GetLastWin32Error(),
+                    createProcessError,
                     "CreateProcessW(AppContainer) failed");
             }
             Diagnostic(
@@ -1466,6 +1493,9 @@ try {
       [string]$config.CommandUtf8Base64,
       [string]$config.Cwd,
       [string]$config.EnvironmentUtf8Base64,
+      [string]$config.HostLocalAppData,
+      [string]$config.HostAppData,
+      [string]$config.HostTemp,
       [string]$profileHome,
       [string]$profileTemp,
       [string]$config.DiagnosticsPath
@@ -1608,6 +1638,11 @@ export function spawnWindowsAppContainerShell(
       environmentPayload,
       "utf8",
     ).toString("base64"),
+    HostLocalAppData:
+      process.env.LOCALAPPDATA || process.env.LocalAppData || "",
+    HostAppData: process.env.APPDATA || process.env.AppData || "",
+    HostTemp:
+      process.env.TEMP || process.env.TMP || "",
     CommandUtf8Base64: Buffer.from(command, "utf8").toString("base64"),
     CommandUtf8Length: String(Buffer.byteLength(command, "utf8")),
     CommandSha256: createHash("sha256").update(command, "utf8").digest("hex"),
