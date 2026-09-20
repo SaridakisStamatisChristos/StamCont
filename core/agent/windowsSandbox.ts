@@ -1043,13 +1043,18 @@ public static class StamContAppContainer
                 variables[key] = value;
             }
 
+            // Do not pre-populate Windows profile/temp variables with the
+            // already-rerouted AppContainer paths. CreateProcessW applies the
+            // AppContainer profile mapping itself (LOCALAPPDATA -> ...\\AC,
+            // TEMP/TMP -> ...\\AC\\Temp). Feeding those final paths back in
+            // causes Windows to virtualize them a second time.
+            variables.Remove("USERPROFILE");
+            variables.Remove("APPDATA");
+            variables.Remove("LOCALAPPDATA");
+            variables.Remove("TEMP");
+            variables.Remove("TMP");
+            variables.Remove("TMPDIR");
             variables["HOME"] = profileHome;
-            variables["USERPROFILE"] = profileHome;
-            variables["APPDATA"] = profileHome;
-            variables["LOCALAPPDATA"] = profileHome;
-            variables["TEMP"] = profileTemp;
-            variables["TMP"] = profileTemp;
-            variables["TMPDIR"] = profileTemp;
 
             var entries = new List<string>();
             foreach (var variable in variables)
