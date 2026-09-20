@@ -1,6 +1,3 @@
-import fs from "fs";
-
-import { getContinueGlobalPath } from "core/util/paths";
 import { ExtensionContext } from "vscode";
 
 /**
