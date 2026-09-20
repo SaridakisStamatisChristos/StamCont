@@ -8,6 +8,7 @@ import { ChatCompletionToolMessageParam } from "openai/resources/chat/completion
 
 import { ToolPermissionServiceState } from "src/services/ToolPermissionService.js";
 
+import { prepareCliToolArgs } from "../agent/cliExecution.js";
 import { checkToolPermission } from "../permissions/permissionChecker.js";
 import { toolPermissionManager } from "../permissions/permissionManager.js";
 import {
@@ -22,7 +23,6 @@ import {
 } from "../services/index.js";
 import { trackSessionUsage } from "../session.js";
 import { telemetryService } from "../telemetry/telemetryService.js";
-import { prepareCliToolArgs } from "../agent/cliExecution.js";
 import {
   executeToolCall,
   getAllAvailableTools,
