@@ -1,9 +1,19 @@
-import { accessSync, constants as fsConstants, existsSync } from "node:fs";
-import { promises as fs } from "node:fs";
-import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
-import path from "node:path";
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
+import { lookup } from "node:dns/promises";
+import {
+  accessSync,
+  constants as fsConstants,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+} from "node:fs";
+import { promises as fs } from "node:fs";
+import { Agent as HttpAgent } from "node:http";
+import { Agent as HttpsAgent } from "node:https";
+import { isIP } from "node:net";
+import os from "node:os";
+import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import untildify from "untildify";
@@ -31,14 +41,46 @@ const SAFE_ENV_KEYS = new Set([
   "CLICOLOR",
   "CLICOLOR_FORCE",
   "FORCE_COLOR",
-  "TMPDIR",
-  "TEMP",
-  "TMP",
-  "SystemRoot",
+  "NO_COLOR",
+  "SYSTEMROOT",
   "WINDIR",
   "COMSPEC",
   "PATHEXT",
 ]);
+
+function getEnvironmentValue(source: Env, name: string): string | undefined {
+  const entry = Object.entries(source).find(
+    ([key]) => key.toUpperCase() === name.toUpperCase(),
+  );
+  return entry?.[1];
+}
+
+export function sanitizeSandboxEnvironment(
+  input: Env | undefined,
+  homeDirectory: string,
+  tempDirectory = homeDirectory,
+): Env {
+  const source = input ?? process.env;
+  const output: Env = {};
+
+  for (const [key, value] of Object.entries(source)) {
+    const normalizedKey = key.toUpperCase();
+    if (SAFE_ENV_KEYS.has(normalizedKey) || normalizedKey.startsWith("LC_")) {
+      output[normalizedKey] = value;
+    }
+  }
+
+  // Windows commonly exposes Path rather than PATH. Canonicalize it so helper
+  // lookup never falls back to an unsanitized environment by accident.
+  output.PATH = getEnvironmentValue(source, "PATH") ?? "";
+  output.HOME = homeDirectory;
+  output.USERPROFILE = homeDirectory;
+  output.TMPDIR = tempDirectory;
+  output.TEMP = tempDirectory;
+  output.TMP = tempDirectory;
+  output.STAMCONT_SANDBOX = "1";
+  return output;
+}
 
 function pathWithin(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);
@@ -82,30 +124,12 @@ function getPortableShell(): string {
   return "/bin/sh";
 }
 
-export function sanitizeSandboxEnvironment(
-  input: Env | undefined,
-  workspaceRoot: string,
-): Env {
-  const source = input ?? process.env;
-  const output: Env = {};
-  for (const [key, value] of Object.entries(source)) {
-    if (
-      SAFE_ENV_KEYS.has(key) ||
-      key.startsWith("LC_") ||
-      key.startsWith("STAMCONT_")
-    ) {
-      output[key] = value;
-    }
-  }
-  output.HOME = workspaceRoot;
-  output.USERPROFILE = workspaceRoot;
-  output.STAMCONT_SANDBOX = "1";
-  return output;
-}
-
 function isBlockedIpv4(address: string): boolean {
   const p = address.split(".").map(Number);
-  if (p.length !== 4 || p.some((part) => !Number.isInteger(part))) {
+  if (
+    p.length !== 4 ||
+    p.some((part) => !Number.isInteger(part) || part < 0 || part > 255)
+  ) {
     return true;
   }
   const [a, b] = p;
@@ -116,9 +140,9 @@ function isBlockedIpv4(address: string): boolean {
     (a === 100 && b >= 64 && b <= 127) ||
     (a === 169 && b === 254) ||
     (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 168) ||
     (a === 192 && b === 0) ||
-    (a === 192 && b === 0 && p[2] === 2) ||
+    (a === 192 && b === 88 && p[2] === 99) ||
+    (a === 192 && b === 168) ||
     (a === 198 && (b === 18 || b === 19)) ||
     (a === 198 && b === 51 && p[2] === 100) ||
     (a === 203 && b === 0 && p[2] === 113) ||
@@ -140,16 +164,43 @@ function isBlockedIp(address: string): boolean {
       normalized === "::1" ||
       normalized.startsWith("fc") ||
       normalized.startsWith("fd") ||
-      /^fe[89ab]/.test(normalized) ||
-      normalized.startsWith("ff")
+      /^fe[89a-f]/.test(normalized) ||
+      normalized.startsWith("ff") ||
+      normalized.startsWith("2001:db8:")
     );
   }
   return true;
 }
 
-export async function assertRestrictedNetworkTarget(
+export interface RestrictedDnsAddress {
+  address: string;
+  family: number;
+}
+
+export type RestrictedDnsResolver = (
+  hostname: string,
+) => Promise<readonly RestrictedDnsAddress[]>;
+
+const defaultRestrictedDnsResolver: RestrictedDnsResolver = async (hostname) =>
+  lookup(hostname, { all: true, verbatim: true });
+
+export interface RestrictedNetworkTarget {
+  url: URL;
+  address: string;
+  family: number;
+}
+
+function normalizeHostname(url: URL): string {
+  return url.hostname
+    .replace(/^\[|\]$/g, "")
+    .replace(/\.$/, "")
+    .toLowerCase();
+}
+
+export async function resolveRestrictedNetworkTarget(
   value: string | URL,
-): Promise<URL> {
+  resolver: RestrictedDnsResolver = defaultRestrictedDnsResolver,
+): Promise<RestrictedNetworkTarget> {
   const url = value instanceof URL ? new URL(value.href) : new URL(value);
   if (url.protocol !== "https:" && url.protocol !== "http:") {
     throw new SandboxViolationError(
@@ -162,7 +213,7 @@ export async function assertRestrictedNetworkTarget(
     );
   }
 
-  const hostname = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  const hostname = normalizeHostname(url);
   if (
     hostname === "localhost" ||
     hostname.endsWith(".localhost") ||
@@ -173,41 +224,122 @@ export async function assertRestrictedNetworkTarget(
     );
   }
 
-  if (isIP(hostname)) {
+  const literalFamily = isIP(hostname);
+  if (literalFamily) {
     if (isBlockedIp(hostname)) {
       throw new SandboxViolationError(
         `Restricted network blocked private/reserved address ${hostname}`,
       );
     }
-    return url;
+    return { url, address: hostname, family: literalFamily };
   }
 
-  const addresses = await lookup(hostname, { all: true, verbatim: true });
+  const addresses = await resolver(hostname);
   if (addresses.length === 0) {
     throw new SandboxViolationError(
       `Restricted network could not resolve ${hostname}`,
     );
   }
+
+  // The policy is intentionally strict: if any answer is private/reserved, the
+  // hostname is rejected rather than letting address ordering decide safety.
   const blocked = addresses.find((entry) => isBlockedIp(entry.address));
   if (blocked) {
     throw new SandboxViolationError(
       `Restricted network blocked ${hostname} because it resolves to ${blocked.address}`,
     );
   }
-  return url;
+
+  const selected = addresses[0];
+  return {
+    url,
+    address: selected.address,
+    family: selected.family,
+  };
 }
 
-export function createRestrictedFetch(delegate: FetchFunction): FetchFunction {
+export async function assertRestrictedNetworkTarget(
+  value: string | URL,
+  resolver: RestrictedDnsResolver = defaultRestrictedDnsResolver,
+): Promise<URL> {
+  return (await resolveRestrictedNetworkTarget(value, resolver)).url;
+}
+
+export function createPinnedLookup(target: RestrictedNetworkTarget): any {
+  const expectedHostname = normalizeHostname(target.url);
+  return (
+    hostname: string,
+    options: any,
+    callback?: (...args: any[]) => void,
+  ): void => {
+    if (typeof options === "function") {
+      callback = options;
+      options = {};
+    }
+    if (!callback) {
+      throw new Error("Pinned DNS lookup requires a callback");
+    }
+
+    const requestedHostname = hostname.replace(/\.$/, "").toLowerCase();
+    if (requestedHostname !== expectedHostname) {
+      callback(
+        new SandboxViolationError(
+          `Restricted network refused DNS drift from ${expectedHostname} to ${requestedHostname}`,
+        ),
+      );
+      return;
+    }
+
+    if (options?.all) {
+      callback(null, [
+        {
+          address: target.address,
+          family: target.family,
+        },
+      ]);
+      return;
+    }
+    callback(null, target.address, target.family);
+  };
+}
+
+export interface RestrictedFetchOptions {
+  resolver?: RestrictedDnsResolver;
+  maxRedirects?: number;
+}
+
+export function createRestrictedFetch(
+  delegate: FetchFunction,
+  options: RestrictedFetchOptions = {},
+): FetchFunction {
+  const resolver = options.resolver ?? defaultRestrictedDnsResolver;
+  const maxRedirects = options.maxRedirects ?? 5;
+
   const restrictedFetch = async (
     value: string | URL,
     init?: any,
     redirectDepth = 0,
   ): Promise<any> => {
-    if (redirectDepth > 5) {
+    if (redirectDepth > maxRedirects) {
       throw new SandboxViolationError("Restricted network redirect limit exceeded");
     }
-    const url = await assertRestrictedNetworkTarget(value);
-    const response = await delegate(url, { ...(init ?? {}), redirect: "manual" });
+
+    const target = await resolveRestrictedNetworkTarget(value, resolver);
+    const lookupFn = createPinnedLookup(target);
+    const agent =
+      target.url.protocol === "https:"
+        ? new HttpsAgent({ keepAlive: false, lookup: lookupFn })
+        : new HttpAgent({ keepAlive: false, lookup: lookupFn });
+
+    // Keep the original hostname in the URL. The custom agent only controls
+    // address selection, so HTTP Host, TLS SNI and certificate verification
+    // remain bound to the user-visible hostname.
+    const response = await delegate(target.url, {
+      ...(init ?? {}),
+      redirect: "manual",
+      agent,
+    });
+
     if (
       response &&
       [301, 302, 303, 307, 308].includes(response.status) &&
@@ -216,7 +348,7 @@ export function createRestrictedFetch(delegate: FetchFunction): FetchFunction {
       const location = response.headers.get("location");
       if (location) {
         return restrictedFetch(
-          new URL(location, url),
+          new URL(location, target.url),
           init,
           redirectDepth + 1,
         );
@@ -271,20 +403,51 @@ function addParentDirectories(args: string[], roots: string[]): void {
     .forEach((dir) => args.push("--dir", dir));
 }
 
-function buildMacSandboxProfile(roots: string[]): string {
+function buildMacSandboxProfile(
+  roots: string[],
+  privateTemp: string,
+  readOnly: boolean,
+): string {
   const quote = (value: string) =>
     value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
-  const subpaths = roots
+  const rootSubpaths = roots
     .map((root) => `(subpath "${quote(root)}")`)
     .join(" ");
+  const writableRoots = readOnly ? "" : rootSubpaths;
+
   return `(version 1)
 (deny default)
 (allow process*)
 (allow sysctl-read)
 (allow file-read-metadata)
-(allow file-read* (subpath "/usr") (subpath "/bin") (subpath "/sbin") (subpath "/System") (subpath "/Library") ${subpaths})
-(allow file-write* ${subpaths} (subpath "/tmp") (subpath "/private/tmp"))
+(allow file-read* (subpath "/usr") (subpath "/bin") (subpath "/sbin") (subpath "/System") (subpath "/Library") (subpath "/etc") (subpath "/private/etc") (subpath "/dev") ${rootSubpaths} (subpath "${quote(privateTemp)}"))
+(allow file-write* ${writableRoots} (subpath "${quote(privateTemp)}") (literal "/dev/null"))
 (deny network*)`;
+}
+
+function createPrivateTempDirectory(): string {
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), "stamcont-sandbox-"));
+  mkdirSync(path.join(tempRoot, "home"), { recursive: true });
+  return tempRoot;
+}
+
+function attachTempCleanup(child: ChildProcess, tempRoot: string): ChildProcess {
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) {
+      return;
+    }
+    cleaned = true;
+    try {
+      rmSync(tempRoot, { recursive: true, force: true });
+    } catch {
+      // Cleanup is best-effort. The directory is uniquely scoped to this
+      // sandbox process and contains no host secrets.
+    }
+  };
+  child.once("close", cleanup);
+  child.once("error", cleanup);
+  return child;
 }
 
 function spawnSandboxedShell(
@@ -292,12 +455,17 @@ function spawnSandboxedShell(
   options: SpawnOptions,
   roots: string[],
   cwd: string,
+  readOnly: boolean,
 ): ChildProcess {
   const workspaceRoot = roots[0];
-  const env = sanitizeSandboxEnvironment(options.env as Env | undefined, workspaceRoot);
   const shell = getPortableShell();
 
   if (process.platform === "linux") {
+    const env = sanitizeSandboxEnvironment(
+      options.env as Env | undefined,
+      "/tmp/stamcont-home",
+      "/tmp",
+    );
     const bwrap = findExecutable("bwrap", env);
     if (!bwrap) {
       throw new SandboxViolationError(
@@ -315,13 +483,17 @@ function spawnSandboxedShell(
       "/dev",
       "--tmpfs",
       "/tmp",
+      "--dir",
+      "/tmp/stamcont-home",
     ];
     addLinuxRuntimeBindings(args);
     addParentDirectories(args, roots);
     for (const root of roots) {
-      args.push("--bind", root, root);
+      args.push(readOnly ? "--ro-bind" : "--bind", root, root);
     }
-    args.push("--chdir", cwd, "--setenv", "HOME", workspaceRoot);
+    args.push("--chdir", cwd, "--setenv", "HOME", "/tmp/stamcont-home");
+    args.push("--setenv", "TMPDIR", "/tmp", "--setenv", "TEMP", "/tmp");
+    args.push("--setenv", "TMP", "/tmp");
     args.push(shell, "-lc", command);
     return markIsolatedProcessGroup(
       spawn(bwrap, args, {
@@ -340,23 +512,46 @@ function spawnSandboxedShell(
         "Interactive shell sandbox requires sandbox-exec on macOS. Full Access remains available explicitly.",
       );
     }
-    return markIsolatedProcessGroup(
-      spawn(
-        sandboxExec,
-        ["-p", buildMacSandboxProfile(roots), shell, "-lc", command],
-        {
-          ...options,
-          cwd,
-          env,
-          detached: true,
-        },
-      ),
+
+    const tempRoot = createPrivateTempDirectory();
+    const env = sanitizeSandboxEnvironment(
+      options.env as Env | undefined,
+      path.join(tempRoot, "home"),
+      tempRoot,
     );
+    try {
+      const child = markIsolatedProcessGroup(
+        spawn(
+          sandboxExec,
+          [
+            "-p",
+            buildMacSandboxProfile(roots, tempRoot, readOnly),
+            shell,
+            "-lc",
+            command,
+          ],
+          {
+            ...options,
+            cwd,
+            env,
+            detached: true,
+          },
+        ),
+      );
+      return attachTempCleanup(child, tempRoot);
+    } catch (error) {
+      rmSync(tempRoot, { recursive: true, force: true });
+      throw error;
+    }
   }
 
   throw new SandboxViolationError(
     `Interactive shell sandbox is not yet enforceable on ${process.platform}; use Full Access explicitly for shell execution.`,
   );
+}
+
+export interface SandboxExecutionOptions {
+  readOnly?: boolean;
 }
 
 export class SandboxExecutionBackend implements ExecutionBackend {
@@ -366,7 +561,10 @@ export class SandboxExecutionBackend implements ExecutionBackend {
   private workspaceRoots?: Promise<string[]>;
   private resolvedWorkspaceRoots?: string[];
 
-  constructor(private readonly ide: IDE) {}
+  constructor(
+    private readonly ide: IDE,
+    private readonly options: SandboxExecutionOptions = {},
+  ) {}
 
   wrapFetch(fetch: FetchFunction): FetchFunction {
     return createRestrictedFetch(fetch);
@@ -389,6 +587,11 @@ export class SandboxExecutionBackend implements ExecutionBackend {
   }
 
   async resolveWritablePath(inputPath: string): Promise<ResolvedPath> {
+    if (this.options.readOnly) {
+      throw new SandboxViolationError(
+        "Plan sandbox is read-only; writable paths are not permitted",
+      );
+    }
     const [candidate] = await this.resolveCandidates(inputPath, true);
     if (!candidate) {
       throw new SandboxViolationError("No local workspace root is available");
@@ -426,10 +629,35 @@ export class SandboxExecutionBackend implements ExecutionBackend {
     resolvedPath: ResolvedPath,
     contents: string,
   ): Promise<void> {
+    if (this.options.readOnly) {
+      throw new SandboxViolationError(
+        "Plan sandbox is read-only; filesystem writes are not permitted",
+      );
+    }
+
     await this.assertWritableCandidate(resolvedPath.displayPath);
     await fs.mkdir(path.dirname(resolvedPath.displayPath), { recursive: true });
     await this.assertWritableCandidate(resolvedPath.displayPath);
-    await fs.writeFile(resolvedPath.displayPath, contents, "utf8");
+
+    // Refuse to follow a final-component symlink during the write itself.
+    // Parent-directory replacement is still a platform-level TOCTOU concern,
+    // but this closes the most direct validation-to-open race exposed by
+    // fs.writeFile following a swapped final symlink.
+    const noFollow =
+      (fsConstants as unknown as Record<string, number>).O_NOFOLLOW ?? 0;
+    const handle = await fs.open(
+      resolvedPath.displayPath,
+      fsConstants.O_WRONLY |
+        fsConstants.O_CREAT |
+        fsConstants.O_TRUNC |
+        noFollow,
+      0o666,
+    );
+    try {
+      await handle.writeFile(contents, "utf8");
+    } finally {
+      await handle.close();
+    }
   }
 
   async listDirectory(
@@ -505,7 +733,13 @@ export class SandboxExecutionBackend implements ExecutionBackend {
         "Sandbox roots were not initialized before process launch",
       );
     }
-    return spawnSandboxedShell(command, options, roots, options.cwd);
+    return spawnSandboxedShell(
+      command,
+      options,
+      roots,
+      options.cwd,
+      this.options.readOnly === true,
+    );
   }
 
   async runShell(_command: string): Promise<void> {
