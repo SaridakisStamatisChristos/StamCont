@@ -398,7 +398,9 @@ export function createExecutionBackend(
     return new HostExecutionBackend(ide);
   }
   if (profile === "interactive" || profile === "plan") {
-    return new SandboxExecutionBackend(ide);
+    return new SandboxExecutionBackend(ide, {
+      readOnly: profile === "plan",
+    });
   }
   return new IdeExecutionBackend(ide);
 }
