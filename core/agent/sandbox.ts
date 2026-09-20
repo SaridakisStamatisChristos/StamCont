@@ -378,10 +378,7 @@ function addLinuxRuntimeBindings(args: string[]): void {
     "/etc/ld.so.conf",
     "/etc/ld.so.conf.d",
     "/etc/nsswitch.conf",
-    "/etc/passwd",
-    "/etc/group",
     "/etc/localtime",
-    "/etc/gitconfig",
   ]) {
     if (existsSync(file)) {
       args.push("--ro-bind", file, file);
@@ -420,7 +417,7 @@ function buildMacSandboxProfile(
 (allow process*)
 (allow sysctl-read)
 (allow file-read-metadata)
-(allow file-read* (subpath "/usr") (subpath "/bin") (subpath "/sbin") (subpath "/System") (subpath "/Library") (subpath "/etc") (subpath "/private/etc") (subpath "/dev") ${rootSubpaths} (subpath "${quote(privateTemp)}"))
+(allow file-read* (subpath "/usr") (subpath "/bin") (subpath "/sbin") (subpath "/System") (subpath "/Library") (subpath "/opt/homebrew") (subpath "/dev") ${rootSubpaths} (subpath "${quote(privateTemp)}"))
 (allow file-write* ${writableRoots} (subpath "${quote(privateTemp)}") (literal "/dev/null"))
 (deny network*)`;
 }
@@ -493,7 +490,7 @@ function spawnSandboxedShell(
     args.push("--chdir", cwd, "--setenv", "HOME", "/tmp/stamcont-home");
     args.push("--setenv", "TMPDIR", "/tmp", "--setenv", "TEMP", "/tmp");
     args.push("--setenv", "TMP", "/tmp");
-    args.push(shell, "-lc", command);
+    args.push(shell, "-c", command);
     return markIsolatedProcessGroup(
       spawn(bwrap, args, {
         ...options,
@@ -526,7 +523,7 @@ function spawnSandboxedShell(
             "-p",
             buildMacSandboxProfile(roots, tempRoot, readOnly),
             shell,
-            "-lc",
+            "-c",
             command,
           ],
           {
