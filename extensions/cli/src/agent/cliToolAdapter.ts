@@ -81,11 +81,14 @@ export function adaptCliTool(
         ...tool,
         name,
       }),
-    execute: async (invocation) => {
-      return invocation.tool.run(
-        invocation.args,
-        invocation.context,
-      );
+    execute: async (invocation, agentContext) => {
+      return invocation.tool.run(invocation.args, {
+        ...invocation.context,
+        toolCallId: invocation.context?.toolCallId ?? agentContext.sessionId,
+        parallelToolCallCount:
+          invocation.context?.parallelToolCallCount ?? 1,
+        executionSignal: agentContext.signal,
+      });
     },
   };
 }

@@ -1,16 +1,18 @@
-import { ContinueErrorReason } from "core/util/errors";
-import * as ideUtils from "core/util/ideUtils";
+import { ContinueError, ContinueErrorReason } from "core/util/errors";
 import { beforeEach, describe, expect, it, Mock, vi } from "vitest";
+
 import { applyForEditTool } from "../../redux/thunks/handleApplyStateUpdate";
+
 import { ClientToolExtras } from "./callClientTool";
+import * as clientPathResolver from "./resolveClientToolPath";
 import { multiEditImpl } from "./multiEditImpl";
 
 vi.mock("uuid", () => ({
   v4: vi.fn(() => "test-uuid"),
 }));
 
-vi.mock("core/util/ideUtils", () => ({
-  resolveRelativePathInDir: vi.fn(),
+vi.mock("./resolveClientToolPath", () => ({
+  resolveClientToolExistingPath: vi.fn(),
 }));
 
 vi.mock("../../redux/thunks/handleApplyStateUpdate", () => ({
@@ -19,13 +21,15 @@ vi.mock("../../redux/thunks/handleApplyStateUpdate", () => ({
 
 describe("multiEditImpl GUI specific", () => {
   let mockExtras: ClientToolExtras;
-  let mockResolveRelativePathInDir: Mock;
+  let mockResolveClientToolExistingPath: Mock;
   let mockApplyForEditTool: Mock;
 
   beforeEach(() => {
     vi.clearAllMocks();
 
-    mockResolveRelativePathInDir = vi.mocked(ideUtils.resolveRelativePathInDir);
+    mockResolveClientToolExistingPath = vi.mocked(
+      clientPathResolver.resolveClientToolExistingPath,
+    );
     mockApplyForEditTool = vi.mocked(applyForEditTool);
 
     mockExtras = {
@@ -59,7 +63,12 @@ describe("multiEditImpl GUI specific", () => {
     });
 
     it("should throw if file does not exist in workspace", async () => {
-      mockResolveRelativePathInDir.mockResolvedValue(null);
+      mockResolveClientToolExistingPath.mockRejectedValue(
+        new ContinueError(
+          ContinueErrorReason.FileNotFound,
+          "File nonexistent.txt does not exist or is not accessible",
+        ),
+      );
 
       await expect(
         multiEditImpl(
@@ -80,7 +89,7 @@ describe("multiEditImpl GUI specific", () => {
 
   describe("GUI integration", () => {
     beforeEach(() => {
-      mockResolveRelativePathInDir.mockResolvedValue(
+      mockResolveClientToolExistingPath.mockResolvedValue(
         "file:///dir/test/file.txt",
       );
     });
@@ -131,7 +140,7 @@ describe("multiEditImpl GUI specific", () => {
 
   describe("return value", () => {
     it("should return structure for async completion", async () => {
-      mockResolveRelativePathInDir.mockResolvedValue(
+      mockResolveClientToolExistingPath.mockResolvedValue(
         "file:///dir/test/file.txt",
       );
       mockExtras.ideMessenger.ide.readFile = vi.fn().mockResolvedValue("test");

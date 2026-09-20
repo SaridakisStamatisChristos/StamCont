@@ -1,4 +1,5 @@
 import type { ToolPolicy } from "@continuedev/terminal-security";
+import type { ExecutionBackend } from "core/agent/execution.js";
 
 // JSON Schema compatible parameter definition
 export interface ParameterSchema {
@@ -39,6 +40,8 @@ export interface ToolRunContext {
    * Tools should divide their output limits by this number to avoid context overflow.
    */
   parallelToolCallCount: number;
+  executionBackend?: ExecutionBackend;
+  executionSignal?: AbortSignal;
 }
 
 export interface Tool {

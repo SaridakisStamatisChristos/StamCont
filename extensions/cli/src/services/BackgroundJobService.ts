@@ -1,5 +1,7 @@
 import { ChildProcess, spawn } from "child_process";
 
+import { terminateProcessTree } from "core/util/processTerminalStates.js";
+
 import { logger } from "../util/logger.js";
 
 export type BackgroundJobStatus =
@@ -181,7 +183,7 @@ export class BackgroundJobService {
     if (!job) return false;
 
     if (process) {
-      process.kill();
+      terminateProcessTree(process, "SIGTERM");
       this.processes.delete(jobId);
     }
 
@@ -210,7 +212,7 @@ export class BackgroundJobService {
 
   killAllJobs(): void {
     for (const [jobId, process] of this.processes) {
-      process.kill();
+      terminateProcessTree(process, "SIGTERM");
       const job = this.jobs.get(jobId);
       if (job) {
         job.status = "cancelled";

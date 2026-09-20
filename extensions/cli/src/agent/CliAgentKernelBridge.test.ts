@@ -106,7 +106,11 @@ describe("CliAgentKernelBridge", () => {
     expect(result).toBe("legacy-result");
     expect(run).toHaveBeenCalledWith(
       { filepath: "README.md" },
-      context,
+      expect.objectContaining({
+        ...context,
+        executionBackend: expect.objectContaining({ kind: "sandbox" }),
+        executionSignal: expect.any(AbortSignal),
+      }),
     );
   });
 

@@ -5,6 +5,7 @@ import { ChatCompletionTool } from "openai/resources.mjs";
 import { isModelCapable } from "src/utils/modelCapability.js";
 
 import { cliAgentKernelBridge } from "../agent/CliAgentKernelBridge.js";
+import { prepareCliToolArgs } from "../agent/cliExecution.js";
 import type { PermissionMode } from "../permissions/types.js";
 import {
   SERVICE_NAMES,
@@ -240,14 +241,24 @@ export async function executeToolCall(
       parallelToolCallCount: options.parallelToolCallCount,
     };
 
-    // IMPORTANT: if preprocessed args are present, uses preprocessed args instead of original args
-    // Preprocessed arg names may be different
+    // IMPORTANT: preprocessed args may use different names. Resolve any
+    // remaining filesystem arguments through the selected execution backend
+    // again at execution time to close preview-to-execution races.
+    const mode = options.permissionMode ?? "normal";
+    const prepared = await prepareCliToolArgs(
+      toolCall.name,
+      toolCall.preprocessResult?.args ?? toolCall.arguments,
+      mode,
+    );
     const result = await cliAgentKernelBridge.execute({
       tool: toolCall.tool,
       toolName: toolCall.name,
-      args: toolCall.preprocessResult?.args ?? toolCall.arguments,
-      context,
-      mode: options.permissionMode ?? "normal",
+      args: prepared.args,
+      context: {
+        ...context,
+        executionBackend: prepared.backend,
+      },
+      mode,
       sessionId: options.sessionId,
     });
     const duration = Date.now() - startTime;

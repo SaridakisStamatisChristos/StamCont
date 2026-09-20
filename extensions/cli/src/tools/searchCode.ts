@@ -1,34 +1,42 @@
-import * as child_process from "child_process";
-import * as fs from "fs";
-import * as util from "util";
+import * as childProcess from "node:child_process";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as util from "node:util";
 
 import { ContinueError, ContinueErrorReason } from "core/util/errors.js";
-import { findUp } from "find-up";
 
 import { parseEnvNumber } from "../util/truncateOutput.js";
 
 import { Tool } from "./types.js";
 
-const execPromise = util.promisify(child_process.exec);
+const execFilePromise = util.promisify(childProcess.execFile);
+const SEARCH_MAX_BUFFER = 10 * 1024 * 1024;
 
-async function getGitignorePatterns() {
-  const gitIgnorePath = await findUp(".gitignore");
-  if (!gitIgnorePath) return [];
+async function getGitignorePatterns(searchPath: string): Promise<string[]> {
+  const gitIgnorePath = path.join(searchPath, ".gitignore");
+  if (!fs.existsSync(gitIgnorePath)) {
+    return [];
+  }
+
   const content = fs.readFileSync(gitIgnorePath, "utf-8");
-  const ignorePatterns = [];
+  const ignorePatterns: string[] = [];
   for (let line of content.trim().split("\n")) {
     line = line.trim();
-    if (line.startsWith("#") || line === "") continue; // ignore comments and empty line
-    if (line.startsWith("!")) continue; // ignore negated ignores
+    if (line.startsWith("#") || line === "" || line.startsWith("!")) {
+      continue;
+    }
     ignorePatterns.push(line);
   }
   return ignorePatterns;
 }
 
-// procedure 1: search with ripgrep
+// Procedure 1: search with ripgrep. execFile is intentional: model-supplied
+// patterns and file globs are arguments, never shell syntax.
 export async function checkIfRipgrepIsInstalled(): Promise<boolean> {
   try {
-    await execPromise("rg --version");
+    await execFilePromise("rg", ["--version"], {
+      maxBuffer: SEARCH_MAX_BUFFER,
+    });
     return true;
   } catch {
     return false;
@@ -40,51 +48,68 @@ async function searchWithRipgrep(
   searchPath: string,
   filePattern?: string,
 ) {
-  let command = `rg --line-number --with-filename --color never "${pattern}"`;
+  const args = [
+    "--line-number",
+    "--with-filename",
+    "--color",
+    "never",
+  ];
 
   if (filePattern) {
-    command += ` -g "${filePattern}"`;
+    args.push("-g", filePattern);
   }
 
-  const ignorePatterns = await getGitignorePatterns();
+  const ignorePatterns = await getGitignorePatterns(searchPath);
   for (const ignorePattern of ignorePatterns) {
-    command += ` -g "!${ignorePattern}"`;
+    args.push("-g", `!${ignorePattern}`);
   }
 
-  command += ` "${searchPath}"`;
-  const { stdout, stderr } = await execPromise(command);
-  return { stdout, stderr };
+  args.push("--", pattern, ".");
+  return execFilePromise("rg", args, {
+    cwd: searchPath,
+    maxBuffer: SEARCH_MAX_BUFFER,
+  });
 }
 
-// procedure 2: search with grep on unix or findstr on windows
+// Procedure 2: fallback without a shell. This avoids turning a supposedly
+// read-only Search tool into arbitrary command execution via interpolation.
 async function searchWithGrepOrFindstr(
   pattern: string,
   searchPath: string,
   filePattern?: string,
 ) {
-  const isWindows = process.platform === "win32";
-  const ignorePatterns = await getGitignorePatterns();
-  let command: string;
-  if (isWindows) {
-    const fileSpec = filePattern ? filePattern : "*";
-    command = `findstr /S /N /P /R "${pattern}" "${fileSpec}"`; // findstr does not support ignoring patterns
-  } else {
-    let excludeArgs = "";
-    for (const ignorePattern of ignorePatterns) {
-      excludeArgs += ` --exclude="${ignorePattern}" --exclude-dir="${ignorePattern}"`; // use both exclude and exclude-dir because ignorePattern can be a file or directory
-    }
-    if (filePattern) {
-      command = `find . -type f -path "${filePattern}" -print0 | xargs -0 grep -nH -I${excludeArgs} "${pattern}"`;
-    } else {
-      command = `grep -R -n -H -I${excludeArgs} "${pattern}" .`;
-    }
+  const ignorePatterns = await getGitignorePatterns(searchPath);
+
+  if (process.platform === "win32") {
+    const fileSpec = filePattern || "*";
+    return execFilePromise(
+      "findstr",
+      ["/S", "/N", "/P", "/R", pattern, fileSpec],
+      {
+        cwd: searchPath,
+        maxBuffer: SEARCH_MAX_BUFFER,
+      },
+    );
   }
-  return await execPromise(command, { cwd: searchPath });
+
+  const args = ["-R", "-n", "-H", "-I"];
+  for (const ignorePattern of ignorePatterns) {
+    args.push(`--exclude=${ignorePattern}`, `--exclude-dir=${ignorePattern}`);
+  }
+  if (filePattern) {
+    args.push(`--include=${filePattern}`);
+  }
+  args.push("--", pattern, ".");
+
+  return execFilePromise("grep", args, {
+    cwd: searchPath,
+    maxBuffer: SEARCH_MAX_BUFFER,
+  });
 }
 
 // Output truncation defaults
 const DEFAULT_SEARCH_MAX_RESULTS = 100;
-const DEFAULT_SEARCH_MAX_RESULT_CHARS = 1000; // Max chars per result line
+const DEFAULT_SEARCH_MAX_RESULT_CHARS = 1000;
 
 function getSearchMaxResults(): number {
   return parseEnvNumber(
@@ -151,27 +176,29 @@ export const searchCodeTool: Tool = {
         `Path does not exist: ${searchPath}`,
       );
     }
+    if (!fs.statSync(searchPath).isDirectory()) {
+      throw new ContinueError(
+        ContinueErrorReason.Unspecified,
+        `Search path is not a directory: ${searchPath}`,
+      );
+    }
 
-    let stdout = "",
-      stderr = "";
+    let stdout = "";
+    let stderr = "";
     try {
-      if (await checkIfRipgrepIsInstalled()) {
-        const results = await searchWithRipgrep(
-          args.pattern,
-          searchPath,
-          args.file_pattern,
-        );
-        stdout = results.stdout;
-        stderr = results.stderr;
-      } else {
-        const results = await searchWithGrepOrFindstr(
-          args.pattern,
-          searchPath,
-          args.file_pattern,
-        );
-        stdout = results.stdout;
-        stderr = results.stderr;
-      }
+      const results = (await checkIfRipgrepIsInstalled())
+        ? await searchWithRipgrep(
+            args.pattern,
+            searchPath,
+            args.file_pattern,
+          )
+        : await searchWithGrepOrFindstr(
+            args.pattern,
+            searchPath,
+            args.file_pattern,
+          );
+      stdout = results.stdout;
+      stderr = results.stderr;
 
       if (stderr) {
         return `Warning during search: ${stderr}\n\n${stdout}`;
@@ -183,7 +210,6 @@ export const searchCodeTool: Tool = {
         }.`;
       }
 
-      // Split the results into lines and limit the number of results
       const maxResults = getSearchMaxResults();
       const maxResultChars = getSearchMaxResultChars();
 

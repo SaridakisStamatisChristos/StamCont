@@ -10,7 +10,7 @@ import {
   getLanguageFromFilePath,
 } from "../telemetry/utils.js";
 
-import { Tool, ToolCallPreview } from "./types.js";
+import { Tool, ToolCallPreview, ToolRunContext } from "./types.js";
 
 export function generateDiff(
   oldContent: string,
@@ -117,21 +117,32 @@ export const writeFileTool: Tool = {
       preview,
     };
   },
-  run: async (args: { filepath: string; content: string }): Promise<string> => {
+  run: async (
+    args: { filepath: string; content: string },
+    context?: ToolRunContext,
+  ): Promise<string> => {
     try {
-      const dirPath = path.dirname(args.filepath);
-      if (!fs.existsSync(dirPath)) {
-        fs.mkdirSync(dirPath, { recursive: true });
-      }
-
-      // Read existing file content if it exists
+      let targetPath = args.filepath;
       let oldContent = "";
-      if (fs.existsSync(args.filepath)) {
-        oldContent = fs.readFileSync(args.filepath, "utf-8");
-      }
 
-      // Write new content
-      fs.writeFileSync(args.filepath, args.content, "utf-8");
+      if (context?.executionBackend) {
+        const resolved =
+          await context.executionBackend.resolveWritablePath(args.filepath);
+        targetPath = resolved.displayPath;
+        if (await context.executionBackend.fileExists(resolved)) {
+          oldContent = await context.executionBackend.readFile(resolved);
+        }
+        await context.executionBackend.writeFile(resolved, args.content);
+      } else {
+        const dirPath = path.dirname(args.filepath);
+        if (!fs.existsSync(dirPath)) {
+          fs.mkdirSync(dirPath, { recursive: true });
+        }
+        if (fs.existsSync(args.filepath)) {
+          oldContent = fs.readFileSync(args.filepath, "utf-8");
+        }
+        fs.writeFileSync(args.filepath, args.content, "utf-8");
+      }
 
       // Track lines of code changes if file existed before
       if (oldContent) {
@@ -139,7 +150,7 @@ export const writeFileTool: Tool = {
           oldContent,
           args.content,
         );
-        const language = getLanguageFromFilePath(args.filepath);
+        const language = getLanguageFromFilePath(targetPath);
 
         if (added > 0) {
           telemetryService.recordLinesOfCodeModified("added", added, language);
@@ -153,13 +164,13 @@ export const writeFileTool: Tool = {
         }
 
         // Generate diff for result display
-        const diff = generateDiff(oldContent, args.content, args.filepath);
+        const diff = generateDiff(oldContent, args.content, targetPath);
 
-        return `Successfully wrote to file: ${args.filepath}\nDiff:\n${diff}`;
+        return `Successfully wrote to file: ${targetPath}\nDiff:\n${diff}`;
       } else {
         // New file creation - count all lines as added
         const lineCount = args.content.split("\n").length;
-        const language = getLanguageFromFilePath(args.filepath);
+        const language = getLanguageFromFilePath(targetPath);
 
         telemetryService.recordLinesOfCodeModified(
           "added",
@@ -167,7 +178,7 @@ export const writeFileTool: Tool = {
           language,
         );
 
-        return `Successfully created file: ${args.filepath}`;
+        return `Successfully created file: ${targetPath}`;
       }
     } catch (error) {
       if (error instanceof ContinueError) {

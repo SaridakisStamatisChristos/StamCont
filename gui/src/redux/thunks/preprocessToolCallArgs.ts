@@ -1,5 +1,8 @@
 import { type ExecutionProfileId, ToolCallState } from "core";
-import { CLIENT_TOOLS_IMPLS } from "core/tools/builtIn";
+import {
+  BuiltInToolNames,
+  CLIENT_TOOLS_IMPLS,
+} from "core/tools/builtIn";
 import { ContinueErrorReason } from "core/util/errors";
 
 import { IIdeMessenger } from "../../context/IdeMessenger";
@@ -19,12 +22,24 @@ export async function preprocessToolCalls(
   // Tool call pre-processing
   await Promise.all(
     generatedToolCalls.map(async (tcState) => {
+      const toolName = tcState.toolCall.function.name;
+      const isClientTool = CLIENT_TOOLS_IMPLS.some(
+        (clientToolName) => clientToolName === toolName,
+      );
+      const interactivePreprocessWouldReadFile =
+        toolName === BuiltInToolNames.SingleFindAndReplace ||
+        toolName === BuiltInToolNames.MultiEdit;
+
       if (
-        executionProfile === "full_access" &&
-        CLIENT_TOOLS_IMPLS.some(
-          (toolName) => toolName === tcState.toolCall.function.name,
-        )
+        (executionProfile === "full_access" && isClientTool) ||
+        (executionProfile === "interactive" &&
+          interactivePreprocessWouldReadFile)
       ) {
+        // Full Access client edits resolve host paths only at execution time.
+        // In Interactive, skip only preprocessors that read file contents via
+        // the legacy IDE path resolver; execution then performs canonical
+        // sandbox validation. edit_existing_file has no preprocess hook, so
+        // preserving its legacy async round-trip is safe and keeps UI ordering.
         return;
       }
 
