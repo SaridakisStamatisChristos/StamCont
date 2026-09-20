@@ -4,11 +4,9 @@ on:
   push:
     branches:
       - main
-      - "stamcont/**"
   pull_request:
     branches:
       - main
-      - "stamcont/**"
   workflow_dispatch:
 
 permissions:
