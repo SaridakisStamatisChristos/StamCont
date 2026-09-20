@@ -6,6 +6,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   rmSync,
 } from "node:fs";
 import { promises as fs } from "node:fs";
@@ -555,7 +556,11 @@ function buildMacSandboxProfile(
 }
 
 function createPrivateTempDirectory(): string {
-  const tempRoot = mkdtempSync(path.join(os.tmpdir(), "stamcont-sandbox-"));
+  // macOS commonly exposes /var/... while sandbox-exec evaluates canonical
+  // /private/var/... paths. Canonicalize before building policy rules so the
+  // private temp allowance matches the path the kernel actually checks.
+  const created = mkdtempSync(path.join(os.tmpdir(), "stamcont-sandbox-"));
+  const tempRoot = realpathSync(created);
   mkdirSync(path.join(tempRoot, "home"), { recursive: true });
   mkdirSync(path.join(tempRoot, "tmp"), { recursive: true });
   return tempRoot;
@@ -736,7 +741,9 @@ export class SandboxExecutionBackend implements ExecutionBackend {
     const candidates = await this.resolveCandidates(inputPath);
     for (const candidate of candidates) {
       try {
-        await this.assertLexicallyInsideWorkspace(candidate);
+        // Existing paths are authorized only after filesystem
+        // canonicalization. This accepts legitimate Windows short-name/case
+        // aliases while still rejecting junction/symlink escapes.
         const canonical = await fs.realpath(candidate);
         await this.assertInsideWorkspace(canonical);
         return this.toResolvedPath(canonical, inputPath);
@@ -968,16 +975,6 @@ export class SandboxExecutionBackend implements ExecutionBackend {
     return roots.map((root) => path.resolve(root, expanded));
   }
 
-  private async assertLexicallyInsideWorkspace(candidate: string): Promise<void> {
-    const roots = await this.getWorkspaceRoots();
-    const normalizedCandidate = path.resolve(candidate);
-    if (!roots.some((root) => pathWithin(root, normalizedCandidate))) {
-      throw new SandboxViolationError(
-        `Sandbox blocked path outside workspace before canonicalization: ${candidate}`,
-      );
-    }
-  }
-
   private async assertInsideWorkspace(candidate: string): Promise<void> {
     const roots = await this.getWorkspaceRoots();
     if (!roots.some((root) => pathWithin(root, candidate))) {
@@ -989,7 +986,10 @@ export class SandboxExecutionBackend implements ExecutionBackend {
 
   private async assertWritableCandidate(candidate: string): Promise<void> {
     const absolute = path.resolve(candidate);
-    await this.assertLexicallyInsideWorkspace(absolute);
+    // For non-existing targets, walk upward to the nearest existing ancestor,
+    // canonicalize that ancestor, then rebuild the unresolved tail. This keeps
+    // policy decisions canonical without rejecting legitimate Windows path
+    // aliases before the filesystem has resolved them.
     let existing = absolute;
     while (true) {
       try {
