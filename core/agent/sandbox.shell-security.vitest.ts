@@ -8,8 +8,8 @@ import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { IDE } from "..";
-import { SandboxExecutionBackend } from "./sandbox";
 import { terminateProcessTree } from "../util/processTerminalStates";
+import { SandboxExecutionBackend } from "./sandbox";
 
 const tempRoots: string[] = [];
 
@@ -256,26 +256,7 @@ describe("sandbox shell security properties", () => {
             ].join("; ")
           : "(sleep 1.6; printf escaped > child-after-kill.txt) & sleep 10";
 
-      const child = backend.spawnShell(descendantCommand, {
-        cwd,
-        env: process.env,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-
-      await new Promise((resolve) => setTimeout(resolve, 350));
-      terminateProcessTree(child, "SIGTERM");
-
-      await Promise.race([
-        new Promise<void>((resolve) => child.once("close", () => resolve())),
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error("sandbox process tree did not terminate")),
-            5_000,
-          ),
-        ),
-      ]);
-
-      await new Promise<void>((resolve, reject) => {
+      const unrelatedClose = new Promise<void>((resolve, reject) => {
         unrelated.once("error", reject);
         unrelated.once("close", (code) => {
           if (code === 0) {
@@ -286,8 +267,34 @@ describe("sandbox shell security properties", () => {
         });
       });
 
+      const child = backend.spawnShell(descendantCommand, {
+        cwd,
+        env: process.env,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const childClose = new Promise<void>((resolve, reject) => {
+        child.once("error", reject);
+        child.once("close", () => resolve());
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      terminateProcessTree(child, "SIGTERM");
+
+      await Promise.race([
+        childClose,
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error("sandbox process tree did not terminate")),
+            5_000,
+          ),
+        ),
+      ]);
+
+      await unrelatedClose;
       await new Promise((resolve) => setTimeout(resolve, 1_300));
-      await expect(access(path.join(workspace, "child-after-kill.txt"))).rejects.toBeDefined();
+      await expect(
+        access(path.join(workspace, "child-after-kill.txt")),
+      ).rejects.toBeDefined();
       await expect(readFile(unrelatedTarget, "utf8")).resolves.toBe("alive");
     },
   );
