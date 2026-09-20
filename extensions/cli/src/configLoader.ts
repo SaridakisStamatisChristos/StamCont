@@ -14,8 +14,8 @@ import { DefaultApiInterface } from "@continuedev/sdk/dist/api/dist/index.js";
 import chalk from "chalk";
 
 import { uriToPath, uriToSlug } from "./auth/uriUtils.js";
-import type { AuthConfig } from "./auth/workos.js";
 import {
+  type AuthConfig,
   getAccessToken,
   getOrganizationId,
   updateConfigUri,
