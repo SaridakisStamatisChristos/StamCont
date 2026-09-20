@@ -171,6 +171,14 @@ public static class StamContAppContainer
     private static extern int DeleteAppContainerProfile(
         string pszAppContainerName);
 
+    [DllImport("userenv.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetAppContainerFolderPath(
+        string pszAppContainerSid,
+        out IntPtr ppszPath);
+
+    [DllImport("ole32.dll")]
+    private static extern void CoTaskMemFree(IntPtr pv);
+
     [DllImport("advapi32.dll", SetLastError = true)]
     private static extern IntPtr FreeSid(IntPtr pSid);
 
@@ -445,6 +453,59 @@ public static class StamContAppContainer
         }
         finally
         {
+            if (sidString != IntPtr.Zero)
+            {
+                LocalFree(sidString);
+            }
+            if (sid != IntPtr.Zero)
+            {
+                FreeSid(sid);
+            }
+        }
+    }
+
+    public static string GetProfileFolderPath(string profileName)
+    {
+        IntPtr sid = IntPtr.Zero;
+        IntPtr sidString = IntPtr.Zero;
+        IntPtr folderPath = IntPtr.Zero;
+        try
+        {
+            int hr = DeriveAppContainerSidFromAppContainerName(
+                profileName,
+                out sid);
+            if (hr < 0)
+            {
+                Marshal.ThrowExceptionForHR(hr);
+            }
+
+            if (!ConvertSidToStringSidW(sid, out sidString))
+            {
+                throw new Win32Exception(
+                    Marshal.GetLastWin32Error(),
+                    "ConvertSidToStringSidW failed for AppContainer profile");
+            }
+
+            string sidText = Marshal.PtrToStringUni(sidString);
+            hr = GetAppContainerFolderPath(sidText, out folderPath);
+            if (hr < 0)
+            {
+                Marshal.ThrowExceptionForHR(hr);
+            }
+            string result = Marshal.PtrToStringUni(folderPath);
+            if (String.IsNullOrWhiteSpace(result))
+            {
+                throw new InvalidOperationException(
+                    "GetAppContainerFolderPath returned an empty path");
+            }
+            return result;
+        }
+        finally
+        {
+            if (folderPath != IntPtr.Zero)
+            {
+                CoTaskMemFree(folderPath);
+            }
             if (sidString != IntPtr.Zero)
             {
                 LocalFree(sidString);
@@ -786,8 +847,6 @@ try {
   foreach ($target in @(
     @($config.Roots) +
     @([string]$config.Cwd) +
-    @([string]$config.HomeDirectory) +
-    @([string]$config.TempDirectory) +
     @([string]$config.CommandInterpreter) +
     @($config.PathEntries)
   )) {
@@ -804,9 +863,6 @@ try {
     }
   }
 
-  Grant-ProfileFullAccess -TargetPath ([string]$config.HomeDirectory) -Required
-  Grant-ProfileFullAccess -TargetPath ([string]$config.TempDirectory) -Required
-
   # Developer-tool PATH directories receive specific read/execute rights only.
   # Optional grants fail closed for the tool itself but do not prevent shell
   # startup when a system-protected PATH entry cannot be modified.
@@ -814,9 +870,25 @@ try {
     Grant-ProfileReadExecute -TargetPath ([string]$pathEntry)
   }
 
-  $stdoutPath = Join-Path ([string]$config.HomeDirectory) "sandbox-stdout.txt"
-  $stderrPath = Join-Path ([string]$config.HomeDirectory) "sandbox-stderr.txt"
-  $commandPath = Join-Path ([string]$config.HomeDirectory) "sandbox-command.cmd"
+  # Bootstrap inside the AppContainer's own profile storage rather than
+  # under the host user's temp tree. Windows creates this location specifically
+  # for the container and grants it access by construction.
+  $profileHome = [StamContAppContainer]::GetProfileFolderPath(
+    [string]$config.ProfileName
+  )
+  $profileTemp = Join-Path $profileHome "Temp"
+  [IO.Directory]::CreateDirectory($profileTemp) | Out-Null
+
+  $env:HOME = $profileHome
+  $env:USERPROFILE = $profileHome
+  $env:LOCALAPPDATA = $profileHome
+  $env:TEMP = $profileTemp
+  $env:TMP = $profileTemp
+  $env:TMPDIR = $profileTemp
+
+  $stdoutPath = Join-Path $profileHome "sandbox-stdout.txt"
+  $stderrPath = Join-Path $profileHome "sandbox-stderr.txt"
+  $commandPath = Join-Path $profileHome "sandbox-command.cmd"
   $commandText = [Text.Encoding]::UTF8.GetString(
     [Convert]::FromBase64String([string]$config.CommandUtf8Base64)
   )
@@ -827,27 +899,6 @@ try {
   )
   [IO.File]::WriteAllText($stdoutPath, "", [Text.UTF8Encoding]::new($false))
   [IO.File]::WriteAllText($stderrPath, "", [Text.UTF8Encoding]::new($false))
-
-  # Do not rely on directory-ACE inheritance for the three broker-created
-  # files. Grant the unique AppContainer SID exactly what each file needs.
-  [StamContAppContainer]::GrantProfileReadExecute(
-    [string]$config.ProfileName,
-    $commandPath,
-    $false
-  )
-  Register-GrantedPath -TargetPath $commandPath
-  [StamContAppContainer]::GrantProfileFullAccess(
-    [string]$config.ProfileName,
-    $stdoutPath,
-    $false
-  )
-  Register-GrantedPath -TargetPath $stdoutPath
-  [StamContAppContainer]::GrantProfileFullAccess(
-    [string]$config.ProfileName,
-    $stderrPath,
-    $false
-  )
-  Register-GrantedPath -TargetPath $stderrPath
 
   $processExitCode = [StamContAppContainer]::Run(
     [string]$config.ProfileName,
