@@ -607,6 +607,21 @@ public static class StamContAppContainer
         }
     }
 
+    public static int RunBase64(
+        string profileName,
+        string commandInterpreter,
+        string commandUtf8Base64,
+        string workingDirectory)
+    {
+        byte[] commandBytes = Convert.FromBase64String(commandUtf8Base64);
+        string commandText = Encoding.UTF8.GetString(commandBytes);
+        return Run(
+            profileName,
+            commandInterpreter,
+            commandText,
+            workingDirectory);
+    }
+
     public static int Run(
         string profileName,
         string commandInterpreter,
@@ -1194,10 +1209,10 @@ try {
               $processExitCode = 245
             }
             else {
-              $processExitCode = [StamContAppContainer]::Run(
+              $processExitCode = [StamContAppContainer]::RunBase64(
                 [string]$config.ProfileName,
                 [string]$config.CommandInterpreter,
-                $commandText,
+                [string]$config.CommandUtf8Base64,
                 [string]$config.Cwd
               )
             }
@@ -1220,10 +1235,10 @@ try {
             }
             else {
               Remove-Item -LiteralPath $probePath -Force
-              $processExitCode = [StamContAppContainer]::Run(
+              $processExitCode = [StamContAppContainer]::RunBase64(
                 [string]$config.ProfileName,
                 [string]$config.CommandInterpreter,
-                $commandText,
+                [string]$config.CommandUtf8Base64,
                 [string]$config.Cwd
               )
             }
@@ -1233,10 +1248,10 @@ try {
     }
   }
   else {
-    $processExitCode = [StamContAppContainer]::Run(
+    $processExitCode = [StamContAppContainer]::RunBase64(
       [string]$config.ProfileName,
       [string]$config.CommandInterpreter,
-      $commandText,
+      [string]$config.CommandUtf8Base64,
       [string]$config.Cwd
     )
   }
@@ -1373,7 +1388,7 @@ export function spawnWindowsAppContainerShell(
       cwd: options.cwd,
       env: sandboxEnv,
       windowsHide: true,
-      detached: true,
+      detached: false,
     },
   );
 }
