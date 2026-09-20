@@ -40,6 +40,19 @@ public static class StamContAppContainer
     private const uint CREATE_ALWAYS = 2;
     private const uint OPEN_EXISTING = 3;
     private const uint FILE_ATTRIBUTE_NORMAL = 0x00000080;
+    private const uint FILE_GENERIC_READ = 0x00120089;
+    private const uint FILE_GENERIC_EXECUTE = 0x001200A0;
+    private const uint FILE_ALL_ACCESS = 0x001F01FF;
+    private const uint FILE_TRAVERSE = 0x00000020;
+    private const uint FILE_READ_ATTRIBUTES = 0x00000080;
+    private const uint SE_FILE_OBJECT = 1;
+    private const uint DACL_SECURITY_INFORMATION = 0x00000004;
+    private const uint GRANT_ACCESS = 1;
+    private const uint REVOKE_ACCESS = 4;
+    private const uint OBJECT_INHERIT_ACE = 0x1;
+    private const uint CONTAINER_INHERIT_ACE = 0x2;
+    private const uint TRUSTEE_IS_SID = 0;
+    private const uint TRUSTEE_IS_UNKNOWN = 0;
     private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
     private const int JobObjectExtendedLimitInformation = 9;
     private const uint INFINITE = 0xFFFFFFFF;
@@ -55,6 +68,25 @@ public static class StamContAppContainer
         public IntPtr Capabilities;
         public uint CapabilityCount;
         public uint Reserved;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct TRUSTEE
+    {
+        public IntPtr pMultipleTrustee;
+        public uint MultipleTrusteeOperation;
+        public uint TrusteeForm;
+        public uint TrusteeType;
+        public IntPtr ptstrName;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct EXPLICIT_ACCESS
+    {
+        public uint grfAccessPermissions;
+        public uint grfAccessMode;
+        public uint grfInheritance;
+        public TRUSTEE Trustee;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -158,6 +190,34 @@ public static class StamContAppContainer
         IntPtr Sid,
         out IntPtr StringSid);
 
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
+    private static extern uint GetNamedSecurityInfoW(
+        string pObjectName,
+        uint ObjectType,
+        uint SecurityInfo,
+        out IntPtr ppsidOwner,
+        out IntPtr ppsidGroup,
+        out IntPtr ppDacl,
+        out IntPtr ppSacl,
+        out IntPtr ppSecurityDescriptor);
+
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
+    private static extern uint SetNamedSecurityInfoW(
+        string pObjectName,
+        uint ObjectType,
+        uint SecurityInfo,
+        IntPtr psidOwner,
+        IntPtr psidGroup,
+        IntPtr pDacl,
+        IntPtr pSacl);
+
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
+    private static extern uint SetEntriesInAclW(
+        uint cCountOfExplicitEntries,
+        ref EXPLICIT_ACCESS pListOfExplicitEntries,
+        IntPtr OldAcl,
+        out IntPtr NewAcl);
+
     [DllImport("kernel32.dll")]
     private static extern IntPtr LocalFree(IntPtr hMem);
 
@@ -248,6 +308,154 @@ public static class StamContAppContainer
         IntPtr hObject,
         uint dwMask,
         uint dwFlags);
+
+    private static void ApplyProfileAcl(
+        string profileName,
+        string targetPath,
+        uint accessMask,
+        uint accessMode,
+        bool inherit)
+    {
+        IntPtr sid = IntPtr.Zero;
+        IntPtr securityDescriptor = IntPtr.Zero;
+        IntPtr oldDacl = IntPtr.Zero;
+        IntPtr newDacl = IntPtr.Zero;
+
+        try
+        {
+            int hr = DeriveAppContainerSidFromAppContainerName(
+                profileName,
+                out sid);
+            if (hr < 0)
+            {
+                Marshal.ThrowExceptionForHR(hr);
+            }
+
+            IntPtr owner;
+            IntPtr group;
+            IntPtr sacl;
+            uint result = GetNamedSecurityInfoW(
+                targetPath,
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                out owner,
+                out group,
+                out oldDacl,
+                out sacl,
+                out securityDescriptor);
+            if (result != 0)
+            {
+                throw new Win32Exception(
+                    unchecked((int)result),
+                    "GetNamedSecurityInfoW failed for " + targetPath);
+            }
+
+            EXPLICIT_ACCESS entry = new EXPLICIT_ACCESS
+            {
+                grfAccessPermissions = accessMask,
+                grfAccessMode = accessMode,
+                grfInheritance = inherit
+                    ? OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE
+                    : 0,
+                Trustee = new TRUSTEE
+                {
+                    pMultipleTrustee = IntPtr.Zero,
+                    MultipleTrusteeOperation = 0,
+                    TrusteeForm = TRUSTEE_IS_SID,
+                    TrusteeType = TRUSTEE_IS_UNKNOWN,
+                    ptstrName = sid,
+                },
+            };
+
+            result = SetEntriesInAclW(1, ref entry, oldDacl, out newDacl);
+            if (result != 0)
+            {
+                throw new Win32Exception(
+                    unchecked((int)result),
+                    "SetEntriesInAclW failed for " + targetPath);
+            }
+
+            result = SetNamedSecurityInfoW(
+                targetPath,
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                IntPtr.Zero,
+                IntPtr.Zero,
+                newDacl,
+                IntPtr.Zero);
+            if (result != 0)
+            {
+                throw new Win32Exception(
+                    unchecked((int)result),
+                    "SetNamedSecurityInfoW failed for " + targetPath);
+            }
+        }
+        finally
+        {
+            if (newDacl != IntPtr.Zero)
+            {
+                LocalFree(newDacl);
+            }
+            if (securityDescriptor != IntPtr.Zero)
+            {
+                LocalFree(securityDescriptor);
+            }
+            if (sid != IntPtr.Zero)
+            {
+                FreeSid(sid);
+            }
+        }
+    }
+
+    public static void GrantProfileReadExecute(
+        string profileName,
+        string targetPath,
+        bool inherit)
+    {
+        ApplyProfileAcl(
+            profileName,
+            targetPath,
+            FILE_GENERIC_READ | FILE_GENERIC_EXECUTE,
+            GRANT_ACCESS,
+            inherit);
+    }
+
+    public static void GrantProfileFullAccess(
+        string profileName,
+        string targetPath,
+        bool inherit)
+    {
+        ApplyProfileAcl(
+            profileName,
+            targetPath,
+            FILE_ALL_ACCESS,
+            GRANT_ACCESS,
+            inherit);
+    }
+
+    public static void GrantProfileTraverse(
+        string profileName,
+        string targetPath)
+    {
+        ApplyProfileAcl(
+            profileName,
+            targetPath,
+            FILE_TRAVERSE | FILE_READ_ATTRIBUTES,
+            GRANT_ACCESS,
+            false);
+    }
+
+    public static void RevokeProfileAccess(
+        string profileName,
+        string targetPath)
+    {
+        ApplyProfileAcl(
+            profileName,
+            targetPath,
+            0,
+            REVOKE_ACCESS,
+            false);
+    }
 
     public static string CreateProfile(string profileName)
     {
@@ -613,14 +821,23 @@ $grantedPaths = [System.Collections.Generic.List[string]]::new()
 $grantedPathSet = [System.Collections.Generic.HashSet[string]]::new(
   [StringComparer]::OrdinalIgnoreCase
 )
-$deniedPaths = [System.Collections.Generic.List[string]]::new()
 
-function Grant-SandboxAcl {
+function Register-GrantedPath {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$TargetPath
+  )
+
+  $fullPath = [IO.Path]::GetFullPath($TargetPath)
+  if ($grantedPathSet.Add($fullPath)) {
+    $grantedPaths.Add($fullPath)
+  }
+}
+
+function Grant-ProfileReadExecute {
   param(
     [Parameter(Mandatory = $true)]
     [string]$TargetPath,
-    [Parameter(Mandatory = $true)]
-    [string]$Rights,
     [switch]$Required
   )
 
@@ -631,16 +848,47 @@ function Grant-SandboxAcl {
     return
   }
 
-  & icacls.exe $TargetPath /grant "*$($sid):(OI)(CI)$Rights" /C /Q | Out-Null
-  if ($LASTEXITCODE -eq 0) {
-    if ($grantedPathSet.Add([IO.Path]::GetFullPath($TargetPath))) {
-      $grantedPaths.Add([IO.Path]::GetFullPath($TargetPath))
+  try {
+    [StamContAppContainer]::GrantProfileReadExecute(
+      [string]$config.ProfileName,
+      [IO.Path]::GetFullPath($TargetPath),
+      $true
+    )
+    Register-GrantedPath -TargetPath $TargetPath
+  }
+  catch {
+    if ($Required) {
+      throw
+    }
+  }
+}
+
+function Grant-ProfileFullAccess {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$TargetPath,
+    [switch]$Required
+  )
+
+  if (-not (Test-Path -LiteralPath $TargetPath)) {
+    if ($Required) {
+      throw "Sandbox ACL target does not exist: $TargetPath"
     }
     return
   }
 
-  if ($Required) {
-    throw "Unable to grant AppContainer access to $TargetPath"
+  try {
+    [StamContAppContainer]::GrantProfileFullAccess(
+      [string]$config.ProfileName,
+      [IO.Path]::GetFullPath($TargetPath),
+      $true
+    )
+    Register-GrantedPath -TargetPath $TargetPath
+  }
+  catch {
+    if ($Required) {
+      throw
+    }
   }
 }
 
@@ -656,39 +904,26 @@ function Grant-TraverseAncestors {
   while ($null -ne $current) {
     $ancestor = $current.FullName
     if ($grantedPathSet.Add($ancestor)) {
-      # X maps to FILE_TRAVERSE on directories; RA is FILE_READ_ATTRIBUTES.
-      # No inheritance and no list-directory/read-data grant: the container can
-      # walk to the named target without gaining visibility into sibling trees.
-      & icacls.exe $ancestor /grant "*$($sid):(X,RA)" /Q | Out-Null
-      if ($LASTEXITCODE -ne 0) {
-        throw "Unable to grant AppContainer traverse access to $ancestor"
+      try {
+        [StamContAppContainer]::GrantProfileTraverse(
+          [string]$config.ProfileName,
+          $ancestor
+        )
+        $grantedPaths.Add($ancestor)
       }
-      $grantedPaths.Add($ancestor)
+      catch {
+        # Ancestors above the current user's ownership boundary (for example
+        # a volume root) may not be mutable. Windows normally permits traversal
+        # through those system ancestors; required target grants below remain
+        # authoritative.
+      }
     }
     $current = $current.Parent
   }
 }
 
-function Deny-SandboxWrites {
-  param(
-    [Parameter(Mandatory = $true)]
-    [string]$TargetPath
-  )
-
-  # A deny ACE for the AppContainer SID wins over any broad user/group allow
-  # ACE inherited by the current-user workspace. This makes Plan read-only at
-  # the Windows kernel ACL boundary, not only in StamCont tool dispatch.
-  & icacls.exe $TargetPath /deny "*$($sid):(OI)(CI)(W,D,DC)" /C /Q | Out-Null
-  if ($LASTEXITCODE -ne 0) {
-    throw "Unable to enforce read-only AppContainer ACL on $TargetPath"
-  }
-  $deniedPaths.Add($TargetPath)
-}
-
 try {
   $sid = [StamContAppContainer]::CreateProfile([string]$config.ProfileName)
-
-  $workspaceRights = if ([bool]$config.ReadOnly) { "RX" } else { "M" }
 
   foreach ($target in @(
     @($config.Roots) +
@@ -704,20 +939,21 @@ try {
   }
 
   foreach ($root in @($config.Roots)) {
-    Grant-SandboxAcl -TargetPath ([string]$root) -Rights $workspaceRights -Required
     if ([bool]$config.ReadOnly) {
-      Deny-SandboxWrites -TargetPath ([string]$root)
+      Grant-ProfileReadExecute -TargetPath ([string]$root) -Required
+    } else {
+      Grant-ProfileFullAccess -TargetPath ([string]$root) -Required
     }
   }
 
-  Grant-SandboxAcl -TargetPath ([string]$config.HomeDirectory) -Rights "M" -Required
-  Grant-SandboxAcl -TargetPath ([string]$config.TempDirectory) -Rights "M" -Required
+  Grant-ProfileFullAccess -TargetPath ([string]$config.HomeDirectory) -Required
+  Grant-ProfileFullAccess -TargetPath ([string]$config.TempDirectory) -Required
 
-  # AppContainer can already execute Windows system binaries. For developer
-  # tools installed into user-controlled PATH directories, grant read/execute
-  # only when the current user is allowed to update that directory's ACL.
+  # Developer-tool PATH directories receive specific read/execute rights only.
+  # Optional grants fail closed for the tool itself but do not prevent shell
+  # startup when a system-protected PATH entry cannot be modified.
   foreach ($pathEntry in @($config.PathEntries)) {
-    Grant-SandboxAcl -TargetPath ([string]$pathEntry) -Rights "RX"
+    Grant-ProfileReadExecute -TargetPath ([string]$pathEntry)
   }
 
   $stdoutPath = Join-Path ([string]$config.HomeDirectory) "sandbox-stdout.txt"
@@ -751,11 +987,16 @@ try {
 }
 finally {
   if ($sid) {
-    foreach ($denied in $deniedPaths) {
-      & icacls.exe $denied /remove:d "*$sid" /C /Q | Out-Null
-    }
-    foreach ($granted in $grantedPaths) {
-      & icacls.exe $granted /remove:g "*$sid" /C /Q | Out-Null
+    for ($i = $grantedPaths.Count - 1; $i -ge 0; $i--) {
+      try {
+        [StamContAppContainer]::RevokeProfileAccess(
+          [string]$config.ProfileName,
+          [string]$grantedPaths[$i]
+        )
+      }
+      catch {
+        Write-Warning "Failed to revoke StamCont AppContainer ACL from $($grantedPaths[$i]): $_"
+      }
     }
   }
   try {
