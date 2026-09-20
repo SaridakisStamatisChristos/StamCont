@@ -8,8 +8,14 @@ async function main() {
   const source = readFileSync("core/agent/windowsSandbox.ts", "utf8");
   const match = source.match(/const WINDOWS_SANDBOX_LAUNCHER = String.raw`([\s\S]*?)`;/);
   if (!match) throw new Error("Launcher not found");
-  let script = match[1].replace("$configJson =", "[Console]::Error.WriteLine('probe: script-enter')\n$configJson =");
-  script = script.replace("$config = $configJson | ConvertFrom-Json", "[Console]::Error.WriteLine('probe: before-json')\n$config = $configJson | ConvertFrom-Json\n[Console]::Error.WriteLine('probe: after-json')");
+  let script = match[1].replace(
+    "$configValues = @{}",
+    "[Console]::Error.WriteLine('probe: script-enter')\n[Console]::Error.WriteLine('probe: before-config')\n$configValues = @{}",
+  );
+  script = script.replace(
+    "$config = $configValues",
+    "$config = $configValues\n[Console]::Error.WriteLine('probe: after-config')",
+  );
   script = script.replace(/^(\s*)Write-StamContDiagnostic -Stage "([^"]+)"/gm, "$1[Console]::Error.WriteLine('probe: $2')\n$&");
   const safe = new Set(["PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT"]);
   const runtime = new Set(["USERPROFILE", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "PROGRAMFILES", "PROGRAMFILES(X86)", "COMMONPROGRAMFILES", "COMMONPROGRAMFILES(X86)", "HOMEDRIVE", "HOMEPATH", "SYSTEMDRIVE"]);
@@ -37,33 +43,39 @@ async function main() {
       env.PATH = [path.join(env.SYSTEMROOT, "System32"), env.SYSTEMROOT, powerShellHome].join(path.delimiter);
     }
     const command = "echo stamcont-probe-command";
-    const config = {
+    const environmentPayload = Object.entries(childEnv)
+      .filter(([key, value]) =>
+        typeof value === "string" &&
+        key.length > 0 &&
+        !key.includes("=") &&
+        !key.includes("\0") &&
+        !value.includes("\0"))
+      .map(([key, value]) => `${key}=${value}`)
+      .join("\0");
+    const diagnosticsPath = path.join(workspace, "trace.log");
+    const configRecords = {
       ProfileName: `StamContSandbox_${randomUUID().replaceAll("-", "").slice(0, 24)}`,
-      Roots: [workspace], Cwd: workspace, ReadOnly: false,
-      EnvironmentUtf8Base64: Buffer.from(
-        Object.entries(childEnv)
-          .filter(([key, value]) =>
-            typeof value === "string" &&
-            key.length > 0 &&
-            !key.includes("=") &&
-            !key.includes("\0") &&
-            !value.includes("\0"))
-          .map(([key, value]) => `${key}=${value}`)
-          .join("\0"),
-        "utf8"
-      ).toString("base64"),
+      RootsUtf8: workspace,
+      Cwd: workspace,
+      ReadOnly: "0",
       CommandInterpreter: path.join(env.SYSTEMROOT, "System32", "cmd.exe"),
+      EnvironmentUtf8Base64: Buffer.from(environmentPayload, "utf8").toString("base64"),
       CommandUtf8Base64: Buffer.from(command).toString("base64"),
-      CommandUtf8Length: Buffer.byteLength(command),
+      CommandUtf8Length: String(Buffer.byteLength(command)),
       CommandSha256: createHash("sha256").update(command).digest("hex"),
-      Diagnostics: true,
-      DiagnosticsPath: path.join(workspace, "trace.log"),
+      Diagnostics: "1",
+      DiagnosticsPath: diagnosticsPath,
     };
+    const configPayload = Object.entries(configRecords)
+      .map(([key, value]) => `${key}=${Buffer.from(value, "utf8").toString("base64")}`)
+      .join("\n");
+    const configPath = path.join(workspace, "probe.config");
     const launcher = path.join(workspace, "probe.ps1");
+    writeFileSync(configPath, configPayload);
     writeFileSync(launcher, script);
     const start = Date.now();
     const child = spawn(path.join(env.SYSTEMROOT, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
-      ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", launcher, "-ConfigBase64", Buffer.from(JSON.stringify(config)).toString("base64")],
+      ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", launcher, "-ConfigPath", configPath],
       { cwd: workspace, env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
     const report = data => process.stdout.write(`[${mode} +${Date.now() - start}ms] ${data}`);
     child.stdout.on("data", report);
@@ -84,7 +96,7 @@ async function main() {
       });
     });
     clearTimeout(timer);
-    try { report(readFileSync(config.DiagnosticsPath, "utf8")); } catch {}
+    try { report(readFileSync(diagnosticsPath, "utf8")); } catch {}
     try { rmSync(workspace, { recursive: true, force: true }); }
     catch (error) { report(`probe cleanup: ${error.code}\n`); }
   }
