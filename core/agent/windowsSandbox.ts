@@ -433,6 +433,7 @@ public static class StamContAppContainer
         ManualResetEventSlim stop)
     {
         byte[] buffer = new byte[8192];
+        int stoppedEmptyPolls = 0;
 
         while (true)
         {
@@ -457,13 +458,22 @@ public static class StamContAppContainer
 
             if (available == 0)
             {
-                // Do not use stop.IsSet as an EOF substitute. The final bytes
-                // written by cmd.exe may become visible just after the process
-                // handle signals. Once the Job Object is closed every writer
-                // is gone, and PeekNamedPipe will report ERROR_BROKEN_PIPE.
+                // After the Job Object closes, allow a short quiescence window
+                // for final buffered bytes to arrive. Some Windows pipe
+                // implementations keep PeekNamedPipe readable-at-zero rather
+                // than immediately returning ERROR_BROKEN_PIPE.
+                if (stop.IsSet)
+                {
+                    stoppedEmptyPolls++;
+                    if (stoppedEmptyPolls >= 25)
+                    {
+                        break;
+                    }
+                }
                 Thread.Sleep(2);
                 continue;
             }
+            stoppedEmptyPolls = 0;
 
             uint requested = Math.Min((uint)buffer.Length, available);
             uint read;
@@ -485,9 +495,18 @@ public static class StamContAppContainer
             }
             if (read == 0)
             {
+                if (stop.IsSet)
+                {
+                    stoppedEmptyPolls++;
+                    if (stoppedEmptyPolls >= 25)
+                    {
+                        break;
+                    }
+                }
                 Thread.Sleep(1);
                 continue;
             }
+            stoppedEmptyPolls = 0;
 
             if (isStdout)
             {
@@ -1152,11 +1171,12 @@ public static class StamContAppContainer
             }
             Diagnostic(diagnosticsPath, profileName, "job-closed");
 
-            // No writer can survive the closed Job Object. Drain until the
-            // pipe reports a real broken-pipe EOF so final command output is
-            // never lost in a process-exit race.
-            bool stdoutClosed = stdoutThread.Join(5000);
-            bool stderrClosed = stderrThread.Join(5000);
+            // No writer can survive the closed Job Object. Signal the bounded
+            // quiescence drain so final bytes are captured without a 5-second
+            // EOF dependency.
+            outputStop.Set();
+            bool stdoutClosed = stdoutThread.Join(1000);
+            bool stderrClosed = stderrThread.Join(1000);
             if (!stdoutClosed || !stderrClosed)
             {
                 throw new TimeoutException(
@@ -1406,6 +1426,7 @@ try {
 
   $profileTemp = [IO.Path]::Combine($profileHome, "Temp")
   [IO.Directory]::CreateDirectory($profileTemp) | Out-Null
+  Grant-ProfileFullAccess -TargetPath $profileTemp -Required
 
   $commandText = [Text.Encoding]::UTF8.GetString(
     [Convert]::FromBase64String([string]$config.CommandUtf8Base64)
