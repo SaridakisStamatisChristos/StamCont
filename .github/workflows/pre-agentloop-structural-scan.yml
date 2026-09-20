@@ -1,0 +1,70 @@
+name: Pre-AgentLoop Structural Hygiene Scan
+
+on:
+  push:
+    branches:
+      - stamcont/pre-agentloop-code-hygiene
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Scan duplicate imports and backup artifacts
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require("fs");
+          const path = require("path");
+
+          const roots = ["core", "extensions/cli", "gui", "extensions/vscode"];
+          const exts = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts"]);
+          const ignored = new Set(["node_modules", "dist", "out", "build", "coverage"]);
+          const duplicateImports = [];
+
+          function walk(dir) {
+            for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+              if (ignored.has(ent.name)) continue;
+              const p = path.join(dir, ent.name);
+              if (ent.isDirectory()) walk(p);
+              else if (exts.has(path.extname(ent.name))) scanFile(p);
+            }
+          }
+
+          function scanFile(file) {
+            const src = fs.readFileSync(file, "utf8");
+            const re = /import\s+(?:[\s\S]*?\s+from\s+)?["']([^"']+)["']\s*;?/g;
+            const seen = new Map();
+            let m;
+            while ((m = re.exec(src))) {
+              const mod = m[1];
+              seen.set(mod, (seen.get(mod) || 0) + 1);
+            }
+            for (const [mod, count] of seen) {
+              if (count > 1) duplicateImports.push({ file, module: mod, count });
+            }
+          }
+
+          for (const root of roots) if (fs.existsSync(root)) walk(root);
+
+          const backupLike = [];
+          function walkAll(dir) {
+            for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+              if (ent.name === ".git" || ignored.has(ent.name)) continue;
+              const p = path.join(dir, ent.name);
+              if (ent.isDirectory()) walkAll(p);
+              else if (/\.(?:bak|backup|orig|rej)$|(?:^|[-_.])(old|temp|backup)(?:[-_.]|$)/i.test(ent.name)) backupLike.push(p);
+            }
+          }
+          walkAll(".");
+
+          console.log("DUPLICATE_IMPORTS=" + JSON.stringify(duplicateImports));
+          console.log("BACKUP_LIKE=" + JSON.stringify(backupLike));
+          NODE
+
+      - name: Diff whitespace check
+        run: git diff --check 7ae4d9b798f67a5b3f1c69ba444decf21c6db5be...HEAD
