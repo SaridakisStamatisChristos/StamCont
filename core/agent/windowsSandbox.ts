@@ -532,6 +532,7 @@ public static class StamContAppContainer
         string commandScriptPath,
         string stdoutPath,
         string stderrPath,
+        string directCommand,
         string workingDirectory)
     {
         IntPtr appContainerSid = IntPtr.Zero;
@@ -653,12 +654,22 @@ public static class StamContAppContainer
             // inheritance entirely.
             string shell = commandInterpreter;
             char quote = '"';
-            StringBuilder commandLine = new StringBuilder(
-                quote + shell + quote +
-                " /d /s /c call " + quote +
-                commandScriptPath +
-                quote + " 1>" + quote + stdoutPath +
-                quote + " 2>" + quote + stderrPath + quote);
+            StringBuilder commandLine;
+            if (!String.IsNullOrWhiteSpace(directCommand))
+            {
+                commandLine = new StringBuilder(
+                    quote + shell + quote +
+                    " /d /s /c " + directCommand);
+            }
+            else
+            {
+                commandLine = new StringBuilder(
+                    quote + shell + quote +
+                    " /d /s /c call " + quote +
+                    commandScriptPath +
+                    quote + " 1>" + quote + stdoutPath +
+                    quote + " 2>" + quote + stderrPath + quote);
+            }
 
             STARTUPINFOEX startup = new STARTUPINFOEX();
             startup.StartupInfo.cb =
@@ -900,14 +911,43 @@ try {
   [IO.File]::WriteAllText($stdoutPath, "", [Text.UTF8Encoding]::new($false))
   [IO.File]::WriteAllText($stderrPath, "", [Text.UTF8Encoding]::new($false))
 
-  $processExitCode = [StamContAppContainer]::Run(
-    [string]$config.ProfileName,
-    [string]$config.CommandInterpreter,
-    $commandPath,
-    $stdoutPath,
-    $stderrPath,
-    [string]$config.Cwd
-  )
+  if ([bool]$config.Diagnostics) {
+    $probeExitCode = [StamContAppContainer]::Run(
+      [string]$config.ProfileName,
+      [string]$config.CommandInterpreter,
+      "",
+      "",
+      "",
+      "exit /b 37",
+      [string]$config.Cwd
+    )
+    if ($probeExitCode -ne 37) {
+      # Encode a deterministic CI-visible failure without depending on stderr.
+      $processExitCode = 237
+    }
+    else {
+      $processExitCode = [StamContAppContainer]::Run(
+        [string]$config.ProfileName,
+        [string]$config.CommandInterpreter,
+        $commandPath,
+        $stdoutPath,
+        $stderrPath,
+        "",
+        [string]$config.Cwd
+      )
+    }
+  }
+  else {
+    $processExitCode = [StamContAppContainer]::Run(
+      [string]$config.ProfileName,
+      [string]$config.CommandInterpreter,
+      $commandPath,
+      $stdoutPath,
+      $stderrPath,
+      "",
+      [string]$config.Cwd
+    )
+  }
 
   if ([bool]$config.Diagnostics) {
     $stdoutExists = Test-Path -LiteralPath $stdoutPath
