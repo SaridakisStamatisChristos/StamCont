@@ -106,6 +106,13 @@ public static class StamContAppContainer
     private const uint CREATE_SUSPENDED = 0x00000004;
     private const uint STARTF_USESTDHANDLES = 0x00000100;
     private const uint HANDLE_FLAG_INHERIT = 0x00000001;
+    private const uint GENERIC_READ = 0x80000000;
+    private const uint GENERIC_WRITE = 0x40000000;
+    private const uint FILE_SHARE_READ = 0x00000001;
+    private const uint FILE_SHARE_WRITE = 0x00000002;
+    private const uint CREATE_ALWAYS = 2;
+    private const uint OPEN_EXISTING = 3;
+    private const uint FILE_ATTRIBUTE_NORMAL = 0x00000080;
     private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
     private const int JobObjectExtendedLimitInformation = 9;
     private const uint INFINITE = 0xFFFFFFFF;
@@ -299,8 +306,15 @@ public static class StamContAppContainer
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr hObject);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern IntPtr GetStdHandle(int nStdHandle);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr CreateFileW(
+        string lpFileName,
+        uint dwDesiredAccess,
+        uint dwShareMode,
+        IntPtr lpSecurityAttributes,
+        uint dwCreationDisposition,
+        uint dwFlagsAndAttributes,
+        IntPtr hTemplateFile);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool SetHandleInformation(
@@ -360,7 +374,9 @@ public static class StamContAppContainer
         string profileName,
         string powerShellExecutable,
         string encodedCommand,
-        string workingDirectory)
+        string workingDirectory,
+        string stdoutPath,
+        string stderrPath)
     {
         IntPtr appContainerSid = IntPtr.Zero;
         IntPtr attributeList = IntPtr.Zero;
@@ -368,6 +384,9 @@ public static class StamContAppContainer
         IntPtr handleListPtr = IntPtr.Zero;
         IntPtr job = IntPtr.Zero;
         IntPtr jobInfoPtr = IntPtr.Zero;
+        IntPtr stdin = IntPtr.Zero;
+        IntPtr stdout = IntPtr.Zero;
+        IntPtr stderr = IntPtr.Zero;
         PROCESS_INFORMATION processInfo = new PROCESS_INFORMATION();
         bool processCreated = false;
 
@@ -427,23 +446,53 @@ public static class StamContAppContainer
                     "Setting AppContainer security capabilities failed");
             }
 
-            IntPtr stdin = GetStdHandle(-10);
-            IntPtr stdout = GetStdHandle(-11);
-            IntPtr stderr = GetStdHandle(-12);
+            // Do not inherit the launcher's stdio pipes directly across the
+            // lowbox boundary. AppContainer + redirected parent pipes can fail
+            // silently: the process starts, but writes disappear. Use explicit
+            // sandbox-owned files and replay them from the outer launcher.
+            stdin = CreateFileW(
+                "NUL",
+                GENERIC_READ,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                IntPtr.Zero,
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL,
+                IntPtr.Zero);
+            stdout = CreateFileW(
+                stdoutPath,
+                GENERIC_WRITE,
+                FILE_SHARE_READ,
+                IntPtr.Zero,
+                CREATE_ALWAYS,
+                FILE_ATTRIBUTE_NORMAL,
+                IntPtr.Zero);
+            stderr = CreateFileW(
+                stderrPath,
+                GENERIC_WRITE,
+                FILE_SHARE_READ,
+                IntPtr.Zero,
+                CREATE_ALWAYS,
+                FILE_ATTRIBUTE_NORMAL,
+                IntPtr.Zero);
+            IntPtr invalid = new IntPtr(-1);
+            if (stdin == invalid || stdout == invalid || stderr == invalid)
+            {
+                throw new Win32Exception(
+                    Marshal.GetLastWin32Error(),
+                    "Creating sandbox stdio handles failed");
+            }
+
             IntPtr[] stdHandles = new IntPtr[] { stdin, stdout, stderr };
             foreach (IntPtr handle in stdHandles)
             {
-                if (handle != IntPtr.Zero && handle != new IntPtr(-1))
+                if (!SetHandleInformation(
+                    handle,
+                    HANDLE_FLAG_INHERIT,
+                    HANDLE_FLAG_INHERIT))
                 {
-                    if (!SetHandleInformation(
-                        handle,
-                        HANDLE_FLAG_INHERIT,
-                        HANDLE_FLAG_INHERIT))
-                    {
-                        throw new Win32Exception(
-                            Marshal.GetLastWin32Error(),
-                            "SetHandleInformation failed");
-                    }
+                    throw new Win32Exception(
+                        Marshal.GetLastWin32Error(),
+                        "SetHandleInformation failed");
                 }
             }
 
@@ -563,6 +612,18 @@ public static class StamContAppContainer
         }
         finally
         {
+            if (stdin != IntPtr.Zero && stdin != new IntPtr(-1))
+            {
+                CloseHandle(stdin);
+            }
+            if (stdout != IntPtr.Zero && stdout != new IntPtr(-1))
+            {
+                CloseHandle(stdout);
+            }
+            if (stderr != IntPtr.Zero && stderr != new IntPtr(-1))
+            {
+                CloseHandle(stderr);
+            }
             if (processInfo.hThread != IntPtr.Zero)
             {
                 CloseHandle(processInfo.hThread);
@@ -605,6 +666,9 @@ public static class StamContAppContainer
 
 $sid = $null
 $grantedPaths = [System.Collections.Generic.List[string]]::new()
+$grantedPathSet = [System.Collections.Generic.HashSet[string]]::new(
+  [StringComparer]::OrdinalIgnoreCase
+)
 $deniedPaths = [System.Collections.Generic.List[string]]::new()
 
 function Grant-SandboxAcl {
@@ -625,12 +689,39 @@ function Grant-SandboxAcl {
 
   & icacls.exe $TargetPath /grant "*$($sid):(OI)(CI)$Rights" /C /Q | Out-Null
   if ($LASTEXITCODE -eq 0) {
-    $grantedPaths.Add($TargetPath)
+    if ($grantedPathSet.Add([IO.Path]::GetFullPath($TargetPath))) {
+      $grantedPaths.Add([IO.Path]::GetFullPath($TargetPath))
+    }
     return
   }
 
   if ($Required) {
     throw "Unable to grant AppContainer access to $TargetPath"
+  }
+}
+
+function Grant-TraverseAncestors {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$TargetPath
+  )
+
+  $current = [IO.Directory]::GetParent(
+    [IO.Path]::GetFullPath($TargetPath)
+  )
+  while ($null -ne $current) {
+    $ancestor = $current.FullName
+    if ($grantedPathSet.Add($ancestor)) {
+      # X maps to FILE_TRAVERSE on directories; RA is FILE_READ_ATTRIBUTES.
+      # No inheritance and no list-directory/read-data grant: the container can
+      # walk to the named target without gaining visibility into sibling trees.
+      & icacls.exe $ancestor /grant "*$($sid):(X,RA)" /Q | Out-Null
+      if ($LASTEXITCODE -ne 0) {
+        throw "Unable to grant AppContainer traverse access to $ancestor"
+      }
+      $grantedPaths.Add($ancestor)
+    }
+    $current = $current.Parent
   }
 }
 
@@ -655,6 +746,19 @@ try {
 
   $workspaceRights = if ([bool]$config.ReadOnly) { "RX" } else { "M" }
 
+  foreach ($target in @(
+    @($config.Roots) +
+    @([string]$config.Cwd) +
+    @([string]$config.HomeDirectory) +
+    @([string]$config.TempDirectory) +
+    @([string]$config.PowerShellExecutable) +
+    @($config.PathEntries)
+  )) {
+    if (-not [string]::IsNullOrWhiteSpace([string]$target)) {
+      Grant-TraverseAncestors -TargetPath ([string]$target)
+    }
+  }
+
   foreach ($root in @($config.Roots)) {
     Grant-SandboxAcl -TargetPath ([string]$root) -Rights $workspaceRights -Required
     if ([bool]$config.ReadOnly) {
@@ -672,12 +776,30 @@ try {
     Grant-SandboxAcl -TargetPath ([string]$pathEntry) -Rights "RX"
   }
 
+  $stdoutPath = Join-Path ([string]$config.HomeDirectory) "sandbox-stdout.txt"
+  $stderrPath = Join-Path ([string]$config.HomeDirectory) "sandbox-stderr.txt"
+
   $exitCode = [StamContAppContainer]::Run(
     [string]$config.ProfileName,
     [string]$config.PowerShellExecutable,
     [string]$config.CommandBase64,
-    [string]$config.Cwd
+    [string]$config.Cwd,
+    $stdoutPath,
+    $stderrPath
   )
+
+  if (Test-Path -LiteralPath $stdoutPath) {
+    $stdoutText = [IO.File]::ReadAllText($stdoutPath)
+    if ($stdoutText.Length -gt 0) {
+      [Console]::Out.Write($stdoutText)
+    }
+  }
+  if (Test-Path -LiteralPath $stderrPath) {
+    $stderrText = [IO.File]::ReadAllText($stderrPath)
+    if ($stderrText.Length -gt 0) {
+      [Console]::Error.Write($stderrText)
+    }
+  }
   exit $exitCode
 }
 finally {
