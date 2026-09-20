@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { IDE } from "..";
-import { SandboxExecutionBackend, SandboxViolationError } from "./sandbox";
+import { SandboxExecutionBackend } from "./sandbox";
 
 const tempRoots: string[] = [];
 
@@ -67,22 +67,109 @@ afterEach(async () => {
 });
 
 describe("sandbox shell security properties", () => {
-  it("fails closed when native shell containment is unavailable", async () => {
-    if (process.platform !== "win32") {
-      return;
-    }
+  it.skipIf(process.platform !== "win32")(
+    "enforces Windows AppContainer workspace and outside-file boundaries",
+    async () => {
+      const workspace = await tempDir("stamcont-win-workspace-");
+      const outside = await tempDir("stamcont-win-outside-");
+      const outsideSecret = path.join(outside, "secret.txt");
+      await writeFile(outsideSecret, "host-secret", "utf8");
+      const backend = new SandboxExecutionBackend(ideWithWorkspace(workspace));
 
-    const workspace = await tempDir("stamcont-shell-workspace-");
-    const backend = new SandboxExecutionBackend(ideWithWorkspace(workspace));
-    const cwd = await backend.resolveWorkingDirectory(".");
+      const writeResult = await runSandboxCommand(
+        backend,
+        "$ErrorActionPreference='Stop'; Set-Content -LiteralPath 'shell-write.txt' -Value 'sandboxed' -NoNewline",
+      );
+      expect(writeResult.code).toBe(0);
+      await expect(
+        readFile(path.join(workspace, "shell-write.txt"), "utf8"),
+      ).resolves.toBe("sandboxed");
 
-    expect(() =>
-      backend.spawnShell("Write-Output blocked", {
-        cwd,
-        env: process.env,
-      }),
-    ).toThrow(SandboxViolationError);
-  });
+      const escapedPath = outsideSecret.replaceAll("'", "''");
+      const readResult = await runSandboxCommand(
+        backend,
+        `$ErrorActionPreference='Stop'; Get-Content -LiteralPath '${escapedPath}' | Out-Null`,
+      );
+      expect(readResult.code).not.toBe(0);
+    },
+  );
+
+  it.skipIf(process.platform !== "win32")(
+    "enforces Windows Plan read-only at the AppContainer boundary",
+    async () => {
+      const workspace = await tempDir("stamcont-win-plan-");
+      const backend = new SandboxExecutionBackend(ideWithWorkspace(workspace), {
+        readOnly: true,
+      });
+
+      const result = await runSandboxCommand(
+        backend,
+        "$ErrorActionPreference='Stop'; Set-Content -LiteralPath 'plan-write.txt' -Value 'forbidden' -NoNewline",
+      );
+
+      expect(result.code).not.toBe(0);
+      await expect(access(path.join(workspace, "plan-write.txt"))).rejects.toBeDefined();
+    },
+  );
+
+  it.skipIf(process.platform !== "win32")(
+    "keeps Windows cmd and nested PowerShell children inside the sandbox",
+    async () => {
+      const workspace = await tempDir("stamcont-win-children-");
+      const backend = new SandboxExecutionBackend(ideWithWorkspace(workspace));
+
+      const result = await runSandboxCommand(
+        backend,
+        [
+          "$ErrorActionPreference='Stop'",
+          'cmd.exe /d /c "echo cmd-child>cmd-child.txt"',
+          "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+          'powershell.exe -NoProfile -NonInteractive -Command "Set-Content -LiteralPath ps-child.txt -Value ps-child -NoNewline"',
+          "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+        ].join("; "),
+      );
+
+      expect(result.code).toBe(0);
+      await expect(
+        readFile(path.join(workspace, "cmd-child.txt"), "utf8"),
+      ).resolves.toContain("cmd-child");
+      await expect(
+        readFile(path.join(workspace, "ps-child.txt"), "utf8"),
+      ).resolves.toBe("ps-child");
+    },
+  );
+
+  it.skipIf(process.platform !== "win32")(
+    "filters Windows shell secrets and denies AppContainer network access",
+    async () => {
+      const workspace = await tempDir("stamcont-win-env-");
+      const backend = new SandboxExecutionBackend(ideWithWorkspace(workspace));
+
+      const envResult = await runSandboxCommand(
+        backend,
+        [
+          "$ErrorActionPreference='Stop'",
+          "if ($env:OPENAI_API_KEY -or $env:GITHUB_TOKEN -or $env:AWS_SECRET_ACCESS_KEY -or $env:NODE_OPTIONS) { exit 9 }",
+          "Write-Output clean",
+        ].join("; "),
+        {
+          ...process.env,
+          OPENAI_API_KEY: "secret",
+          GITHUB_TOKEN: "secret",
+          AWS_SECRET_ACCESS_KEY: "secret",
+          NODE_OPTIONS: "--require hostile.js",
+        },
+      );
+      expect(envResult.code).toBe(0);
+      expect(envResult.stdout).toContain("clean");
+
+      const networkResult = await runSandboxCommand(
+        backend,
+        "$ErrorActionPreference='Stop'; Invoke-WebRequest -UseBasicParsing -TimeoutSec 3 -Uri 'http://1.1.1.1/' | Out-Null",
+      );
+      expect(networkResult.code).not.toBe(0);
+    },
+  );
 
   it.skipIf(process.platform === "win32")(
     "allows Interactive workspace writes but blocks outside filesystem access",
