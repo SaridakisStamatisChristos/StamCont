@@ -1,0 +1,82 @@
+name: StamCont Execution Security
+
+on:
+  push:
+    branches:
+      - main
+      - "stamcont/**"
+  pull_request:
+    branches:
+      - main
+      - "stamcont/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stamcont-execution-security-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: "true"
+  IGNORE_API_KEY_TESTS: "true"
+
+jobs:
+  execution-security:
+    name: Security / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Linux sandbox primitive
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+
+      - name: Build local packages
+        uses: ./.github/actions/setup-packages
+
+      - name: Setup core
+        uses: ./.github/actions/setup-component
+        with:
+          component: core
+          include-root: true
+
+      - name: Typecheck sandbox security surface
+        working-directory: core
+        run: npm run tsc:check
+
+      - name: Lint sandbox security surface
+        working-directory: core
+        run: npm run lint
+
+      - name: Run execution security property tests
+        working-directory: core
+        run: npm run vitest -- agent/sandbox.vitest.ts agent/execution.vitest.ts
+
+      - name: Test restricted fetch transport
+        working-directory: packages/fetch
+        run: npm test -- src/fetch.test.ts
+
+  security-gate:
+    name: Execution security gate
+    if: always()
+    runs-on: ubuntu-latest
+    needs:
+      - execution-security
+    steps:
+      - name: Require cross-platform execution security
+        shell: bash
+        run: test "${{ needs.execution-security.result }}" = "success"
