@@ -1,6 +1,5 @@
 import { ChildProcess, spawn } from "child_process";
 import fs from "fs";
-
 import {
   evaluateTerminalCommandSecurity,
   type ToolPolicy,
