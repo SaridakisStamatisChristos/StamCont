@@ -457,7 +457,6 @@ function spawnSandboxedShell(
   cwd: string,
   readOnly: boolean,
 ): ChildProcess {
-  const workspaceRoot = roots[0];
   const shell = getPortableShell();
 
   if (process.platform === "linux") {
