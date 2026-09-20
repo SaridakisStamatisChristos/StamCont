@@ -20,6 +20,7 @@ import Ollama from "./llm/llms/Ollama";
 import { EditAggregator } from "./nextEdit/context/aggregateEdits";
 import { createNewPromptFileV2 } from "./promptFiles/createNewPromptFile";
 import { coreToolKernelBridge } from "./agent/adapters/coreToolExecution";
+import { createExecutionBackend } from "./agent/execution";
 import { callTool } from "./tools/callTool";
 import { ChatDescriber } from "./util/chatDescriber";
 import { compactConversation } from "./util/conversationCompaction";
@@ -1059,6 +1060,17 @@ export class Core {
       async ({ data: { toolCall, executionProfile, sessionId } }) =>
         this.handleToolCall(toolCall, executionProfile, sessionId),
     );
+
+    on("tools/resolvePath", async ({ data }) => {
+      const backend = createExecutionBackend(
+        data.executionProfile ?? "interactive",
+        this.ide,
+      );
+      const resolved = await backend.resolveExistingPath(data.filepath);
+      return {
+        uri: resolved?.uri ?? null,
+      };
+    });
 
     on(
       "tools/evaluatePolicy",
