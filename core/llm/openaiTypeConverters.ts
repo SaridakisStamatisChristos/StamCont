@@ -11,12 +11,10 @@ import {
 import type {
   EasyInputMessage,
   Response as OpenAIResponse,
-  ResponseFunctionCallArgumentsDeltaEvent,
   ResponseFunctionToolCall,
   ResponseInput,
   ResponseInputItem,
   ResponseInputMessageContentList,
-  ResponseOutputItem,
   ResponseOutputItemAddedEvent,
   ResponseOutputItemDoneEvent,
   ResponseOutputMessage,

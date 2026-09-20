@@ -43,10 +43,6 @@ interface QueryResult {
   summary: string;
 }
 
-interface QueryResults {
-  issues: JiraIssue[];
-}
-
 export interface Comment {
   created: string;
   updated: string;

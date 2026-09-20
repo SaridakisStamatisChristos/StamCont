@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Usage } from "../..";
 
-import { calculateRequestCost, CostBreakdown } from "./calculateRequestCost";
+import { calculateRequestCost } from "./calculateRequestCost";
 
 interface TestCase {
   provider: string;
