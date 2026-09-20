@@ -297,12 +297,12 @@ describe("sandbox shell security properties", () => {
       const envResult = await runSandboxCommand(
         backend,
         [
-          "if defined OPENAI_API_KEY exit /b 9",
-          "if defined GITHUB_TOKEN exit /b 9",
-          "if defined AWS_SECRET_ACCESS_KEY exit /b 9",
-          "if defined NODE_OPTIONS exit /b 9",
-          "if defined PSModulePath exit /b 9",
-          "if defined PSExecutionPolicyPreference exit /b 9",
+          "(if defined OPENAI_API_KEY exit /b 9)",
+          "(if defined GITHUB_TOKEN exit /b 9)",
+          "(if defined AWS_SECRET_ACCESS_KEY exit /b 9)",
+          "(if defined NODE_OPTIONS exit /b 9)",
+          "(if defined PSModulePath exit /b 9)",
+          "(if defined PSExecutionPolicyPreference exit /b 9)",
           "echo clean",
         ].join(" & "),
         {
@@ -377,7 +377,7 @@ describe("sandbox shell security properties", () => {
       const descendantCommand =
         process.platform === "win32"
           ? [
-              'start "" /b cmd.exe /d /s /c "echo child-started>child-started.txt & choice.exe /c Y /d Y /t 2 /n & echo escaped>child-after-kill.txt"',
+              'start "" /b cmd.exe /d /s /c "echo child-started>child-started.txt & choice.exe /c Y /d Y /t 4 /n & echo escaped>child-after-kill.txt"',
               "choice.exe /c Y /d Y /t 10 /n",
             ].join(" & ")
           : "(sleep 1.6; printf escaped > child-after-kill.txt) & sleep 10";
@@ -428,7 +428,7 @@ describe("sandbox shell security properties", () => {
       ]);
 
       await unrelatedClose;
-      await new Promise((resolve) => setTimeout(resolve, 1_300));
+      await new Promise((resolve) => setTimeout(resolve, 4_300));
       await expect(
         access(path.join(workspace, "child-after-kill.txt")),
       ).rejects.toBeDefined();
