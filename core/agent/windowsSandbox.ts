@@ -25,12 +25,16 @@ using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
+using Microsoft.Win32.SafeHandles;
 
 public static class StamContAppContainer
 {
     private const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
     private const uint STARTF_USESTDHANDLES = 0x00000100;
     private const uint DUPLICATE_SAME_ACCESS = 0x00000002;
+    private const uint HANDLE_FLAG_INHERIT = 0x00000001;
+    private const uint CREATE_NO_WINDOW = 0x08000000;
     private const int STD_INPUT_HANDLE = -10;
     private const int STD_OUTPUT_HANDLE = -11;
     private const int STD_ERROR_HANDLE = -12;
@@ -122,6 +126,15 @@ public static class StamContAppContainer
         public IntPtr hThread;
         public uint dwProcessId;
         public uint dwThreadId;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SECURITY_ATTRIBUTES
+    {
+        public uint nLength;
+        public IntPtr lpSecurityDescriptor;
+        [MarshalAs(UnmanagedType.Bool)]
+        public bool bInheritHandle;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -299,6 +312,38 @@ public static class StamContAppContainer
         uint dwDesiredAccess,
         bool bInheritHandle,
         uint dwOptions);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CreatePipe(
+        out IntPtr hReadPipe,
+        out IntPtr hWritePipe,
+        ref SECURITY_ATTRIBUTES lpPipeAttributes,
+        uint nSize);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetHandleInformation(
+        IntPtr hObject,
+        uint dwMask,
+        uint dwFlags);
+
+    private static void PumpPipe(IntPtr readHandle, Stream destination)
+    {
+        using (var safe = new SafeFileHandle(readHandle, false))
+        using (var input = new FileStream(safe, FileAccess.Read, 4096, false))
+        {
+            byte[] buffer = new byte[8192];
+            while (true)
+            {
+                int count = input.Read(buffer, 0, buffer.Length);
+                if (count <= 0)
+                {
+                    break;
+                }
+                destination.Write(buffer, 0, count);
+                destination.Flush();
+            }
+        }
+    }
 
     private static void ApplyProfileAcl(
         string profileName,
@@ -565,6 +610,10 @@ public static class StamContAppContainer
         IntPtr childStdIn = IntPtr.Zero;
         IntPtr childStdOut = IntPtr.Zero;
         IntPtr childStdErr = IntPtr.Zero;
+        IntPtr stdoutRead = IntPtr.Zero;
+        IntPtr stderrRead = IntPtr.Zero;
+        Thread stdoutThread = null;
+        Thread stderrThread = null;
         PROCESS_INFORMATION processInfo = new PROCESS_INFORMATION();
 
         try
@@ -670,24 +719,19 @@ public static class StamContAppContainer
                     "Setting AppContainer Job Object attribute failed");
             }
 
-            // Duplicate only the broker's standard streams as inheritable
-            // handles, then whitelist exactly those handles for the lowbox.
-            // This gives the sandbox a direct output channel back to Node
-            // without granting arbitrary broker handles.
+            // Keep stdin as a narrowly duplicated broker handle, but create
+            // fresh anonymous pipes for stdout/stderr. Hosted Windows runners
+            // can expose broker std handles with semantics that are unsuitable
+            // for a lowbox child; dedicated pipes match the native AppContainer
+            // pattern and keep the inherited handle surface explicit.
             IntPtr currentProcess = GetCurrentProcess();
             IntPtr parentStdIn = GetStdHandle(STD_INPUT_HANDLE);
-            IntPtr parentStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
-            IntPtr parentStdErr = GetStdHandle(STD_ERROR_HANDLE);
             if (parentStdIn == IntPtr.Zero ||
-                parentStdOut == IntPtr.Zero ||
-                parentStdErr == IntPtr.Zero ||
-                parentStdIn == new IntPtr(-1) ||
-                parentStdOut == new IntPtr(-1) ||
-                parentStdErr == new IntPtr(-1))
+                parentStdIn == new IntPtr(-1))
             {
                 throw new Win32Exception(
                     Marshal.GetLastWin32Error(),
-                    "Broker standard handles are unavailable");
+                    "Broker standard input handle is unavailable");
             }
 
             if (!DuplicateHandle(
@@ -697,27 +741,46 @@ public static class StamContAppContainer
                     out childStdIn,
                     0,
                     true,
-                    DUPLICATE_SAME_ACCESS) ||
-                !DuplicateHandle(
-                    currentProcess,
-                    parentStdOut,
-                    currentProcess,
-                    out childStdOut,
-                    0,
-                    true,
-                    DUPLICATE_SAME_ACCESS) ||
-                !DuplicateHandle(
-                    currentProcess,
-                    parentStdErr,
-                    currentProcess,
-                    out childStdErr,
-                    0,
-                    true,
                     DUPLICATE_SAME_ACCESS))
             {
                 throw new Win32Exception(
                     Marshal.GetLastWin32Error(),
-                    "Duplicating sandbox standard handles failed");
+                    "Duplicating sandbox stdin handle failed");
+            }
+
+            SECURITY_ATTRIBUTES pipeAttributes = new SECURITY_ATTRIBUTES
+            {
+                nLength = (uint)Marshal.SizeOf(typeof(SECURITY_ATTRIBUTES)),
+                lpSecurityDescriptor = IntPtr.Zero,
+                bInheritHandle = true,
+            };
+            if (!CreatePipe(
+                    out stdoutRead,
+                    out childStdOut,
+                    ref pipeAttributes,
+                    0) ||
+                !SetHandleInformation(
+                    stdoutRead,
+                    HANDLE_FLAG_INHERIT,
+                    0))
+            {
+                throw new Win32Exception(
+                    Marshal.GetLastWin32Error(),
+                    "Creating sandbox stdout pipe failed");
+            }
+            if (!CreatePipe(
+                    out stderrRead,
+                    out childStdErr,
+                    ref pipeAttributes,
+                    0) ||
+                !SetHandleInformation(
+                    stderrRead,
+                    HANDLE_FLAG_INHERIT,
+                    0))
+            {
+                throw new Win32Exception(
+                    Marshal.GetLastWin32Error(),
+                    "Creating sandbox stderr pipe failed");
             }
 
             handleListPtr = Marshal.AllocHGlobal(IntPtr.Size * 3);
@@ -740,10 +803,10 @@ public static class StamContAppContainer
 
             // Keep process creation narrow: SECURITY_CAPABILITIES establishes
             // the AppContainer, JOB_LIST atomically attaches the owned
-            // kill-on-close process tree, and HANDLE_LIST exposes only the
-            // broker's three standard streams. The decoded command is passed
-            // directly to cmd.exe; no host-side command or capture files are
-            // part of the execution path.
+            // kill-on-close process tree, and HANDLE_LIST exposes only stdin
+            // plus the two broker-owned output pipes. The decoded command is
+            // passed directly to cmd.exe; no host-side command/capture files
+            // are part of the execution path.
             string shell = commandInterpreter;
             char quote = '"';
             StringBuilder commandLine = new StringBuilder(
@@ -765,7 +828,7 @@ public static class StamContAppContainer
                 IntPtr.Zero,
                 IntPtr.Zero,
                 true,
-                EXTENDED_STARTUPINFO_PRESENT,
+                EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW,
                 IntPtr.Zero,
                 workingDirectory,
                 ref startup,
@@ -775,6 +838,22 @@ public static class StamContAppContainer
                     Marshal.GetLastWin32Error(),
                     "CreateProcessW(AppContainer) failed");
             }
+            // The lowbox inherited its write ends; drop the broker copies so
+            // EOF is observable when the contained process tree exits.
+            CloseHandle(childStdOut);
+            childStdOut = IntPtr.Zero;
+            CloseHandle(childStdErr);
+            childStdErr = IntPtr.Zero;
+
+            stdoutThread = new Thread(() =>
+                PumpPipe(stdoutRead, Console.OpenStandardOutput()));
+            stderrThread = new Thread(() =>
+                PumpPipe(stderrRead, Console.OpenStandardError()));
+            stdoutThread.IsBackground = true;
+            stderrThread.IsBackground = true;
+            stdoutThread.Start();
+            stderrThread.Start();
+
             WaitForSingleObject(processInfo.hProcess, INFINITE);
             uint exitCode;
             if (!GetExitCodeProcess(processInfo.hProcess, out exitCode))
@@ -782,6 +861,20 @@ public static class StamContAppContainer
                 throw new Win32Exception(
                     Marshal.GetLastWin32Error(),
                     "GetExitCodeProcess failed");
+            }
+
+            // Kill any background descendants before waiting for EOF; otherwise
+            // an inherited stdout/stderr write end could keep the pumps open.
+            if (job != IntPtr.Zero)
+            {
+                CloseHandle(job);
+                job = IntPtr.Zero;
+            }
+
+            if (!stdoutThread.Join(5000) || !stderrThread.Join(5000))
+            {
+                throw new TimeoutException(
+                    "Sandbox output pipes did not close after process-tree teardown");
             }
             return unchecked((int)exitCode);
         }
@@ -825,6 +918,14 @@ public static class StamContAppContainer
             if (childStdErr != IntPtr.Zero)
             {
                 CloseHandle(childStdErr);
+            }
+            if (stdoutRead != IntPtr.Zero)
+            {
+                CloseHandle(stdoutRead);
+            }
+            if (stderrRead != IntPtr.Zero)
+            {
+                CloseHandle(stderrRead);
             }
             if (jobListPtr != IntPtr.Zero)
             {
