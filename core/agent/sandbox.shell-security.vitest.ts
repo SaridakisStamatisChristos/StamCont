@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -12,6 +12,13 @@ import { terminateProcessTree } from "../util/processTerminalStates";
 import { SandboxExecutionBackend } from "./sandbox";
 
 const tempRoots: string[] = [];
+const sandboxChildren = new Set<ChildProcess>();
+
+function trackSandboxChild(child: ChildProcess): ChildProcess {
+  sandboxChildren.add(child);
+  child.once("close", () => sandboxChildren.delete(child));
+  return child;
+}
 
 const requireOsSandboxTests =
   process.env.STAMCONT_REQUIRE_OS_SANDBOX_TESTS === "1";
@@ -76,11 +83,13 @@ async function runSandboxCommand(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
   const cwd = await backend.resolveWorkingDirectory(".");
-  const child = backend.spawnShell(command, {
-    cwd,
-    env,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  const child = trackSandboxChild(
+    backend.spawnShell(command, {
+      cwd,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    }),
+  );
 
   return new Promise((resolve, reject) => {
     let stdout = "";
@@ -110,6 +119,27 @@ async function runSandboxCommand(
 }
 
 afterEach(async () => {
+  // A failed assertion or timeout must not leave a broker mutating ACLs or
+  // locking the workspace while the following security property runs.
+  await Promise.all(
+    [...sandboxChildren].map(
+      (child) =>
+        new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(
+            () =>
+              reject(
+                new Error("Sandbox test cleanup did not terminate broker"),
+              ),
+            5_000,
+          );
+          child.once("close", () => {
+            clearTimeout(timer);
+            resolve();
+          });
+          terminateProcessTree(child, "SIGKILL");
+        }),
+    ),
+  );
   await Promise.all(
     tempRoots.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
   );
@@ -138,20 +168,17 @@ describe("sandbox shell security properties", () => {
     async () => {
       const workspace = await tempDir("stamcont-win-comspec-");
       const backend = new SandboxExecutionBackend(ideWithWorkspace(workspace));
-      const startedAt = Date.now();
 
       const result = await runSandboxCommand(
         backend,
         "echo stamcont-appcontainer-cmd",
       );
 
-      console.error(
-        `[stamcont-win-timing] native sentinel elapsed=${Date.now() - startedAt}ms`,
-      );
       expect(result.code, result.stderr).toBe(0);
-      expect(result.stdout, result.stderr).toContain("stamcont-appcontainer-cmd");
+      expect(result.stdout, result.stderr).toContain(
+        "stamcont-appcontainer-cmd",
+      );
     },
-    20_000,
   );
 
   it.skipIf(process.platform !== "win32")(
@@ -181,6 +208,41 @@ describe("sandbox shell security properties", () => {
   );
 
   it.skipIf(process.platform !== "win32")(
+    "does not grant outside filesystem access through PATH entries",
+    async () => {
+      const workspace = await tempDir("stamcont-win-path-workspace-");
+      const outside = await tempDir("stamcont-win-path-outside-");
+      const secret = path.join(outside, "secret.txt");
+      await writeFile(secret, "path-must-not-authorize-this-secret", "utf8");
+      const backend = new SandboxExecutionBackend(ideWithWorkspace(workspace));
+      const env = Object.fromEntries(
+        Object.entries(process.env).filter(
+          ([key]) => key.toUpperCase() !== "PATH",
+        ),
+      );
+      const hostPath =
+        Object.entries(process.env).find(
+          ([key]) => key.toUpperCase() === "PATH",
+        )?.[1] ?? "";
+      env.PATH = [outside, path.dirname(workspace), hostPath].join(
+        path.delimiter,
+      );
+
+      const result = await runSandboxCommand(
+        backend,
+        `echo sandbox-started & type "${secret}"`,
+        env,
+      );
+
+      expect(result.stdout, result.stderr).toContain("sandbox-started");
+      expect(result.code).not.toBe(0);
+      expect(result.stdout).not.toContain(
+        "path-must-not-authorize-this-secret",
+      );
+    },
+  );
+
+  it.skipIf(process.platform !== "win32")(
     "enforces Windows Plan read-only at the AppContainer boundary",
     async () => {
       const workspace = await tempDir("stamcont-win-plan-");
@@ -196,7 +258,9 @@ describe("sandbox shell security properties", () => {
       );
 
       expect(result.code).not.toBe(0);
-      await expect(access(path.join(workspace, "plan-write.txt"))).rejects.toBeDefined();
+      await expect(
+        access(path.join(workspace, "plan-write.txt")),
+      ).rejects.toBeDefined();
     },
   );
 
@@ -328,11 +392,13 @@ describe("sandbox shell security properties", () => {
         });
       });
 
-      const child = backend.spawnShell(descendantCommand, {
-        cwd,
-        env: process.env,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      const child = trackSandboxChild(
+        backend.spawnShell(descendantCommand, {
+          cwd,
+          env: process.env,
+          stdio: ["ignore", "pipe", "pipe"],
+        }),
+      );
       const childClose = new Promise<void>((resolve, reject) => {
         child.once("error", reject);
         child.once("close", () => resolve());
@@ -430,7 +496,9 @@ describe("sandbox shell security properties", () => {
       );
 
       expect(result.code).not.toBe(0);
-      await expect(access(path.join(workspace, "plan-write.txt"))).rejects.toBeDefined();
+      await expect(
+        access(path.join(workspace, "plan-write.txt")),
+      ).rejects.toBeDefined();
     },
   );
 
@@ -451,7 +519,7 @@ describe("sandbox shell security properties", () => {
           'test -z "$PYTHONPATH"',
           'test "$HOME" != "/host/home"',
           'test "$TMPDIR" != "/host/tmp"',
-          'printf clean',
+          "printf clean",
         ].join(" && "),
         {
           ...process.env,

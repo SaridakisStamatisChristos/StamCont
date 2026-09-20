@@ -1,4 +1,8 @@
-import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
+import {
+  spawn,
+  type ChildProcess,
+  type SpawnOptions,
+} from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
@@ -93,8 +97,6 @@ public static class StamContAppContainer
     private const uint FILE_GENERIC_READ = 0x00120089;
     private const uint FILE_GENERIC_EXECUTE = 0x001200A0;
     private const uint FILE_ALL_ACCESS = 0x001F01FF;
-    private const uint FILE_TRAVERSE = 0x00000020;
-    private const uint FILE_READ_ATTRIBUTES = 0x00000080;
     private const uint SE_FILE_OBJECT = 1;
     private const uint DACL_SECURITY_INFORMATION = 0x00000004;
     private const uint GRANT_ACCESS = 1;
@@ -594,18 +596,6 @@ public static class StamContAppContainer
             FILE_ALL_ACCESS,
             GRANT_ACCESS,
             inherit);
-    }
-
-    public static void GrantProfileTraverse(
-        string profileName,
-        string targetPath)
-    {
-        ApplyProfileAcl(
-            profileName,
-            targetPath,
-            FILE_TRAVERSE | FILE_READ_ATTRIBUTES,
-            GRANT_ACCESS,
-            false);
     }
 
     public static void RevokeProfileAccess(
@@ -1259,39 +1249,6 @@ function Grant-ProfileFullAccess {
   }
 }
 
-function Grant-TraverseAncestors {
-  param(
-    [Parameter(Mandatory = $true)]
-    [string]$TargetPath
-  )
-
-  $current = [IO.Directory]::GetParent(
-    [IO.Path]::GetFullPath($TargetPath)
-  )
-  while ($null -ne $current) {
-    $ancestor = $current.FullName
-    if ($grantedPathSet.Add($ancestor)) {
-      Write-StamContDiagnostic -Stage ("ancestor-begin target=" + $TargetPath + " ancestor=" + $ancestor)
-      try {
-        [StamContAppContainer]::GrantProfileTraverse(
-          [string]$config.ProfileName,
-          $ancestor
-        )
-        $grantedPaths.Add($ancestor)
-        Write-StamContDiagnostic -Stage ("ancestor-complete ancestor=" + $ancestor)
-      }
-      catch {
-        Write-StamContDiagnostic -Stage ("ancestor-error ancestor=" + $ancestor + " error=" + $_.Exception.Message)
-        # Ancestors above the current user's ownership boundary (for example
-        # a volume root) may not be mutable. Windows normally permits traversal
-        # through those system ancestors; required target grants below remain
-        # authoritative.
-      }
-    }
-    $current = $current.Parent
-  }
-}
-
 $processExitCode = 125
 
 try {
@@ -1299,20 +1256,10 @@ try {
   $sid = [StamContAppContainer]::CreateProfile([string]$config.ProfileName)
   Write-StamContDiagnostic -Stage "after-profile-create"
 
-  foreach ($target in @(
-    @($config.Roots) +
-    @([string]$config.Cwd) +
-    @([string]$config.CommandInterpreter) +
-    @($config.PathEntries)
-  )) {
-    if (-not [string]::IsNullOrWhiteSpace([string]$target)) {
-      Write-StamContDiagnostic -Stage ("target-begin path=" + ([string]$target))
-      Grant-TraverseAncestors -TargetPath ([string]$target)
-    }
-  }
-
-  Write-StamContDiagnostic -Stage "after-ancestor-grants"
-
+  # The lowbox uses Windows' existing ancestor traversal and system-runtime
+  # access. Never rewrite ancestor DACLs: SetNamedSecurityInfoW propagates
+  # pre-existing inheritable ACEs through their entire descendant trees, even
+  # when the new ACE itself is non-inheriting.
   foreach ($root in @($config.Roots)) {
     if ([bool]$config.ReadOnly) {
       Grant-ProfileReadExecute -TargetPath ([string]$root) -Required
@@ -1323,14 +1270,10 @@ try {
 
   Write-StamContDiagnostic -Stage "after-root-grants"
 
-  # Developer-tool PATH directories receive specific read/execute rights only.
-  # Optional grants fail closed for the tool itself but do not prevent shell
-  # startup when a system-protected PATH entry cannot be modified.
-  foreach ($pathEntry in @($config.PathEntries)) {
-    Grant-ProfileReadExecute -TargetPath ([string]$pathEntry)
-  }
-
-  Write-StamContDiagnostic -Stage "after-path-grants"
+  # PATH controls executable discovery, not filesystem authorization. Granting
+  # every inherited PATH entry could expose a drive, user profile or another
+  # project. Tools must already be accessible to AppContainer or reside inside
+  # an explicitly authorized workspace root.
 
   # Bootstrap inside the AppContainer's own profile storage rather than
   # under the host user's temp tree. Windows creates this location specifically
@@ -1493,7 +1436,6 @@ export function spawnWindowsAppContainerShell(
     ReadOnly: options.readOnly,
     HomeDirectory: options.homeDirectory,
     TempDirectory: options.tempDirectory,
-    PathEntries: sandboxPathEntries,
     CommandInterpreter: commandInterpreter,
     CommandUtf8Base64: Buffer.from(command, "utf8").toString("base64"),
     CommandUtf8Length: Buffer.byteLength(command, "utf8"),
@@ -1508,10 +1450,9 @@ export function spawnWindowsAppContainerShell(
           )
         : "",
   };
-  const configBase64 = Buffer.from(
-    JSON.stringify(config),
-    "utf8",
-  ).toString("base64");
+  const configBase64 = Buffer.from(JSON.stringify(config), "utf8").toString(
+    "base64",
+  );
 
   const powerShell =
     process.env.SystemRoot || process.env.WINDIR
