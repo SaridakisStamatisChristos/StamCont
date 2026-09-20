@@ -1,7 +1,70 @@
-import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
+import {
+  spawn,
+  spawnSync,
+  type ChildProcess,
+  type SpawnOptions,
+} from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import path from "node:path";
+
+const MIN_APPCONTAINER_PWSH_VERSION = [7, 6, 2] as const;
+
+function isCompatibleAppContainerPowerShellVersion(value: string): boolean {
+  const match = value.trim().match(/^(\d+)\.(\d+)\.(\d+)/);
+  if (!match) {
+    return false;
+  }
+  const actual = match.slice(1, 4).map(Number);
+  const required = [...MIN_APPCONTAINER_PWSH_VERSION];
+  for (let i = 0; i < required.length; i += 1) {
+    if (actual[i] !== required[i]) {
+      return actual[i] > required[i];
+    }
+  }
+  return true;
+}
+
+function resolveAppContainerPowerShell(env: NodeJS.ProcessEnv): string {
+  const candidates = (env.PATH ?? "")
+    .split(path.delimiter)
+    .map((entry) => entry.trim().replace(/^"|"$/g, ""))
+    .filter(Boolean)
+    .map((entry) => path.join(entry, "pwsh.exe"))
+    .filter((candidate, index, all) => all.indexOf(candidate) === index)
+    .filter((candidate) => existsSync(candidate));
+
+  for (const candidate of candidates) {
+    const probe = spawnSync(
+      candidate,
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "$PSVersionTable.PSVersion.ToString()",
+      ],
+      {
+        env,
+        encoding: "utf8",
+        windowsHide: true,
+        timeout: 5_000,
+      },
+    );
+    if (
+      probe.status === 0 &&
+      isCompatibleAppContainerPowerShellVersion(probe.stdout ?? "")
+    ) {
+      return candidate;
+    }
+  }
+
+  throw new Error(
+    "Windows Interactive/Plan sandbox requires PowerShell 7.6.2 or newer. " +
+      "Earlier PowerShell releases have known AppContainer filesystem-provider " +
+      "initialization defects; StamCont fails closed instead of weakening the sandbox.",
+  );
+}
 
 const WINDOWS_SANDBOX_LAUNCHER = String.raw`
 param(
@@ -282,6 +345,7 @@ public static class StamContAppContainer
 
     public static int Run(
         string profileName,
+        string powerShellExecutable,
         string encodedCommand,
         string workingDirectory)
     {
@@ -420,12 +484,7 @@ public static class StamContAppContainer
                     "SetInformationJobObject failed");
             }
 
-            string powerShell = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.Windows),
-                "System32",
-                "WindowsPowerShell",
-                "v1.0",
-                "powershell.exe");
+            string powerShell = powerShellExecutable;
             // Pass the model-controlled command with PowerShell's
             // EncodedCommand transport. It is UTF-16LE base64, contains no
             // shell metacharacters, and avoids depending on an AppContainer-
@@ -562,27 +621,6 @@ function Grant-SandboxAcl {
   }
 }
 
-function Grant-DriveRootMetadataAccess {
-  param(
-    [Parameter(Mandatory = $true)]
-    [string]$TargetPath
-  )
-
-  if (-not (Test-Path -LiteralPath $TargetPath)) {
-    return
-  }
-
-  # PowerShell inside a regular AppContainer needs to stat the volume root in
-  # order to mount its FileSystem PSDrive. Grant the ephemeral AppContainer SID
-  # RX on the root object only: no OI/CI inheritance and no recursive /T. Child
-  # directories therefore remain governed by their existing ACLs.
-  & icacls.exe $TargetPath /grant "*$($sid):(RX)" /Q | Out-Null
-  if ($LASTEXITCODE -ne 0) {
-    throw "Unable to grant AppContainer metadata access to drive root $TargetPath"
-  }
-  $grantedPaths.Add($TargetPath)
-}
-
 function Deny-SandboxWrites {
   param(
     [Parameter(Mandatory = $true)]
@@ -601,33 +639,6 @@ function Deny-SandboxWrites {
 
 try {
   $sid = [StamContAppContainer]::CreateProfile([string]$config.ProfileName)
-
-  # Windows PowerShell enumerates logical drives and then probes each volume
-  # root before creating FileSystem PSDrives. AppContainer tokens commonly
-  # cannot stat C:\ (or another volume root) by default, which prevents module
-  # auto-loading even when the actual workspace has an explicit ACL grant.
-  # Expose root metadata only for drives StamCont intentionally references.
-  $driveRoots = [System.Collections.Generic.HashSet[string]]::new(
-    [StringComparer]::OrdinalIgnoreCase
-  )
-  foreach ($candidate in @(
-    @($config.Roots) +
-    @([string]$config.Cwd) +
-    @([string]$config.HomeDirectory) +
-    @([string]$config.TempDirectory) +
-    @($config.PathEntries)
-  )) {
-    if (-not [string]::IsNullOrWhiteSpace([string]$candidate)) {
-      $driveRoot = [IO.Path]::GetPathRoot([string]$candidate)
-      if (-not [string]::IsNullOrWhiteSpace($driveRoot) -and
-          -not $driveRoot.StartsWith("\\")) {
-        [void]$driveRoots.Add($driveRoot)
-      }
-    }
-  }
-  foreach ($driveRoot in $driveRoots) {
-    Grant-DriveRootMetadataAccess -TargetPath $driveRoot
-  }
 
   $workspaceRights = if ([bool]$config.ReadOnly) { "RX" } else { "M" }
 
@@ -650,6 +661,7 @@ try {
 
   $exitCode = [StamContAppContainer]::Run(
     [string]$config.ProfileName,
+    [string]$config.PowerShellExecutable,
     [string]$config.CommandBase64,
     [string]$config.Cwd
   )
@@ -707,6 +719,7 @@ export function spawnWindowsAppContainerShell(
     .split(path.delimiter)
     .map((entry) => entry.trim())
     .filter(Boolean);
+  const sandboxPowerShell = resolveAppContainerPowerShell(options.env);
 
   const config = {
     ProfileName: profileName,
@@ -716,7 +729,8 @@ export function spawnWindowsAppContainerShell(
     HomeDirectory: options.homeDirectory,
     TempDirectory: options.tempDirectory,
     PathEntries: pathEntries,
-    // Windows PowerShell -EncodedCommand requires UTF-16LE.
+    PowerShellExecutable: sandboxPowerShell,
+    // PowerShell -EncodedCommand requires UTF-16LE.
     CommandBase64: Buffer.from(command, "utf16le").toString("base64"),
   };
   const configBase64 = Buffer.from(
