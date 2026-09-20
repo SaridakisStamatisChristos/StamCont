@@ -37,11 +37,6 @@ async function main() {
         if (runtime.has(key.toUpperCase())) env[key.toUpperCase()] = value;
       }
     }
-    if (mode === "broker-builtins") {
-      const powerShellHome = path.join(env.SYSTEMROOT, "System32", "WindowsPowerShell", "v1.0");
-      env.PSModulePath = path.join(powerShellHome, "Modules");
-      env.PATH = [path.join(env.SYSTEMROOT, "System32"), env.SYSTEMROOT, powerShellHome].join(path.delimiter);
-    }
     const command = "echo stamcont-probe-command";
     const environmentPayload = Object.entries(childEnv)
       .filter(([key, value]) =>
@@ -73,8 +68,33 @@ async function main() {
     const launcher = path.join(workspace, "probe.ps1");
     writeFileSync(configPath, configPayload);
     writeFileSync(launcher, script);
+    const windowsPowerShell = path.join(
+      env.SYSTEMROOT,
+      "System32",
+      "WindowsPowerShell",
+      "v1.0",
+      "powershell.exe",
+    );
+    const modernPowerShell = path.join(
+      process.env.ProgramFiles || process.env.PROGRAMFILES || "C:\\Program Files",
+      "PowerShell",
+      "7",
+      "pwsh.exe",
+    );
+    const broker = require("node:fs").existsSync(modernPowerShell)
+      ? modernPowerShell
+      : windowsPowerShell;
+    if (mode === "broker-builtins") {
+      const brokerHome = path.dirname(broker);
+      env.PSModulePath = path.join(brokerHome, "Modules");
+      env.PATH = [
+        path.join(env.SYSTEMROOT, "System32"),
+        env.SYSTEMROOT,
+        brokerHome,
+      ].join(path.delimiter);
+    }
     const start = Date.now();
-    const child = spawn(path.join(env.SYSTEMROOT, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+    const child = spawn(broker,
       ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", launcher, "-ConfigPath", configPath],
       { cwd: workspace, env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
     const report = data => process.stdout.write(`[${mode} +${Date.now() - start}ms] ${data}`);
