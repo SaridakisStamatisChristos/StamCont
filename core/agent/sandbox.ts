@@ -304,6 +304,101 @@ export function createPinnedLookup(target: RestrictedNetworkTarget): any {
   };
 }
 
+function normalizeRestrictedRequestHeaders(headers: any): Record<string, string> {
+  const output: Record<string, string> = {};
+  if (!headers) {
+    return output;
+  }
+
+  if (typeof headers.forEach === "function") {
+    headers.forEach((value: unknown, key: string) => {
+      output[key] = String(value);
+    });
+    return output;
+  }
+
+  if (Array.isArray(headers)) {
+    for (const entry of headers) {
+      if (Array.isArray(entry) && entry.length >= 2) {
+        output[String(entry[0])] = String(entry[1]);
+      }
+    }
+    return output;
+  }
+
+  if (typeof headers === "object") {
+    for (const [key, value] of Object.entries(headers)) {
+      if (value !== undefined) {
+        output[key] = Array.isArray(value)
+          ? value.map(String).join(", ")
+          : String(value);
+      }
+    }
+  }
+
+  return output;
+}
+
+function stripRestrictedHeaders(
+  headers: any,
+  options: {
+    stripCredentials?: boolean;
+    stripBodyHeaders?: boolean;
+  } = {},
+): Record<string, string> {
+  const normalized = normalizeRestrictedRequestHeaders(headers);
+  const blocked = new Set([
+    "host",
+    "proxy-authorization",
+    "proxy-connection",
+  ]);
+
+  if (options.stripCredentials) {
+    blocked.add("authorization");
+    blocked.add("cookie");
+    blocked.add("cookie2");
+  }
+
+  if (options.stripBodyHeaders) {
+    blocked.add("content-encoding");
+    blocked.add("content-length");
+    blocked.add("content-type");
+    blocked.add("transfer-encoding");
+  }
+
+  for (const key of Object.keys(normalized)) {
+    if (blocked.has(key.toLowerCase())) {
+      delete normalized[key];
+    }
+  }
+  return normalized;
+}
+
+function buildRestrictedRedirectInit(
+  currentInit: any,
+  fromUrl: URL,
+  toUrl: URL,
+  status: number,
+): any {
+  const nextInit = { ...(currentInit ?? {}) };
+  const method = String(nextInit.method ?? "GET").toUpperCase();
+  const rewriteToGet =
+    status === 303
+      ? method !== "GET" && method !== "HEAD"
+      : (status === 301 || status === 302) && method === "POST";
+
+  if (rewriteToGet) {
+    nextInit.method = "GET";
+    delete nextInit.body;
+  }
+
+  nextInit.headers = stripRestrictedHeaders(nextInit.headers, {
+    stripCredentials: fromUrl.origin !== toUrl.origin,
+    stripBodyHeaders: rewriteToGet,
+  });
+  return nextInit;
+}
+
 export interface RestrictedFetchOptions {
   resolver?: RestrictedDnsResolver;
   maxRedirects?: number;
@@ -335,8 +430,12 @@ export function createRestrictedFetch(
     // Keep the original hostname in the URL. The custom agent only controls
     // address selection, so HTTP Host, TLS SNI and certificate verification
     // remain bound to the user-visible hostname.
-    const response = await delegate(target.url, {
+    const requestInit = {
       ...(init ?? {}),
+      headers: stripRestrictedHeaders((init as any)?.headers),
+    };
+    const response = await delegate(target.url, {
+      ...requestInit,
       redirect: "manual",
       agent,
     });
@@ -348,9 +447,15 @@ export function createRestrictedFetch(
     ) {
       const location = response.headers.get("location");
       if (location) {
+        const redirectUrl = new URL(location, target.url);
         return restrictedFetch(
-          new URL(location, target.url),
-          init,
+          redirectUrl,
+          buildRestrictedRedirectInit(
+            requestInit,
+            target.url,
+            redirectUrl,
+            response.status,
+          ),
           redirectDepth + 1,
         );
       }
