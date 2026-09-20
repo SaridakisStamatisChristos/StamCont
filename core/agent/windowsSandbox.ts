@@ -90,6 +90,7 @@ public static class StamContAppContainer
     }
     private const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
     private const uint CREATE_SUSPENDED = 0x00000004;
+    private const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
     private const uint STARTF_USESTDHANDLES = 0x00000100;
     private const uint HANDLE_FLAG_INHERIT = 0x00000001;
     private const uint CREATE_NO_WINDOW = 0x08000000;
@@ -716,6 +717,7 @@ public static class StamContAppContainer
         string commandInterpreter,
         string commandUtf8Base64,
         string workingDirectory,
+        IDictionary environment,
         string diagnosticsPath)
     {
         byte[] commandBytes = Convert.FromBase64String(commandUtf8Base64);
@@ -725,6 +727,7 @@ public static class StamContAppContainer
             commandInterpreter,
             commandText,
             workingDirectory,
+            environment,
             diagnosticsPath);
     }
 
@@ -733,6 +736,7 @@ public static class StamContAppContainer
         string commandInterpreter,
         string commandText,
         string workingDirectory,
+        IDictionary environment,
         string diagnosticsPath)
     {
         IntPtr appContainerSid = IntPtr.Zero;
@@ -747,6 +751,7 @@ public static class StamContAppContainer
         IntPtr childStdErr = IntPtr.Zero;
         IntPtr stdoutRead = IntPtr.Zero;
         IntPtr stderrRead = IntPtr.Zero;
+        IntPtr environmentBlock = IntPtr.Zero;
         Thread stdoutThread = null;
         Thread stderrThread = null;
         ManualResetEventSlim outputStop = new ManualResetEventSlim(false);
@@ -946,6 +951,29 @@ public static class StamContAppContainer
             startup.StartupInfo.hStdError = childStdErr;
             startup.lpAttributeList = attributeList;
 
+            // The trusted broker needs its own Windows runtime environment.
+            // The lowbox gets only the separately filtered child environment;
+            // never inherit PowerShell's host profile or loader variables.
+            var variables = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (DictionaryEntry variable in environment)
+            {
+                string key = (string)variable.Key;
+                string value = (string)variable.Value;
+                if (String.IsNullOrEmpty(key) || key.IndexOf('=') >= 0 ||
+                    key.IndexOf('\0') >= 0 || value.IndexOf('\0') >= 0)
+                {
+                    throw new ArgumentException("Invalid sandbox environment entry");
+                }
+                variables[key] = value;
+            }
+            var entries = new List<string>();
+            foreach (var variable in variables)
+            {
+                entries.Add(variable.Key + "=" + variable.Value);
+            }
+            // StringToHGlobalUni appends the second NUL terminator.
+            environmentBlock = Marshal.StringToHGlobalUni(String.Join("\0", entries.ToArray()) + "\0");
+
             Diagnostic(diagnosticsPath, profileName, "before-create-process");
             if (!CreateProcessW(
                 shell,
@@ -953,8 +981,8 @@ public static class StamContAppContainer
                 IntPtr.Zero,
                 IntPtr.Zero,
                 true,
-                EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW | CREATE_SUSPENDED,
-                IntPtr.Zero,
+                EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW | CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT,
+                environmentBlock,
                 workingDirectory,
                 ref startup,
                 out processInfo))
@@ -1094,6 +1122,11 @@ public static class StamContAppContainer
             // before closing their read handles; normal paths already joined
             // them above, so these joins return immediately there.
             outputStop.Set();
+
+            if (environmentBlock != IntPtr.Zero)
+            {
+                Marshal.FreeHGlobal(environmentBlock);
+            }
 
             if (processInfo.hThread != IntPtr.Zero)
             {
@@ -1284,12 +1317,17 @@ try {
   $profileTemp = Join-Path $profileHome "Temp"
   [IO.Directory]::CreateDirectory($profileTemp) | Out-Null
 
-  $env:HOME = $profileHome
-  $env:USERPROFILE = $profileHome
-  $env:LOCALAPPDATA = $profileHome
-  $env:TEMP = $profileTemp
-  $env:TMP = $profileTemp
-  $env:TMPDIR = $profileTemp
+  $childEnvironment = @{}
+  foreach ($entry in $config.Environment.psobject.Properties) {
+    $childEnvironment[$entry.Name] = [string]$entry.Value
+  }
+  $childEnvironment.HOME = $profileHome
+  $childEnvironment.USERPROFILE = $profileHome
+  $childEnvironment.APPDATA = $profileHome
+  $childEnvironment.LOCALAPPDATA = $profileHome
+  $childEnvironment.TEMP = $profileTemp
+  $childEnvironment.TMP = $profileTemp
+  $childEnvironment.TMPDIR = $profileTemp
 
   $commandText = [Text.Encoding]::UTF8.GetString(
     [Convert]::FromBase64String([string]$config.CommandUtf8Base64)
@@ -1323,6 +1361,7 @@ try {
       [string]$config.CommandInterpreter,
       [string]$config.CommandUtf8Base64,
       [string]$config.Cwd,
+      $childEnvironment,
       [string]$config.DiagnosticsPath
     )
 
@@ -1437,6 +1476,7 @@ export function spawnWindowsAppContainerShell(
     HomeDirectory: options.homeDirectory,
     TempDirectory: options.tempDirectory,
     CommandInterpreter: commandInterpreter,
+    Environment: sandboxEnv,
     CommandUtf8Base64: Buffer.from(command, "utf8").toString("base64"),
     CommandUtf8Length: Buffer.byteLength(command, "utf8"),
     CommandSha256: createHash("sha256").update(command, "utf8").digest("hex"),
@@ -1465,6 +1505,47 @@ export function spawnWindowsAppContainerShell(
         )
       : "powershell.exe";
 
+  // PowerShell's module discovery/cache requires real Windows runtime paths.
+  // Do not give it the synthetic lowbox USERPROFILE used by the command, and
+  // pin module discovery to the built-in modules instead of host custom code.
+  const brokerEnv: NodeJS.ProcessEnv = {};
+  const runtimeKeys = new Set([
+    "SYSTEMROOT",
+    "WINDIR",
+    "SYSTEMDRIVE",
+    "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "PROGRAMDATA",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "COMMONPROGRAMFILES",
+    "COMMONPROGRAMFILES(X86)",
+    "HOMEDRIVE",
+    "HOMEPATH",
+  ]);
+  for (const [key, value] of Object.entries(process.env)) {
+    if (runtimeKeys.has(key.toUpperCase())) {
+      brokerEnv[key.toUpperCase()] = value;
+    }
+  }
+  const brokerSystemRoot =
+    brokerEnv.SYSTEMROOT || brokerEnv.WINDIR || "C:\\Windows";
+  const brokerPowerShellHome = path.join(
+    brokerSystemRoot,
+    "System32",
+    "WindowsPowerShell",
+    "v1.0",
+  );
+  brokerEnv.PATH = [
+    path.join(brokerSystemRoot, "System32"),
+    brokerSystemRoot,
+    brokerPowerShellHome,
+  ].join(path.delimiter);
+  brokerEnv.PSModulePath = path.join(brokerPowerShellHome, "Modules");
+  brokerEnv.TEMP = options.tempDirectory;
+  brokerEnv.TMP = options.tempDirectory;
+
   return spawn(
     powerShell,
     [
@@ -1481,7 +1562,7 @@ export function spawnWindowsAppContainerShell(
     {
       ...options.spawnOptions,
       cwd: options.cwd,
-      env: sandboxEnv,
+      env: brokerEnv,
       windowsHide: true,
       detached: false,
     },

@@ -13,7 +13,7 @@ async function main() {
   script = script.replace(/^(\s*)Write-StamContDiagnostic -Stage "([^"]+)"/gm, "$1[Console]::Error.WriteLine('probe: $2')\n$&");
   const safe = new Set(["PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT"]);
   const runtime = new Set(["USERPROFILE", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "PROGRAMFILES", "PROGRAMFILES(X86)", "COMMONPROGRAMFILES", "COMMONPROGRAMFILES(X86)", "HOMEDRIVE", "HOMEPATH", "SYSTEMDRIVE"]);
-  for (const mode of ["sanitized", "broker-runtime"]) {
+  for (const mode of ["broker-runtime", "broker-builtins"]) {
     const workspace = mkdtempSync(path.join(process.cwd(), "stamcont-probe-"));
     const home = path.join(workspace, "home");
     const temp = path.join(workspace, "tmp");
@@ -24,15 +24,22 @@ async function main() {
       if (safe.has(key.toUpperCase())) env[key.toUpperCase()] = value;
     }
     Object.assign(env, { HOME: home, USERPROFILE: home, TMP: temp, TEMP: temp, TMPDIR: temp });
-    if (mode === "broker-runtime") {
+    const childEnv = { ...env };
+    if (mode.startsWith("broker-")) {
       for (const [key, value] of Object.entries(process.env)) {
         if (runtime.has(key.toUpperCase())) env[key.toUpperCase()] = value;
       }
+    }
+    if (mode === "broker-builtins") {
+      const powerShellHome = path.join(env.SYSTEMROOT, "System32", "WindowsPowerShell", "v1.0");
+      env.PSModulePath = path.join(powerShellHome, "Modules");
+      env.PATH = [path.join(env.SYSTEMROOT, "System32"), env.SYSTEMROOT, powerShellHome].join(path.delimiter);
     }
     const command = "echo stamcont-probe-command";
     const config = {
       ProfileName: `StamContSandbox_${randomUUID().replaceAll("-", "").slice(0, 24)}`,
       Roots: [workspace], Cwd: workspace, ReadOnly: false,
+      Environment: childEnv,
       CommandInterpreter: path.join(env.SYSTEMROOT, "System32", "cmd.exe"),
       CommandUtf8Base64: Buffer.from(command).toString("base64"),
       CommandUtf8Length: Buffer.byteLength(command),
@@ -59,7 +66,8 @@ async function main() {
     });
     clearTimeout(timer);
     try { report(readFileSync(config.DiagnosticsPath, "utf8")); } catch {}
-    rmSync(workspace, { recursive: true, force: true });
+    try { rmSync(workspace, { recursive: true, force: true }); }
+    catch (error) { report(`probe cleanup: ${error.code}\n`); }
   }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
