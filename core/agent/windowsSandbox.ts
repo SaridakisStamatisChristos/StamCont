@@ -1,83 +1,7 @@
-import {
-  spawn,
-  spawnSync,
-  type ChildProcess,
-  type SpawnOptions,
-} from "node:child_process";
+import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import path from "node:path";
-
-const MIN_APPCONTAINER_PWSH_VERSION = [7, 6, 2] as const;
-
-function isCompatibleAppContainerPowerShellVersion(value: string): boolean {
-  const match = value.trim().match(/^(\d+)\.(\d+)\.(\d+)/);
-  if (!match) {
-    return false;
-  }
-  const actual = match.slice(1, 4).map(Number);
-  const required = [...MIN_APPCONTAINER_PWSH_VERSION];
-  for (let i = 0; i < required.length; i += 1) {
-    if (actual[i] !== required[i]) {
-      return actual[i] > required[i];
-    }
-  }
-  return true;
-}
-
-function resolveAppContainerPowerShell(env: NodeJS.ProcessEnv): string {
-  const pathCandidates = (env.PATH ?? "")
-    .split(path.delimiter)
-    .map((entry) => entry.trim().replace(/^"|"$/g, ""))
-    .filter(Boolean)
-    .map((entry) => path.join(entry, "pwsh.exe"));
-
-  const programFilesRoots = [
-    process.env.ProgramW6432,
-    process.env.ProgramFiles,
-    "C:\\Program Files",
-  ].filter((value): value is string => Boolean(value));
-
-  const candidates = [
-    ...pathCandidates,
-    ...programFilesRoots.map((root) =>
-      path.join(root, "PowerShell", "7", "pwsh.exe"),
-    ),
-  ]
-    .filter((candidate, index, all) => all.indexOf(candidate) === index)
-    .filter((candidate) => existsSync(candidate));
-
-  for (const candidate of candidates) {
-    const probe = spawnSync(
-      candidate,
-      [
-        "-NoLogo",
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        "$PSVersionTable.PSVersion.ToString()",
-      ],
-      {
-        env,
-        encoding: "utf8",
-        windowsHide: true,
-        timeout: 5_000,
-      },
-    );
-    if (
-      probe.status === 0 &&
-      isCompatibleAppContainerPowerShellVersion(probe.stdout ?? "")
-    ) {
-      return candidate;
-    }
-  }
-
-  throw new Error(
-    "Windows Interactive/Plan sandbox requires PowerShell 7.6.2 or newer. " +
-      "Earlier PowerShell releases have known AppContainer filesystem-provider " +
-      "initialization defects; StamCont fails closed instead of weakening the sandbox.",
-  );
-}
 
 const WINDOWS_SANDBOX_LAUNCHER = String.raw`
 param(
@@ -372,8 +296,8 @@ public static class StamContAppContainer
 
     public static int Run(
         string profileName,
-        string powerShellExecutable,
-        string encodedCommand,
+        string commandInterpreter,
+        string command,
         string workingDirectory,
         string stdoutPath,
         string stderrPath)
@@ -546,16 +470,15 @@ public static class StamContAppContainer
                     "SetInformationJobObject failed");
             }
 
-            string powerShell = powerShellExecutable;
-            // Pass the model-controlled command with PowerShell's
-            // EncodedCommand transport. It is UTF-16LE base64, contains no
-            // shell metacharacters, and avoids depending on an AppContainer-
-            // readable command file outside the workspace.
+            // Match StamCont's existing Windows shell contract: COMSPEC/cmd.
+            // The command reaches cmd directly inside the AppContainer; it is
+            // never parsed by the privileged outer launcher.
+            string shell = commandInterpreter;
             StringBuilder commandLine = new StringBuilder(
-                "\"" + powerShell + "\"" +
-                " -NoLogo -NoProfile -NonInteractive" +
-                " -ExecutionPolicy Bypass -EncodedCommand " +
-                encodedCommand);
+                "\"" + shell + "\"" +
+                " /d /s /c \"" +
+                command +
+                "\"");
 
             STARTUPINFOEX startup = new STARTUPINFOEX();
             startup.StartupInfo.cb =
@@ -567,7 +490,7 @@ public static class StamContAppContainer
             startup.lpAttributeList = attributeList;
 
             if (!CreateProcessW(
-                powerShell,
+                shell,
                 commandLine,
                 IntPtr.Zero,
                 IntPtr.Zero,
@@ -751,7 +674,7 @@ try {
     @([string]$config.Cwd) +
     @([string]$config.HomeDirectory) +
     @([string]$config.TempDirectory) +
-    @([string]$config.PowerShellExecutable) +
+    @([string]$config.CommandInterpreter) +
     @($config.PathEntries)
   )) {
     if (-not [string]::IsNullOrWhiteSpace([string]$target)) {
@@ -778,11 +701,14 @@ try {
 
   $stdoutPath = Join-Path ([string]$config.HomeDirectory) "sandbox-stdout.txt"
   $stderrPath = Join-Path ([string]$config.HomeDirectory) "sandbox-stderr.txt"
+  $commandText = [Text.Encoding]::UTF8.GetString(
+    [Convert]::FromBase64String([string]$config.CommandUtf8Base64)
+  )
 
   $exitCode = [StamContAppContainer]::Run(
     [string]$config.ProfileName,
-    [string]$config.PowerShellExecutable,
-    [string]$config.CommandBase64,
+    [string]$config.CommandInterpreter,
+    $commandText,
     [string]$config.Cwd,
     $stdoutPath,
     $stderrPath
@@ -854,13 +780,17 @@ export function spawnWindowsAppContainerShell(
     .split(path.delimiter)
     .map((entry) => entry.trim().replace(/^"|"$/g, ""))
     .filter(Boolean);
-  const sandboxPowerShell = resolveAppContainerPowerShell(options.env);
-  const sandboxPowerShellDir = path.dirname(sandboxPowerShell);
+  const systemRoot =
+    options.env.SYSTEMROOT || options.env.WINDIR || "C:\\Windows";
+  const commandInterpreter =
+    options.env.COMSPEC || path.join(systemRoot, "System32", "cmd.exe");
+  const commandInterpreterDir = path.dirname(commandInterpreter);
   const sandboxPathEntries = [
-    ...new Set([...pathEntries, sandboxPowerShellDir]),
+    ...new Set([...pathEntries, commandInterpreterDir]),
   ];
   const sandboxEnv = {
     ...options.env,
+    COMSPEC: commandInterpreter,
     PATH: sandboxPathEntries.join(path.delimiter),
   };
 
@@ -872,9 +802,8 @@ export function spawnWindowsAppContainerShell(
     HomeDirectory: options.homeDirectory,
     TempDirectory: options.tempDirectory,
     PathEntries: sandboxPathEntries,
-    PowerShellExecutable: sandboxPowerShell,
-    // PowerShell -EncodedCommand requires UTF-16LE.
-    CommandBase64: Buffer.from(command, "utf16le").toString("base64"),
+    CommandInterpreter: commandInterpreter,
+    CommandUtf8Base64: Buffer.from(command, "utf8").toString("base64"),
   };
   const configBase64 = Buffer.from(
     JSON.stringify(config),
