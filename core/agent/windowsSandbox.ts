@@ -552,8 +552,7 @@ public static class StamContAppContainer
     public static int Run(
         string profileName,
         string commandInterpreter,
-        string commandScriptPath,
-        string directCommand,
+        string commandText,
         string workingDirectory)
     {
         IntPtr appContainerSid = IntPtr.Zero;
@@ -740,31 +739,16 @@ public static class StamContAppContainer
             }
 
             // Keep process creation narrow: SECURITY_CAPABILITIES establishes
-            // the AppContainer and JOB_LIST atomically attaches the owned
-            // kill-on-close process tree. The untrusted command lives in a
-            // sandbox-private .cmd file. cmd.exe itself opens the capture files
-            // after entering the AppContainer, avoiding cross-boundary handle
-            // inheritance entirely.
+            // the AppContainer, JOB_LIST atomically attaches the owned
+            // kill-on-close process tree, and HANDLE_LIST exposes only the
+            // broker's three standard streams. The decoded command is passed
+            // directly to cmd.exe; no host-side command or capture files are
+            // part of the execution path.
             string shell = commandInterpreter;
             char quote = '"';
-            StringBuilder commandLine;
-            if (!String.IsNullOrWhiteSpace(directCommand))
-            {
-                commandLine = new StringBuilder(
-                    quote + shell + quote +
-                    " /d /s /c " + directCommand);
-            }
-            else
-            {
-                // cmd.exe's documented nested-quote form for executing a
-                // quoted batch-file path. Output is carried by inherited
-                // standard handles rather than filesystem redirection.
-                commandLine = new StringBuilder(
-                    quote + shell + quote +
-                    " /d /s /c " + quote + quote +
-                    commandScriptPath +
-                    quote + quote);
-            }
+            StringBuilder commandLine = new StringBuilder(
+                quote + shell + quote +
+                " /d /s /c " + commandText);
 
             STARTUPINFOEX startup = new STARTUPINFOEX();
             startup.StartupInfo.cb =
@@ -1012,20 +996,14 @@ try {
   $env:TMP = $profileTemp
   $env:TMPDIR = $profileTemp
 
-  $commandPath = Join-Path $profileHome "sandbox-command.cmd"
   $commandText = [Text.Encoding]::UTF8.GetString(
     [Convert]::FromBase64String([string]$config.CommandUtf8Base64)
   )
-  [IO.File]::WriteAllText(
-    $commandPath,
-    "@echo off" + [Environment]::NewLine + $commandText + [Environment]::NewLine + "exit /b %errorlevel%" + [Environment]::NewLine,
-    [Text.UTF8Encoding]::new($false)
-  )
+
   if ([bool]$config.Diagnostics) {
     $probeExitCode = [StamContAppContainer]::Run(
       [string]$config.ProfileName,
       [string]$config.CommandInterpreter,
-      "",
       "exit /b 37",
       [string]$config.Cwd
     )
@@ -1037,8 +1015,7 @@ try {
       $processExitCode = [StamContAppContainer]::Run(
         [string]$config.ProfileName,
         [string]$config.CommandInterpreter,
-        $commandPath,
-        "",
+        $commandText,
         [string]$config.Cwd
       )
     }
@@ -1047,15 +1024,14 @@ try {
     $processExitCode = [StamContAppContainer]::Run(
       [string]$config.ProfileName,
       [string]$config.CommandInterpreter,
-      $commandPath,
-      "",
+      $commandText,
       [string]$config.Cwd
     )
   }
 
   if ([bool]$config.Diagnostics) {
     [Console]::Error.WriteLine(
-      "[stamcont-sandbox-debug] exit=$processExitCode commandExists=$(Test-Path -LiteralPath $commandPath)"
+      "[stamcont-sandbox-debug] exit=$processExitCode"
     )
   }
 
