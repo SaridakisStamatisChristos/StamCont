@@ -8,10 +8,6 @@ interface ElementSize {
   isResizing: boolean;
 }
 
-interface UseElementSizeOptions {
-  debounceMs?: number;
-}
-
 export const useElementSize = (
   ref: RefObject<HTMLElement>,
   debounceMs = 250,
