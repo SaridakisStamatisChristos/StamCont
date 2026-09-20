@@ -80,6 +80,17 @@ jobs:
         working-directory: core
         run: npm run vitest -- agent/sandbox.vitest.ts agent/sandbox.shell-security.vitest.ts agent/execution.vitest.ts
 
+      - name: Dump Windows sandbox diagnostics
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $path = Join-Path $env:RUNNER_TEMP 'stamcont-windows-sandbox-debug.log'
+          if (Test-Path -LiteralPath $path) {
+            Get-Content -LiteralPath $path
+          } else {
+            Write-Host 'No Windows sandbox diagnostics file was produced.'
+          }
+
       - name: Test restricted fetch transport
         working-directory: packages/fetch
         run: npm test -- src/fetch.test.ts
