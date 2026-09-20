@@ -26,11 +26,24 @@ function isCompatibleAppContainerPowerShellVersion(value: string): boolean {
 }
 
 function resolveAppContainerPowerShell(env: NodeJS.ProcessEnv): string {
-  const candidates = (env.PATH ?? "")
+  const pathCandidates = (env.PATH ?? "")
     .split(path.delimiter)
     .map((entry) => entry.trim().replace(/^"|"$/g, ""))
     .filter(Boolean)
-    .map((entry) => path.join(entry, "pwsh.exe"))
+    .map((entry) => path.join(entry, "pwsh.exe"));
+
+  const programFilesRoots = [
+    process.env.ProgramW6432,
+    process.env.ProgramFiles,
+    "C:\\Program Files",
+  ].filter((value): value is string => Boolean(value));
+
+  const candidates = [
+    ...pathCandidates,
+    ...programFilesRoots.map((root) =>
+      path.join(root, "PowerShell", "7", "pwsh.exe"),
+    ),
+  ]
     .filter((candidate, index, all) => all.indexOf(candidate) === index)
     .filter((candidate) => existsSync(candidate));
 
