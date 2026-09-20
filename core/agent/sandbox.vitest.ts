@@ -1,6 +1,7 @@
 import {
   access,
   mkdtemp,
+  realpath,
   mkdir,
   readFile,
   rm,
@@ -70,7 +71,9 @@ describe("SandboxExecutionBackend filesystem confinement", () => {
     const backend = new SandboxExecutionBackend(ideWithWorkspaces(rootA, rootB));
     const resolved = await backend.resolveExistingPath("target.txt");
 
-    expect(resolved?.displayPath).toBe(path.join(rootB, "target.txt"));
+    expect(resolved?.displayPath).toBe(
+      await realpath(path.join(rootB, "target.txt")),
+    );
     await expect(backend.readFile(resolved!)).resolves.toBe("ok");
   });
 
