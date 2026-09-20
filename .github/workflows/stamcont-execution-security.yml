@@ -19,6 +19,7 @@ concurrency:
 env:
   CI: "true"
   IGNORE_API_KEY_TESTS: "true"
+  STAMCONT_REQUIRE_OS_SANDBOX_TESTS: "1"
 
 jobs:
   execution-security:
