@@ -37,7 +37,13 @@ async function main() {
         if (runtime.has(key.toUpperCase())) env[key.toUpperCase()] = value;
       }
     }
-    const command = "echo stamcont-probe-command";
+    const command = [
+      "echo stamcont-probe-command",
+      "echo TEMP=%TEMP%",
+      'if not exist "%TEMP%" exit /b 41',
+      'echo probe-temp>"%TEMP%\\probe-marker"',
+      'type "%TEMP%\\probe-marker"',
+    ].join(" & ");
     const environmentPayload = Object.entries(childEnv)
       .filter(([key, value]) =>
         typeof value === "string" &&
