@@ -562,6 +562,27 @@ function Grant-SandboxAcl {
   }
 }
 
+function Grant-DriveRootMetadataAccess {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$TargetPath
+  )
+
+  if (-not (Test-Path -LiteralPath $TargetPath)) {
+    return
+  }
+
+  # PowerShell inside a regular AppContainer needs to stat the volume root in
+  # order to mount its FileSystem PSDrive. Grant the ephemeral AppContainer SID
+  # RX on the root object only: no OI/CI inheritance and no recursive /T. Child
+  # directories therefore remain governed by their existing ACLs.
+  & icacls.exe $TargetPath /grant "*$($sid):(RX)" /Q | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    throw "Unable to grant AppContainer metadata access to drive root $TargetPath"
+  }
+  $grantedPaths.Add($TargetPath)
+}
+
 function Deny-SandboxWrites {
   param(
     [Parameter(Mandatory = $true)]
@@ -580,6 +601,33 @@ function Deny-SandboxWrites {
 
 try {
   $sid = [StamContAppContainer]::CreateProfile([string]$config.ProfileName)
+
+  # Windows PowerShell enumerates logical drives and then probes each volume
+  # root before creating FileSystem PSDrives. AppContainer tokens commonly
+  # cannot stat C:\ (or another volume root) by default, which prevents module
+  # auto-loading even when the actual workspace has an explicit ACL grant.
+  # Expose root metadata only for drives StamCont intentionally references.
+  $driveRoots = [System.Collections.Generic.HashSet[string]]::new(
+    [StringComparer]::OrdinalIgnoreCase
+  )
+  foreach ($candidate in @(
+    @($config.Roots) +
+    @([string]$config.Cwd) +
+    @([string]$config.HomeDirectory) +
+    @([string]$config.TempDirectory) +
+    @($config.PathEntries)
+  )) {
+    if (-not [string]::IsNullOrWhiteSpace([string]$candidate)) {
+      $driveRoot = [IO.Path]::GetPathRoot([string]$candidate)
+      if (-not [string]::IsNullOrWhiteSpace($driveRoot) -and
+          -not $driveRoot.StartsWith("\\")) {
+        [void]$driveRoots.Add($driveRoot)
+      }
+    }
+  }
+  foreach ($driveRoot in $driveRoots) {
+    Grant-DriveRootMetadataAccess -TargetPath $driveRoot
+  }
 
   $workspaceRights = if ([bool]$config.ReadOnly) { "RX" } else { "M" }
 
