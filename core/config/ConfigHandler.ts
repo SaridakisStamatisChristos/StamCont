@@ -235,7 +235,6 @@ export class ConfigHandler {
   // Because of e.g. MCP singleton and docs service using things from config
   // Could improve this
   async reloadConfig(reason: string, injectErrors?: ConfigValidationError[]) {
-    const startTime = performance.now();
     this.totalConfigReloads += 1;
     // console.log(`Reloading config (#${this.totalConfigLoads}): ${reason}`); // Uncomment to see config loading logs
     if (!this.currentProfile) {

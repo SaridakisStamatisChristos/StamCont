@@ -80,7 +80,6 @@ class DFSWalker {
 
   // walk is a depth-first search implementation
   public async *walk(): AsyncGenerator<string> {
-    const start = Date.now();
     let ignoreFileTime = 0;
     let ignoreTime = 0;
     let listDirTime = 0;

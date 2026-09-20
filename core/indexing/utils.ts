@@ -4,9 +4,6 @@ import { IndexTag } from "..";
 // Maximum length for table names to stay under OS filename limits
 const MAX_TABLE_NAME_LENGTH = 240;
 
-// Leave room for branch and artifactId
-const MAX_DIR_LENGTH = 200;
-
 /**
  * Converts an IndexTag to a string representation, safely handling long paths.
  *
