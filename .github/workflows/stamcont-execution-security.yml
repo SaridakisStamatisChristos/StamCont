@@ -41,7 +41,22 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y bubblewrap
+          sudo apt-get install -y bubblewrap apparmor-utils
+
+          # Ubuntu 24.04+ restricts unprivileged user namespaces through
+          # AppArmor. Give only the bwrap executable permission to create the
+          # namespaces the product sandbox requires; do not disable the host
+          # restriction globally.
+          sudo tee /etc/apparmor.d/stamcont-bwrap >/dev/null <<'EOF'
+          abi <abi/4.0>,
+          include <tunables/global>
+
+          profile stamcont-bwrap /usr/bin/bwrap flags=(unconfined) {
+            userns,
+            include if exists <local/stamcont-bwrap>
+          }
+          EOF
+          sudo apparmor_parser -r /etc/apparmor.d/stamcont-bwrap
 
       - name: Build local packages
         uses: ./.github/actions/setup-packages
