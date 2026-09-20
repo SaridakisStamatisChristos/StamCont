@@ -103,13 +103,40 @@ The current host-backed surface includes:
 
 Relative paths continue to resolve from the first local workspace when one exists, preserving the normal coding workflow. Absolute paths provide the whole-machine path needed for cross-project Full Access work.
 
-Plan and Interactive deliberately continue to use `IdeExecutionBackend`; this change does not widen their filesystem or shell boundary.
+### Sandbox Executor
+
+Plan and Interactive now select `SandboxExecutionBackend` instead of the legacy IDE-only execution path.
+
+The sandbox enforces workspace-scoped execution across both IDE and CLI surfaces:
+
+- canonical `realpath` validation for existing files and directories;
+- multi-root workspace support;
+- rejection of absolute paths outside configured workspace roots;
+- symlink/junction escape rejection after canonicalization;
+- writable-path validation against the nearest existing ancestor before directories/files are created;
+- host-side Core path authorization for GUI edit tools, returning the canonical URI that the webview is allowed to use;
+- CLI argument preprocessing and execution-time revalidation through the same profile-selected backend;
+- filtered child-process environments with `HOME` / `USERPROFILE` relocated into the workspace;
+- owned process-group tracking and descendant process-tree termination on cancellation;
+- restricted native HTTP(S) fetches that reject localhost, private, link-local, multicast, and other reserved targets and revalidate redirects.
+
+Sandboxed shell execution is OS-enforced where a supported containment primitive is available:
+
+- Linux uses `bubblewrap` with isolated namespaces and `--unshare-net`;
+- macOS uses `sandbox-exec` with workspace file rules and denied network access;
+- unsupported platforms fail closed for Interactive/Plan shell execution rather than silently falling back to an unrestricted host shell.
+
+Plan and Interactive therefore share the same filesystem/process sandbox boundary, while the kernel capability profile still distinguishes what the model is permitted to do. In particular, Plan retains read-only filesystem capability even though it uses the same sandbox backend.
 
 ## Capability and enforcement boundary
 
-The capability model still distinguishes workspace-scoped and unrestricted filesystem/shell access at the dispatcher boundary. For **Full Access**, those unrestricted capabilities now select real host filesystem/shell execution for the path-aware Core tools described above.
+The capability model distinguishes workspace-scoped and unrestricted filesystem/shell access at the dispatcher boundary.
 
-For **Plan** and **Interactive**, the existing `workspace` capability labels are still not an OS sandbox. Real path/process/network containment remains the Sandbox Executor work and must not be claimed until it is implemented.
+- **Full Access** selects `HostExecutionBackend` and uses the authority of the current OS user without a StamCont workspace allowlist.
+- **Interactive** selects `SandboxExecutionBackend` with workspace read/write, sandboxed shell execution, restricted HTTP(S), environment filtering, and owned process cancellation.
+- **Plan** also selects `SandboxExecutionBackend`, but its kernel capabilities continue to deny filesystem writes.
+
+The sandbox is intentionally fail-closed when process isolation cannot be enforced. Remaining hardening work includes native Windows shell containment, broader cross-platform enforcement coverage, and stronger HTTP DNS-pinning/connection binding against DNS-rebinding races.
 
 ## Current API
 
@@ -139,8 +166,8 @@ const result = await kernel.executeTool(
 
 The major remaining product-facing work is:
 
-- finish hardening/verification of the Host Executor across supported platforms and any remaining path-sensitive tool seams;
-- implement a real Sandbox Executor for Interactive, including path canonicalization, symlink/junction escape prevention, process inheritance, environment filtering, network policy, and background-process ownership;
-- continue promoting the streamed model loop toward a provider-neutral `AgentLoop` contract after the execution backends are stable.
+- harden the execution backends across supported platforms, especially native Windows process containment and remaining platform-specific edge cases;
+- strengthen restricted HTTP transport against DNS-rebinding/connection-race classes beyond target prevalidation and redirect revalidation;
+- continue promoting the streamed model loop toward a provider-neutral `AgentLoop` contract now that Host and Sandbox execution backends are established.
 
 The separate Orchestrator repository remains a later higher-level planning/DAG/durability layer and is not a dependency of the kernel.
