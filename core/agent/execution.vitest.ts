@@ -10,7 +10,7 @@ import {
   createExecutionBackend,
   HostExecutionBackend,
 } from "./execution";
-import { SandboxExecutionBackend } from "./sandbox";
+import { SandboxExecutionBackend, SandboxViolationError } from "./sandbox";
 
 const tempRoots: string[] = [];
 
@@ -119,18 +119,25 @@ describe("HostExecutionBackend", () => {
 });
 
 describe("execution backend selection", () => {
-  it("selects host execution only for full access", async () => {
+  it("selects host execution only for full access and keeps Plan read-only", async () => {
     const workspace = await tempDir("stamcont-workspace-");
     const ide = ideWithWorkspace(workspace);
 
-    expect(createExecutionBackend("full_access", ide)).toBeInstanceOf(
-      HostExecutionBackend,
-    );
-    expect(createExecutionBackend("interactive", ide)).toBeInstanceOf(
-      SandboxExecutionBackend,
-    );
-    expect(createExecutionBackend("plan", ide)).toBeInstanceOf(
-      SandboxExecutionBackend,
+    const host = createExecutionBackend("full_access", ide);
+    const interactive = createExecutionBackend("interactive", ide);
+    const plan = createExecutionBackend("plan", ide);
+
+    expect(host).toBeInstanceOf(HostExecutionBackend);
+    expect(interactive).toBeInstanceOf(SandboxExecutionBackend);
+    expect(plan).toBeInstanceOf(SandboxExecutionBackend);
+
+    await expect(
+      interactive.resolveWritablePath("interactive.txt"),
+    ).resolves.toMatchObject({
+      displayPath: path.join(workspace, "interactive.txt"),
+    });
+    await expect(plan.resolveWritablePath("plan.txt")).rejects.toBeInstanceOf(
+      SandboxViolationError,
     );
   });
 });
