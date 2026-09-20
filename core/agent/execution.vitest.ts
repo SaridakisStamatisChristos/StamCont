@@ -1,4 +1,10 @@
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  realpath,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -110,11 +116,17 @@ describe("HostExecutionBackend", () => {
       });
     });
 
-    const normalize = (value: string) =>
+    const canonicalOutput = await realpath(output);
+    const canonicalOutside = await realpath(outside);
+    expect(
       process.platform === "win32"
-        ? path.resolve(value).toLowerCase()
-        : path.resolve(value);
-    expect(normalize(output)).toBe(normalize(outside));
+        ? canonicalOutput.toLowerCase()
+        : canonicalOutput,
+    ).toBe(
+      process.platform === "win32"
+        ? canonicalOutside.toLowerCase()
+        : canonicalOutside,
+    );
   });
 });
 
@@ -131,10 +143,11 @@ describe("execution backend selection", () => {
     expect(interactive).toBeInstanceOf(SandboxExecutionBackend);
     expect(plan).toBeInstanceOf(SandboxExecutionBackend);
 
+    const canonicalWorkspace = await realpath(workspace);
     await expect(
       interactive.resolveWritablePath("interactive.txt"),
     ).resolves.toMatchObject({
-      displayPath: path.join(workspace, "interactive.txt"),
+      displayPath: path.join(canonicalWorkspace, "interactive.txt"),
     });
     await expect(plan.resolveWritablePath("plan.txt")).rejects.toBeInstanceOf(
       SandboxViolationError,
