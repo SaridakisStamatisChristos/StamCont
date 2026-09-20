@@ -34,6 +34,7 @@ public static class StamContAppContainer
     public static string LastStdoutBase64 = "";
     public static string LastStderrBase64 = "";
     private const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
+    private const uint CREATE_SUSPENDED = 0x00000004;
     private const uint STARTF_USESTDHANDLES = 0x00000100;
     private const uint HANDLE_FLAG_INHERIT = 0x00000001;
     private const uint CREATE_NO_WINDOW = 0x08000000;
@@ -56,8 +57,6 @@ public static class StamContAppContainer
     private const uint INFINITE = 0xFFFFFFFF;
     private static readonly IntPtr PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES =
         new IntPtr(0x00020009);
-    private static readonly IntPtr PROC_THREAD_ATTRIBUTE_JOB_LIST =
-        new IntPtr(0x0002000D);
     private static readonly IntPtr PROC_THREAD_ATTRIBUTE_HANDLE_LIST =
         new IntPtr(0x00020002);
 
@@ -283,6 +282,14 @@ public static class StamContAppContainer
         int JobObjectInfoClass,
         IntPtr lpJobObjectInfo,
         uint cbJobObjectInfoLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool AssignProcessToJobObject(
+        IntPtr hJob,
+        IntPtr hProcess);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint ResumeThread(IntPtr hThread);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern uint WaitForSingleObject(
@@ -680,7 +687,6 @@ public static class StamContAppContainer
         IntPtr securityCapabilitiesPtr = IntPtr.Zero;
         IntPtr job = IntPtr.Zero;
         IntPtr jobInfoPtr = IntPtr.Zero;
-        IntPtr jobListPtr = IntPtr.Zero;
         IntPtr handleListPtr = IntPtr.Zero;
         IntPtr childStdIn = IntPtr.Zero;
         IntPtr stdinWrite = IntPtr.Zero;
@@ -729,13 +735,13 @@ public static class StamContAppContainer
             IntPtr attributeListSize = IntPtr.Zero;
             InitializeProcThreadAttributeList(
                 IntPtr.Zero,
-                3,
+                2,
                 0,
                 ref attributeListSize);
             attributeList = Marshal.AllocHGlobal(attributeListSize);
             if (!InitializeProcThreadAttributeList(
                 attributeList,
-                3,
+                2,
                 0,
                 ref attributeListSize))
             {
@@ -785,25 +791,9 @@ public static class StamContAppContainer
                     "SetInformationJobObject failed");
             }
 
-            // Assign the child to StamCont's kill-on-close Job Object as a
-            // process-creation attribute. Windows performs this assignment
-            // before the initial thread is allowed to run, eliminating the
-            // suspended-create/assign/resume window entirely.
-            jobListPtr = Marshal.AllocHGlobal(IntPtr.Size);
-            Marshal.WriteIntPtr(jobListPtr, job);
-            if (!UpdateProcThreadAttribute(
-                attributeList,
-                0,
-                PROC_THREAD_ATTRIBUTE_JOB_LIST,
-                jobListPtr,
-                new IntPtr(IntPtr.Size),
-                IntPtr.Zero,
-                IntPtr.Zero))
-            {
-                throw new Win32Exception(
-                    Marshal.GetLastWin32Error(),
-                    "Setting AppContainer Job Object attribute failed");
-            }
+            // The child will be created suspended, attached to this Job
+            // Object, and only then resumed. No untrusted instruction executes
+            // outside StamCont's kill-on-close descendant boundary.
 
             // Use broker-owned anonymous pipes for all standard streams.
             // The sandbox is non-interactive: stdin receives a private pipe
@@ -879,11 +869,9 @@ public static class StamContAppContainer
             }
 
             // Keep process creation narrow: SECURITY_CAPABILITIES establishes
-            // the AppContainer, JOB_LIST atomically attaches the owned
-            // kill-on-close process tree, and HANDLE_LIST exposes only stdin
-            // plus the two broker-owned output pipes. The decoded command is
-            // passed directly to cmd.exe; no host-side command/capture files
-            // are part of the execution path.
+            // the AppContainer and HANDLE_LIST exposes only stdin plus the two
+            // broker-owned output pipes. The process starts suspended, is
+            // assigned to the kill-on-close Job Object, then resumes.
             string shell = commandInterpreter;
             char quote = '"';
             StringBuilder commandLine = new StringBuilder(
@@ -905,7 +893,7 @@ public static class StamContAppContainer
                 IntPtr.Zero,
                 IntPtr.Zero,
                 true,
-                EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW,
+                EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW | CREATE_SUSPENDED,
                 IntPtr.Zero,
                 workingDirectory,
                 ref startup,
@@ -914,6 +902,21 @@ public static class StamContAppContainer
                 throw new Win32Exception(
                     Marshal.GetLastWin32Error(),
                     "CreateProcessW(AppContainer) failed");
+            }
+
+            if (!AssignProcessToJobObject(job, processInfo.hProcess))
+            {
+                throw new Win32Exception(
+                    Marshal.GetLastWin32Error(),
+                    "AssignProcessToJobObject failed");
+            }
+
+            uint previousSuspendCount = ResumeThread(processInfo.hThread);
+            if (previousSuspendCount == 0xFFFFFFFF)
+            {
+                throw new Win32Exception(
+                    Marshal.GetLastWin32Error(),
+                    "ResumeThread failed for AppContainer child");
             }
 
             // The child owns its inherited stdin read handle. Drop both broker
@@ -1084,10 +1087,6 @@ public static class StamContAppContainer
             outputStop.Dispose();
             stdoutBuffer.Dispose();
             stderrBuffer.Dispose();
-            if (jobListPtr != IntPtr.Zero)
-            {
-                Marshal.FreeHGlobal(jobListPtr);
-            }
             if (jobInfoPtr != IntPtr.Zero)
             {
                 Marshal.FreeHGlobal(jobInfoPtr);
