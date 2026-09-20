@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -1120,6 +1120,28 @@ try {
   )
 
   if ([bool]$config.Diagnostics) {
+    $commandBytes = [Text.Encoding]::UTF8.GetBytes($commandText)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+      $commandHash = ([BitConverter]::ToString(
+        $sha.ComputeHash($commandBytes)
+      )).Replace("-", "").ToLowerInvariant()
+    }
+    finally {
+      $sha.Dispose()
+    }
+
+    if ($commandBytes.Length -ne [int]$config.CommandUtf8Length) {
+      $processExitCode = 246
+      throw "Decoded sandbox command length mismatch"
+    }
+    if ($commandHash -ne [string]$config.CommandSha256) {
+      $processExitCode = 247
+      throw "Decoded sandbox command hash mismatch"
+    }
+  }
+
+  if ([bool]$config.Diagnostics) {
     # Probe 1: native lowbox creation plus compound cmd.exe parsing.
     $probeExitCode = [StamContAppContainer]::Run(
       [string]$config.ProfileName,
@@ -1220,8 +1242,12 @@ try {
   }
 
   if ([bool]$config.Diagnostics) {
-    [Console]::Error.WriteLine(
-      "[stamcont-sandbox-debug] exit=$processExitCode stdoutBytes=$([StamContAppContainer]::LastStdoutBytes) stderrBytes=$([StamContAppContainer]::LastStderrBytes)"
+    Write-Output (
+      "[stamcont-sandbox-debug] exit=$processExitCode " +
+      "stdoutBytes=$([StamContAppContainer]::LastStdoutBytes) " +
+      "stderrBytes=$([StamContAppContainer]::LastStderrBytes) " +
+      "commandBytes=$([Text.Encoding]::UTF8.GetByteCount($commandText)) " +
+      "commandSha256=$commandHash"
     )
   }
 
@@ -1309,6 +1335,8 @@ export function spawnWindowsAppContainerShell(
     PathEntries: sandboxPathEntries,
     CommandInterpreter: commandInterpreter,
     CommandUtf8Base64: Buffer.from(command, "utf8").toString("base64"),
+    CommandUtf8Length: Buffer.byteLength(command, "utf8"),
+    CommandSha256: createHash("sha256").update(command, "utf8").digest("hex"),
     Diagnostics: process.env.STAMCONT_REQUIRE_OS_SANDBOX_TESTS === "1",
   };
   const configBase64 = Buffer.from(
