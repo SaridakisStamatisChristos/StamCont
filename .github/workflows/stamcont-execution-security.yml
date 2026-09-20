@@ -22,6 +22,15 @@ env:
   STAMCONT_REQUIRE_OS_SANDBOX_TESTS: "1"
 
 jobs:
+  windows-launcher-probe:
+    name: Windows launcher startup probe
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: Probe native launcher without package setup
+        run: node scripts/stamcont-windows-probe.cjs
+
   execution-security:
     name: Security / ${{ matrix.os }}
     strategy:
