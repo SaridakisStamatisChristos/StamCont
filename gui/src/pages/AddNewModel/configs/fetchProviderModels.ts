@@ -1,7 +1,6 @@
 import { ModelProviderTags } from "../../../components/modelSelection/utils";
 import { IIdeMessenger } from "../../../context/IdeMessenger";
-import { ModelPackage } from "./models";
-import { models } from "./models";
+import { models, type ModelPackage } from "./models";
 import { ollamaStaticModels, providers } from "./providers";
 
 interface FetchedModel {
