@@ -1,4 +1,5 @@
 import { getUriDescription } from "../../util/uri";
+import { getExecutionBackend } from "../../agent/execution";
 
 import { ToolImpl } from ".";
 import { throwIfFileIsSecurityConcern } from "../../indexing/ignore";
@@ -8,6 +9,13 @@ export const readCurrentlyOpenFileImpl: ToolImpl = async (_, extras) => {
   const result = await extras.ide.getCurrentFile();
 
   if (result) {
+    const backend = getExecutionBackend(extras);
+    if (backend.kind === "sandbox") {
+      const resolved = await backend.resolveExistingPath(result.path);
+      if (!resolved) {
+        throw new Error("Current file is not accessible inside the workspace sandbox");
+      }
+    }
     throwIfFileIsSecurityConcern(result.path);
     await throwIfFileExceedsHalfOfContext(
       result.path,

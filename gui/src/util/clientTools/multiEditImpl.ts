@@ -1,22 +1,31 @@
 import { validateMultiEdit } from "core/edit/searchAndReplace/multiEditValidation";
 import { executeMultiFindAndReplace } from "core/edit/searchAndReplace/performReplace";
-import { validateSearchAndReplaceFilepath } from "core/edit/searchAndReplace/validateArgs";
+import { ContinueError, ContinueErrorReason } from "core/util/errors";
 import { v4 as uuid } from "uuid";
+
 import { applyForEditTool } from "../../redux/thunks/handleApplyStateUpdate";
+
 import { ClientToolImpl } from "./callClientTool";
+import { resolveClientToolExistingPath } from "./resolveClientToolPath";
 
 export const multiEditImpl: ClientToolImpl = async (
   args,
   toolCallId,
   extras,
 ) => {
+  if (!args.filepath || typeof args.filepath !== "string") {
+    throw new ContinueError(
+      ContinueErrorReason.FindAndReplaceMissingFilepath,
+      "filepath (string) is required",
+    );
+  }
+
   // Note that this is fully duplicate of what occurs in args preprocessing
   // This is to handle cases where file changes while tool call is pending
   const { edits } = validateMultiEdit(args);
-  const fileUri = await validateSearchAndReplaceFilepath(
+  const fileUri = await resolveClientToolExistingPath(
     args.filepath,
-    extras.ideMessenger.ide,
-    extras.getState().session?.executionProfile === "full_access",
+    extras,
   );
 
   const editingFileContents = await extras.ideMessenger.ide.readFile(fileUri);

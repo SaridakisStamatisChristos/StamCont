@@ -12,7 +12,7 @@ import {
 
 import { editTool, validateAndResolveFilePath } from "./edit.js";
 import { readFileTool } from "./readFile.js";
-import { Tool } from "./types.js";
+import { Tool, ToolRunContext } from "./types.js";
 import { generateDiff } from "./writeFile.js";
 
 export interface EditOperation {
@@ -132,21 +132,32 @@ WARNINGS:
       ],
     };
   },
-  run: async (args: {
-    file_path: string;
-    newContent: string;
-    originalContent: string;
-    editCount: number;
-  }) => {
+  run: async (
+    args: {
+      file_path: string;
+      newContent: string;
+      originalContent: string;
+      editCount: number;
+    },
+    context?: ToolRunContext,
+  ) => {
+    let filePath = args.file_path;
     try {
-      fs.writeFileSync(args.file_path, args.newContent, "utf-8");
+      if (context?.executionBackend) {
+        const target =
+          await context.executionBackend.resolveWritablePath(args.file_path);
+        filePath = target.displayPath;
+        await context.executionBackend.writeFile(target, args.newContent);
+      } else {
+        fs.writeFileSync(args.file_path, args.newContent, "utf-8");
+      }
 
       // Get lines for telemetry
       const { added, removed } = calculateLinesOfCodeDiff(
         args.originalContent,
         args.newContent,
       );
-      const language = getLanguageFromFilePath(args.file_path);
+      const language = getLanguageFromFilePath(filePath);
 
       if (added > 0) {
         telemetryService.recordLinesOfCodeModified("added", added, language);
@@ -163,17 +174,17 @@ WARNINGS:
       const diff = generateDiff(
         args.originalContent,
         args.newContent,
-        args.file_path,
+        filePath,
       );
 
-      return `Successfully edited ${args.file_path} with ${args.editCount} edit${args.editCount === 1 ? "" : "s"}\nDiff:\n${diff}`;
+      return `Successfully edited ${filePath} with ${args.editCount} edit${args.editCount === 1 ? "" : "s"}\nDiff:\n${diff}`;
     } catch (error) {
       if (error instanceof ContinueError) {
         throw error;
       }
       throw new ContinueError(
         ContinueErrorReason.FileWriteError,
-        `Error: failed to edit ${args.file_path}: ${
+        `Error: failed to edit ${filePath}: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );

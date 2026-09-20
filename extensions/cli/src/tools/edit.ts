@@ -14,7 +14,7 @@ import {
 
 import { EditOperation } from "./multiEdit.js";
 import { readFilesSet, readFileTool } from "./readFile.js";
-import { Tool } from "./types.js";
+import { Tool, ToolRunContext } from "./types.js";
 import { generateDiff } from "./writeFile.js";
 
 export function validateAndResolveFilePath(args: any): {
@@ -144,20 +144,31 @@ WARNINGS:
       ],
     };
   },
-  run: async (args: {
-    resolvedPath: string;
-    newContent: string;
-    oldContent: string;
-  }) => {
+  run: async (
+    args: {
+      resolvedPath: string;
+      newContent: string;
+      oldContent: string;
+    },
+    context?: ToolRunContext,
+  ) => {
+    let resolvedPath = args.resolvedPath;
     try {
-      fs.writeFileSync(args.resolvedPath, args.newContent, "utf-8");
+      if (context?.executionBackend) {
+        const target =
+          await context.executionBackend.resolveWritablePath(args.resolvedPath);
+        resolvedPath = target.displayPath;
+        await context.executionBackend.writeFile(target, args.newContent);
+      } else {
+        fs.writeFileSync(args.resolvedPath, args.newContent, "utf-8");
+      }
 
       // Get lines for telemetry
       const { added, removed } = calculateLinesOfCodeDiff(
         args.oldContent,
         args.newContent,
       );
-      const language = getLanguageFromFilePath(args.resolvedPath);
+      const language = getLanguageFromFilePath(resolvedPath);
 
       if (added > 0) {
         telemetryService.recordLinesOfCodeModified("added", added, language);
@@ -174,17 +185,17 @@ WARNINGS:
       const diff = generateDiff(
         args.oldContent,
         args.newContent,
-        args.resolvedPath,
+        resolvedPath,
       );
 
-      return `Successfully edited ${args.resolvedPath}\nDiff:\n${diff}`;
+      return `Successfully edited ${resolvedPath}\nDiff:\n${diff}`;
     } catch (error) {
       if (error instanceof ContinueError) {
         throw error;
       }
       throw new ContinueError(
         ContinueErrorReason.FileWriteError,
-        `Error: failed to edit ${args.resolvedPath}: ${
+        `Error: failed to edit ${resolvedPath}: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );

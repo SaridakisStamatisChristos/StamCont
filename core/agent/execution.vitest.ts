@@ -9,8 +9,8 @@ import type { IDE } from "..";
 import {
   createExecutionBackend,
   HostExecutionBackend,
-  IdeExecutionBackend,
 } from "./execution";
+import { SandboxExecutionBackend } from "./sandbox";
 
 const tempRoots: string[] = [];
 
@@ -127,10 +127,10 @@ describe("execution backend selection", () => {
       HostExecutionBackend,
     );
     expect(createExecutionBackend("interactive", ide)).toBeInstanceOf(
-      IdeExecutionBackend,
+      SandboxExecutionBackend,
     );
     expect(createExecutionBackend("plan", ide)).toBeInstanceOf(
-      IdeExecutionBackend,
+      SandboxExecutionBackend,
     );
   });
 });

@@ -8,9 +8,14 @@ import { ChatCompletionToolMessageParam } from "openai/resources/chat/completion
 
 import { ToolPermissionServiceState } from "src/services/ToolPermissionService.js";
 
+import { prepareCliToolArgs } from "../agent/cliExecution.js";
 import { checkToolPermission } from "../permissions/permissionChecker.js";
 import { toolPermissionManager } from "../permissions/permissionManager.js";
-import { ToolCallRequest, ToolPermissions } from "../permissions/types.js";
+import {
+  PermissionMode,
+  ToolCallRequest,
+  ToolPermissions,
+} from "../permissions/types.js";
 import {
   SERVICE_NAMES,
   serviceContainer,
@@ -386,6 +391,7 @@ export async function preprocessStreamedToolCalls(
   isHeadless: boolean,
   toolCalls: ToolCall[],
   callbacks?: StreamCallbacks,
+  permissionMode: PermissionMode = "normal",
 ): Promise<{
   preprocessedCalls: PreprocessedToolCall[];
   errorChatEntries: ChatCompletionToolMessageParam[];
@@ -407,18 +413,28 @@ export async function preprocessStreamedToolCalls(
 
       validateToolCallArgsPresent(toolCall, tool);
 
+      const prepared = await prepareCliToolArgs(
+        tool.name,
+        toolCall.arguments,
+        permissionMode,
+      );
       const preprocessedCall: PreprocessedToolCall = {
         ...toolCall,
+        arguments: prepared.args,
         tool,
       };
 
       if (tool.preprocess) {
         logger.debug("Preprocessing tool call args", {
           name: toolCall.name,
-          arguments: toolCall.arguments,
+          arguments: prepared.args,
         });
-        const preprocessed = await tool.preprocess(toolCall.arguments);
+        const preprocessed = await tool.preprocess(prepared.args);
         preprocessedCall.preprocessResult = preprocessed;
+      } else {
+        preprocessedCall.preprocessResult = {
+          args: prepared.args,
+        };
       }
 
       preprocessedCalls.push(preprocessedCall);

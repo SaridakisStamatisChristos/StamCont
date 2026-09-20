@@ -1,10 +1,11 @@
-import { ChildProcess, spawn } from "child_process";
-import fs from "fs";
+import { ChildProcess, spawn } from "node:child_process";
+import fs from "node:fs";
 
 import {
   evaluateTerminalCommandSecurity,
   type ToolPolicy,
 } from "@continuedev/terminal-security";
+import { terminateProcessTree } from "core/util/processTerminalStates.js";
 
 import { backgroundJobService } from "../services/BackgroundJobService.js";
 import { services } from "../services/index.js";
@@ -186,10 +187,35 @@ IMPORTANT: To edit files, use Edit/MultiEdit tools instead of bash commands (sed
 
     emitBashToolStarted();
 
+    const legacyShell = getShellCommand(command);
+    let child: ChildProcess;
+    if (context?.executionBackend) {
+      const backend = context.executionBackend;
+      const cwd = await backend.resolveWorkingDirectory(".");
+      child = backend.spawnShell(command, {
+        cwd,
+        env: process.env,
+      });
+    } else {
+      child = spawn(legacyShell.shell, legacyShell.args);
+    }
+
+    let cleanupAbort: () => void = () => {};
+    if (context?.executionSignal) {
+      const abort = () => terminateProcessTree(child, "SIGTERM");
+      if (context.executionSignal.aborted) {
+        abort();
+      } else {
+        context.executionSignal.addEventListener("abort", abort, {
+          once: true,
+        });
+        cleanupAbort = () => {
+          context.executionSignal?.removeEventListener("abort", abort);
+        };
+      }
+    }
+
     const terminalOutput: string = await new Promise((resolve, reject) => {
-      // Use same shell logic as core implementation
-      const { shell, args } = getShellCommand(command);
-      const child = spawn(shell, args);
       let stdout = "";
       let stderr = "";
       let timeoutId: NodeJS.Timeout;
@@ -234,8 +260,8 @@ IMPORTANT: To edit files, use Edit/MultiEdit tools instead of bash commands (sed
         // Detach stdout/stderr listeners so they don't accumulate in local
         // buffers or trigger chat history updates after the tool call resolves.
         // BackgroundJobService.createJobWithProcess attaches its own listeners.
-        child.stdout.removeListener("data", onStdout);
-        child.stderr.removeListener("data", onStderr);
+        child.stdout?.removeListener("data", onStdout);
+        child.stderr?.removeListener("data", onStderr);
 
         const job = backgroundJobService.createJobWithProcess(
           command,
@@ -270,7 +296,7 @@ IMPORTANT: To edit files, use Edit/MultiEdit tools instead of bash commands (sed
         timeoutId = setTimeout(() => {
           if (isResolved) return;
           isResolved = true;
-          child.kill();
+          terminateProcessTree(child, "SIGTERM");
           let output = stdout + (stderr ? `\nStderr: ${stderr}` : "");
           output += `\n\n[Command timed out after ${TIMEOUT_MS / 1000} seconds of no output]`;
 
@@ -314,10 +340,11 @@ IMPORTANT: To edit files, use Edit/MultiEdit tools instead of bash commands (sed
         showCurrentOutput();
       };
 
-      child.stdout.on("data", onStdout);
-      child.stderr.on("data", onStderr);
+      child.stdout?.on("data", onStdout);
+      child.stderr?.on("data", onStderr);
 
       child.on("close", (code) => {
+        cleanupAbort();
         if (isResolved) return;
         isResolved = true;
 
@@ -361,6 +388,7 @@ IMPORTANT: To edit files, use Edit/MultiEdit tools instead of bash commands (sed
       });
 
       child.on("error", (error) => {
+        cleanupAbort();
         if (isResolved) return;
         isResolved = true;
 

@@ -53,8 +53,14 @@ export const listFilesTool: Tool = {
       const files = fs.readdirSync(args.dirpath);
       const fileDetails = files.map((file) => {
         const fullPath = path.join(args.dirpath, file);
-        const stats = fs.statSync(fullPath);
-        const type = stats.isDirectory() ? "directory" : "file";
+        // Do not follow symlinks merely to list metadata. The directory itself
+        // is canonicalized through the execution backend before this point.
+        const stats = fs.lstatSync(fullPath);
+        const type = stats.isSymbolicLink()
+          ? "symlink"
+          : stats.isDirectory()
+            ? "directory"
+            : "file";
         const size = stats.isFile() ? `${stats.size} bytes` : "";
         return `${file} (${type}${size ? `, ${size}` : ""})`;
       });
