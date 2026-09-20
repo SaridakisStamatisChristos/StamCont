@@ -36,6 +36,17 @@ const skipPosixSandboxTests =
   (!requireOsSandboxTests && !posixSandboxAvailable);
 
 async function tempDir(prefix: string): Promise<string> {
+  // Windows AppContainer virtualizes writes under %USERPROFILE%\\AppData.
+  // Use the checked-out workspace for Windows OS-boundary tests so successful
+  // writes are host-visible and the assertions exercise DACL policy rather
+  // than AppData virtualization. Other platforms keep their native temp root.
+  const parent = process.platform === "win32" ? process.cwd() : os.tmpdir();
+  const dir = await mkdtemp(path.join(parent, prefix));
+  tempRoots.push(dir);
+  return dir;
+}
+
+async function appDataTempDir(prefix: string): Promise<string> {
   const dir = await mkdtemp(path.join(os.tmpdir(), prefix));
   tempRoots.push(dir);
   return dir;
@@ -105,6 +116,23 @@ afterEach(async () => {
 });
 
 describe("sandbox shell security properties", () => {
+  it.skipIf(process.platform !== "win32")(
+    "fails closed for Windows workspaces under virtualized AppData",
+    async () => {
+      const workspace = await appDataTempDir("stamcont-win-appdata-");
+      const backend = new SandboxExecutionBackend(ideWithWorkspace(workspace));
+      const cwd = await backend.resolveWorkingDirectory(".");
+
+      expect(() =>
+        backend.spawnShell("echo should-not-run", {
+          cwd,
+          env: process.env,
+          stdio: ["ignore", "pipe", "pipe"],
+        }),
+      ).toThrow(/AppData.*virtualiz/i);
+    },
+  );
+
   it.skipIf(process.platform !== "win32")(
     "runs the native Windows command interpreter inside AppContainer",
     async () => {
