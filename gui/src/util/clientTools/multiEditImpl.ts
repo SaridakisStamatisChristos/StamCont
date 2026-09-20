@@ -16,6 +16,7 @@ export const multiEditImpl: ClientToolImpl = async (
   const fileUri = await validateSearchAndReplaceFilepath(
     args.filepath,
     extras.ideMessenger.ide,
+    extras.getState().session?.executionProfile === "full_access",
   );
 
   const editingFileContents = await extras.ideMessenger.ide.readFile(fileUri);

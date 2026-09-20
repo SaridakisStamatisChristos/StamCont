@@ -1,4 +1,4 @@
-import { resolveInputPath } from "../../util/pathResolver";
+import { getExecutionBackend } from "../../agent/execution";
 import { getUriPathBasename } from "../../util/uri";
 
 import { ToolImpl } from ".";
@@ -36,8 +36,8 @@ export const readFileRangeImpl: ToolImpl = async (args, extras) => {
     );
   }
 
-  // Resolve the path first to get the actual path for security check
-  const resolvedPath = await resolveInputPath(extras.ide, filepath);
+  const backend = getExecutionBackend(extras);
+  const resolvedPath = await backend.resolveExistingPath(filepath);
   if (!resolvedPath) {
     throw new ContinueError(
       ContinueErrorReason.FileNotFound,
@@ -45,20 +45,15 @@ export const readFileRangeImpl: ToolImpl = async (args, extras) => {
     );
   }
 
-  // Security check on the resolved display path
-  throwIfFileIsSecurityConcern(resolvedPath.displayPath);
+  if (backend.enforceSensitivePathChecks) {
+    throwIfFileIsSecurityConcern(resolvedPath.displayPath);
+  }
 
-  // Use the IDE's readRangeInFile method with 0-based range (IDE expects 0-based internally)
-  const content = await extras.ide.readRangeInFile(resolvedPath.uri, {
-    start: {
-      line: startLine - 1, // Convert from 1-based to 0-based
-      character: 0,
-    },
-    end: {
-      line: endLine - 1, // Convert from 1-based to 0-based
-      character: MAX_CHAR_POSITION, // Read to end of line
-    },
-  });
+  const content = await backend.readFileRange(
+    resolvedPath,
+    startLine,
+    endLine,
+  );
 
   await throwIfFileExceedsHalfOfContext(
     resolvedPath.displayPath,

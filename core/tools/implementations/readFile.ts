@@ -1,4 +1,4 @@
-import { resolveInputPath } from "../../util/pathResolver";
+import { getExecutionBackend } from "../../agent/execution";
 import { getUriPathBasename } from "../../util/uri";
 
 import { ToolImpl } from ".";
@@ -10,8 +10,8 @@ import { ContinueError, ContinueErrorReason } from "../../util/errors";
 export const readFileImpl: ToolImpl = async (args, extras) => {
   const filepath = getStringArg(args, "filepath");
 
-  // Resolve the path first to get the actual path for security check
-  const resolvedPath = await resolveInputPath(extras.ide, filepath);
+  const backend = getExecutionBackend(extras);
+  const resolvedPath = await backend.resolveExistingPath(filepath);
   if (!resolvedPath) {
     throw new ContinueError(
       ContinueErrorReason.FileNotFound,
@@ -19,10 +19,11 @@ export const readFileImpl: ToolImpl = async (args, extras) => {
     );
   }
 
-  // Security check on the resolved display path
-  throwIfFileIsSecurityConcern(resolvedPath.displayPath);
+  if (backend.enforceSensitivePathChecks) {
+    throwIfFileIsSecurityConcern(resolvedPath.displayPath);
+  }
 
-  const content = await extras.ide.readFile(resolvedPath.uri);
+  const content = await backend.readFile(resolvedPath);
 
   await throwIfFileExceedsHalfOfContext(
     resolvedPath.displayPath,

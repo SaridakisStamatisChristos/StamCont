@@ -8,6 +8,7 @@ import {
   ToolExtras,
 } from "..";
 import { coreToolKernelBridge } from "../agent/adapters/coreToolExecution";
+import { createExecutionBackend } from "../agent/execution";
 import { MCPManagerSingleton } from "../context/mcp/MCPManagerSingleton";
 import { ContinueError, ContinueErrorReason } from "../util/errors";
 import { canParseUrl } from "../util/url";
@@ -24,6 +25,7 @@ import { readCurrentlyOpenFileImpl } from "./implementations/readCurrentlyOpenFi
 import { readFileImpl } from "./implementations/readFile";
 
 import { readFileRangeImpl } from "./implementations/readFileRange";
+import type { ToolExecutionExtras } from "./implementations";
 import { readSkillImpl } from "./implementations/readSkill";
 import { requestRuleImpl } from "./implementations/requestRule";
 import { runTerminalCommandImpl } from "./implementations/runTerminalCommand";
@@ -36,7 +38,7 @@ import { coerceArgsToSchema, safeParseToolCallArgs } from "./parseArgs";
 async function callHttpTool(
   url: string,
   args: any,
-  extras: ToolExtras,
+  extras: ToolExecutionExtras,
 ): Promise<ContextItem[]> {
   const response = await extras.fetch(url, {
     method: "POST",
@@ -195,7 +197,7 @@ async function callToolFromUri(
 export async function callBuiltInTool(
   functionName: string,
   args: any,
-  extras: ToolExtras,
+  extras: ToolExecutionExtras,
 ): Promise<ContextItem[]> {
   switch (functionName) {
     case BuiltInToolNames.ReadFile:
@@ -258,22 +260,28 @@ export async function callTool(
 }> {
   try {
     const args = safeParseToolCallArgs(toolCall);
+    const profile = executionContext.profile ?? "interactive";
+    const executionBackend = createExecutionBackend(profile, extras.ide);
     const { contextItems, mcpUiState } =
       await coreToolKernelBridge.execute<{
         contextItems: ContextItem[];
         mcpUiState?: McpUiState;
       }>({
         tool,
-        profile: executionContext.profile,
+        profile,
         sessionId: executionContext.sessionId,
-        execute: async () =>
+        execute: async (agentContext) =>
           tool.uri
             ? callToolFromUri(tool.uri, args, extras)
             : {
                 contextItems: await callBuiltInTool(
                   tool.function.name,
                   args,
-                  extras,
+                  {
+                    ...extras,
+                    executionBackend,
+                    executionSignal: agentContext.signal,
+                  },
                 ),
                 mcpUiState: undefined,
               },

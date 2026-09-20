@@ -1,7 +1,19 @@
 import iconv from "iconv-lite";
-import childProcess from "node:child_process";
-import os from "node:os";
 import { ContinueError, ContinueErrorReason } from "../../util/errors";
+import { getExecutionBackend } from "../../agent/execution";
+import { ToolImpl } from ".";
+import {
+  isProcessBackgrounded,
+  markProcessAsRunning,
+  removeBackgroundedProcess,
+  removeRunningProcess,
+  updateProcessOutput,
+} from "../../util/processTerminalStates";
+import {
+  getBooleanArg,
+  getOptionalStringArg,
+  getStringArg,
+} from "../parseArgs";
 
 // Default timeout for terminal commands (2 minutes)
 const DEFAULT_TOOL_TIMEOUT_MS = 120_000;
@@ -21,70 +33,6 @@ function getDecodedOutput(data: Buffer): string {
   } else {
     return data.toString();
   }
-} // Simple helper function to use login shell on Unix/macOS and PowerShell on Windows
-function getShellCommand(command: string): { shell: string; args: string[] } {
-  if (process.platform === "win32") {
-    // Windows: Use PowerShell
-    return {
-      shell: "powershell.exe",
-      args: ["-NoLogo", "-ExecutionPolicy", "Bypass", "-Command", command],
-    };
-  } else {
-    // Unix/macOS: Use login shell to source .bashrc/.zshrc etc.
-    const userShell = process.env.SHELL || "/bin/bash";
-    return { shell: userShell, args: ["-l", "-c", command] };
-  }
-}
-
-import { fileURLToPath } from "node:url";
-import { ToolImpl } from ".";
-import {
-  isProcessBackgrounded,
-  markProcessAsRunning,
-  removeBackgroundedProcess,
-  removeRunningProcess,
-  updateProcessOutput,
-} from "../../util/processTerminalStates";
-import { getBooleanArg, getStringArg } from "../parseArgs";
-
-/**
- * Resolves the working directory from workspace dirs.
- * Falls back to home directory or temp directory if no workspace is available.
- */
-function resolveWorkingDirectory(workspaceDirs: string[]): string {
-  // Handle file:// URIs (local workspaces)
-  const fileWorkspaceDir = workspaceDirs.find((dir) =>
-    dir.startsWith("file:/"),
-  );
-  if (fileWorkspaceDir) {
-    try {
-      return fileURLToPath(fileWorkspaceDir);
-    } catch {
-      // fileURLToPath can fail on malformed URIs or in some remote environments
-      // Fall through to default handling
-    }
-  }
-
-  // Handle other URI schemes (vscode-remote://wsl, vscode-remote://ssh-remote, etc.)
-  const remoteWorkspaceDir = workspaceDirs.find(
-    (dir) => dir.includes("://") && !dir.startsWith("file:/"),
-  );
-  if (remoteWorkspaceDir) {
-    try {
-      const url = new URL(remoteWorkspaceDir);
-      return decodeURIComponent(url.pathname);
-    } catch {
-      // Fall through to other handlers
-    }
-  }
-
-  // Default to user's home directory with fallbacks
-  try {
-    return process.env.HOME || process.env.USERPROFILE || process.cwd();
-  } catch {
-    // Final fallback if even process.cwd() fails - use system temp directory
-    return os.tmpdir();
-  }
 }
 
 // Add color-supporting environment variables
@@ -97,31 +45,45 @@ const getColorEnv = () => ({
   CLICOLOR_FORCE: "1",
 });
 
-// Only spawn processes locally when there is no remote workspace.
-// With extensionKind: ["ui", "workspace"], the extension host almost always
-// runs on the local machine. childProcess.spawn() executes on the extension
-// host, so for any remote workspace it would run commands on the wrong machine
-// (or fail with ENOENT when the local shell doesn't match the remote OS).
-// All remote types delegate to ide.runCommand() which routes through VS Code's
-// integrated terminal and executes in the correct remote environment.
-const LOCAL_ONLY = ["", "local"];
+function bindAbortSignal(
+  childProc: {
+    exitCode: number | null;
+    signalCode: NodeJS.Signals | null;
+    kill(signal?: NodeJS.Signals | number): boolean;
+  },
+  signal?: AbortSignal,
+): () => void {
+  if (!signal) {
+    return () => undefined;
+  }
+
+  const abort = () => {
+    if (childProc.exitCode === null && childProc.signalCode === null) {
+      childProc.kill("SIGTERM");
+    }
+  };
+  if (signal.aborted) {
+    abort();
+    return () => undefined;
+  }
+  signal.addEventListener("abort", abort, { once: true });
+  return () => signal.removeEventListener("abort", abort);
+}
 
 export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
   const command = getStringArg(args, "command");
   // Default to waiting for completion if not specified
   const waitForCompletion =
     getBooleanArg(args, "waitForCompletion", false) ?? true;
-
-  const ideInfo = await extras.ide.getIdeInfo();
+  const requestedCwd = getOptionalStringArg(args, "cwd");
+  const backend = getExecutionBackend(extras);
   const toolCallId = extras.toolCallId || "";
 
-  if (LOCAL_ONLY.includes(ideInfo.remoteName)) {
+  if (await backend.isLocalShell()) {
+    const cwd = await backend.resolveWorkingDirectory(requestedCwd);
     // For streaming output
     if (extras.onPartialOutput) {
       try {
-        const workspaceDirs = await extras.ide.getWorkspaceDirs();
-        const cwd = resolveWorkingDirectory(workspaceDirs);
-
         return new Promise((resolve, reject) => {
           let terminalOutput = "";
           let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -144,12 +106,14 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
             }
           }
 
-          // Use spawn with color environment
-          const { shell, args } = getShellCommand(command);
-          const childProc = childProcess.spawn(shell, args, {
+          const childProc = backend.spawnShell(command, {
             cwd,
-            env: getColorEnv(), // Add enhanced environment for colors
+            env: getColorEnv(),
           });
+          const cleanupAbort = bindAbortSignal(
+            childProc,
+            extras.executionSignal,
+          );
 
           // Track this process for foreground cancellation
           if (toolCallId && waitForCompletion) {
@@ -274,6 +238,7 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
           }
 
           childProc.on("close", (code) => {
+            cleanupAbort();
             // Clear timeout on normal completion
             if (timeoutId) {
               clearTimeout(timeoutId);
@@ -340,6 +305,7 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
           });
 
           childProc.on("error", (error) => {
+            cleanupAbort();
             // Clear timeout on error
             if (timeoutId) {
               clearTimeout(timeoutId);
@@ -368,27 +334,23 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
       }
     } else {
       // Fallback to non-streaming for older clients
-      const workspaceDirs = await extras.ide.getWorkspaceDirs();
-      const cwd = resolveWorkingDirectory(workspaceDirs);
+      const cwd = await backend.resolveWorkingDirectory(requestedCwd);
 
       if (waitForCompletion) {
         // Standard execution, waiting for completion
         try {
-          // Use spawn approach for consistency with streaming version
-          const { shell: nonStreamingShell, args: nonStreamingArgs } =
-            getShellCommand(command);
           const output = await new Promise<{ stdout: string; stderr: string }>(
             (resolve, reject) => {
               let timeoutId: ReturnType<typeof setTimeout> | undefined;
               let sigkillTimeoutId: ReturnType<typeof setTimeout> | undefined;
 
-              const childProc = childProcess.spawn(
-                nonStreamingShell,
-                nonStreamingArgs,
-                {
-                  cwd,
-                  env: getColorEnv(),
-                },
+              const childProc = backend.spawnShell(command, {
+                cwd,
+                env: getColorEnv(),
+              });
+              const cleanupAbort = bindAbortSignal(
+                childProc,
+                extras.executionSignal,
               );
 
               // Track this process for foreground cancellation
@@ -431,6 +393,7 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
               });
 
               childProc.on("close", (code) => {
+            cleanupAbort();
                 // Clear outer timeout
                 if (timeoutId) {
                   clearTimeout(timeoutId);
@@ -459,6 +422,7 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
               });
 
               childProc.on("error", (error) => {
+            cleanupAbort();
                 // Clear timeout on error
                 if (timeoutId) {
                   clearTimeout(timeoutId);
@@ -502,26 +466,29 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
         // For non-streaming but also not waiting for completion, use spawn
         // but don't attach any listeners other than error
         try {
-          // Use spawn with color environment
-          const { shell: detachedShell, args: detachedArgs } =
-            getShellCommand(command);
-          const childProc = childProcess.spawn(detachedShell, detachedArgs, {
+          const childProc = backend.spawnShell(command, {
             cwd,
-            env: getColorEnv(), // Add color environment
+            env: getColorEnv(),
             // Detach the process so it's not tied to the parent
             detached: true,
             // Redirect to /dev/null equivalent (works cross-platform)
             stdio: "ignore",
           });
+          const cleanupAbort = bindAbortSignal(
+            childProc,
+            extras.executionSignal,
+          );
 
           // Even for detached processes, add event handlers to clean up the background process map
           childProc.on("close", () => {
+            cleanupAbort();
             if (isProcessBackgrounded(toolCallId)) {
               removeBackgroundedProcess(toolCallId);
             }
           });
 
           childProc.on("error", () => {
+            cleanupAbort();
             if (isProcessBackgrounded(toolCallId)) {
               removeBackgroundedProcess(toolCallId);
             }
@@ -553,10 +520,14 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
     }
   }
 
-  // For remote environments (SSH, WSL, Dev Container, Codespaces, etc.),
-  // delegate to VS Code's integrated terminal which handles remote execution.
-  // Note: output capture and waitForCompletion are not yet supported for remotes.
-  await extras.ide.runCommand(command);
+  // Workspace-backed remote execution remains delegated to the IDE until the
+  // Interactive sandbox provides its own remote process boundary.
+  if (requestedCwd) {
+    throw new Error(
+      "Explicit cwd is not supported by the legacy remote IDE executor",
+    );
+  }
+  await backend.runShell(command);
   return [
     {
       name: "Terminal",
