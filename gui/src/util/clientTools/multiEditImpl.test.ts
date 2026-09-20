@@ -1,4 +1,4 @@
-import { ContinueErrorReason } from "core/util/errors";
+import { ContinueError, ContinueErrorReason } from "core/util/errors";
 import * as clientPathResolver from "./resolveClientToolPath";
 import { beforeEach, describe, expect, it, Mock, vi } from "vitest";
 import { applyForEditTool } from "../../redux/thunks/handleApplyStateUpdate";
@@ -61,7 +61,12 @@ describe("multiEditImpl GUI specific", () => {
     });
 
     it("should throw if file does not exist in workspace", async () => {
-      mockResolveClientToolExistingPath.mockResolvedValue(null);
+      mockResolveClientToolExistingPath.mockRejectedValue(
+        new ContinueError(
+          ContinueErrorReason.FileNotFound,
+          "File nonexistent.txt does not exist or is not accessible",
+        ),
+      );
 
       await expect(
         multiEditImpl(
