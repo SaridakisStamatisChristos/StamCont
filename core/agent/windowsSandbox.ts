@@ -31,15 +31,6 @@ public static class StamContAppContainer
     private const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
     private const uint CREATE_SUSPENDED = 0x00000004;
     private const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
-    private const uint STARTF_USESTDHANDLES = 0x00000100;
-    private const uint HANDLE_FLAG_INHERIT = 0x00000001;
-    private const uint GENERIC_READ = 0x80000000;
-    private const uint GENERIC_WRITE = 0x40000000;
-    private const uint FILE_SHARE_READ = 0x00000001;
-    private const uint FILE_SHARE_WRITE = 0x00000002;
-    private const uint CREATE_ALWAYS = 2;
-    private const uint OPEN_EXISTING = 3;
-    private const uint FILE_ATTRIBUTE_NORMAL = 0x00000080;
     private const uint FILE_GENERIC_READ = 0x00120089;
     private const uint FILE_GENERIC_EXECUTE = 0x001200A0;
     private const uint FILE_ALL_ACCESS = 0x001F01FF;
@@ -56,8 +47,6 @@ public static class StamContAppContainer
     private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
     private const int JobObjectExtendedLimitInformation = 9;
     private const uint INFINITE = 0xFFFFFFFF;
-    private static readonly IntPtr PROC_THREAD_ATTRIBUTE_HANDLE_LIST =
-        new IntPtr(0x00020002);
     private static readonly IntPtr PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES =
         new IntPtr(0x00020009);
 
@@ -293,22 +282,6 @@ public static class StamContAppContainer
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr hObject);
 
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern IntPtr CreateFileW(
-        string lpFileName,
-        uint dwDesiredAccess,
-        uint dwShareMode,
-        IntPtr lpSecurityAttributes,
-        uint dwCreationDisposition,
-        uint dwFlagsAndAttributes,
-        IntPtr hTemplateFile);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool SetHandleInformation(
-        IntPtr hObject,
-        uint dwMask,
-        uint dwFlags);
-
     private static void ApplyProfileAcl(
         string profileName,
         string targetPath,
@@ -508,20 +481,17 @@ public static class StamContAppContainer
     public static int Run(
         string profileName,
         string commandInterpreter,
-        string command,
-        string workingDirectory,
+        string commandScriptPath,
         string stdoutPath,
-        string stderrPath)
+        string stderrPath,
+        string workingDirectory)
     {
         IntPtr appContainerSid = IntPtr.Zero;
         IntPtr attributeList = IntPtr.Zero;
         IntPtr securityCapabilitiesPtr = IntPtr.Zero;
-        IntPtr handleListPtr = IntPtr.Zero;
         IntPtr job = IntPtr.Zero;
         IntPtr jobInfoPtr = IntPtr.Zero;
         IntPtr environmentPtr = IntPtr.Zero;
-        IntPtr stdout = IntPtr.Zero;
-        IntPtr stderr = IntPtr.Zero;
         PROCESS_INFORMATION processInfo = new PROCESS_INFORMATION();
         bool processCreated = false;
 
@@ -552,13 +522,13 @@ public static class StamContAppContainer
             IntPtr attributeListSize = IntPtr.Zero;
             InitializeProcThreadAttributeList(
                 IntPtr.Zero,
-                2,
+                1,
                 0,
                 ref attributeListSize);
             attributeList = Marshal.AllocHGlobal(attributeListSize);
             if (!InitializeProcThreadAttributeList(
                 attributeList,
-                2,
+                1,
                 0,
                 ref attributeListSize))
             {
@@ -579,74 +549,6 @@ public static class StamContAppContainer
                 throw new Win32Exception(
                     Marshal.GetLastWin32Error(),
                     "Setting AppContainer security capabilities failed");
-            }
-
-            // Do not inherit the launcher's stdio pipes directly across the
-            // lowbox boundary. AppContainer + redirected parent pipes can fail
-            // silently: the process starts, but writes disappear. Use explicit
-            // sandbox-owned files and replay them from the outer launcher.
-            stdout = CreateFileW(
-                stdoutPath,
-                GENERIC_WRITE,
-                FILE_SHARE_READ,
-                IntPtr.Zero,
-                CREATE_ALWAYS,
-                FILE_ATTRIBUTE_NORMAL,
-                IntPtr.Zero);
-            stderr = CreateFileW(
-                stderrPath,
-                GENERIC_WRITE,
-                FILE_SHARE_READ,
-                IntPtr.Zero,
-                CREATE_ALWAYS,
-                FILE_ATTRIBUTE_NORMAL,
-                IntPtr.Zero);
-            IntPtr invalid = new IntPtr(-1);
-            if (stdout == invalid || stderr == invalid)
-            {
-                throw new Win32Exception(
-                    Marshal.GetLastWin32Error(),
-                    "Creating sandbox stdio handles failed");
-            }
-
-            // A null stdin is deliberate. It matches the working AppContainer
-            // contract and avoids making a device handle part of the lowbox
-            // inheritance boundary.
-            IntPtr[] stdHandles = new IntPtr[] { stdout, stderr };
-            foreach (IntPtr handle in stdHandles)
-            {
-                if (!SetHandleInformation(
-                    handle,
-                    HANDLE_FLAG_INHERIT,
-                    HANDLE_FLAG_INHERIT))
-                {
-                    throw new Win32Exception(
-                        Marshal.GetLastWin32Error(),
-                        "SetHandleInformation failed");
-                }
-            }
-
-            handleListPtr = Marshal.AllocHGlobal(IntPtr.Size * stdHandles.Length);
-            for (int i = 0; i < stdHandles.Length; i++)
-            {
-                Marshal.WriteIntPtr(
-                    handleListPtr,
-                    i * IntPtr.Size,
-                    stdHandles[i]);
-            }
-
-            if (!UpdateProcThreadAttribute(
-                attributeList,
-                0,
-                PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-                handleListPtr,
-                new IntPtr(IntPtr.Size * stdHandles.Length),
-                IntPtr.Zero,
-                IntPtr.Zero))
-            {
-                throw new Win32Exception(
-                    Marshal.GetLastWin32Error(),
-                    "Setting inherited handle allowlist failed");
             }
 
             job = CreateJobObjectW(IntPtr.Zero, null);
@@ -676,15 +578,19 @@ public static class StamContAppContainer
                     "SetInformationJobObject failed");
             }
 
-            // Match StamCont's existing Windows shell contract and pass the
-            // complete command line verbatim. lpApplicationName is null below
-            // so CreateProcessW resolves argv[0] from this writable buffer,
-            // matching the known-working AppContainer spawn contract.
+            // Keep process creation minimal: SECURITY_CAPABILITIES is the
+            // only extended attribute. The untrusted command lives in a
+            // sandbox-private .cmd file. cmd.exe itself opens the capture files
+            // after entering the AppContainer, avoiding cross-boundary handle
+            // inheritance entirely.
             string shell = commandInterpreter;
             StringBuilder commandLine = new StringBuilder(
-                "\"" + shell + "\"" +
-                " /d /s /c " +
-                command);
+                "\\\"" + shell + "\\\"" +
+                " /d /s /c call \\\"" +
+                commandScriptPath +
+                "\\\" 1>\\\"" + stdoutPath +
+                "\\\" 2>\\\"" + stderrPath +
+                "\\\"");
 
             // A contained process gets an explicit UTF-16 environment block.
             // The outer launcher already runs with StamCont's scrubbed
@@ -710,10 +616,6 @@ public static class StamContAppContainer
             STARTUPINFOEX startup = new STARTUPINFOEX();
             startup.StartupInfo.cb =
                 (uint)Marshal.SizeOf(typeof(STARTUPINFOEX));
-            startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
-            startup.StartupInfo.hStdInput = IntPtr.Zero;
-            startup.StartupInfo.hStdOutput = stdout;
-            startup.StartupInfo.hStdError = stderr;
             startup.lpAttributeList = attributeList;
 
             if (!CreateProcessW(
@@ -721,7 +623,7 @@ public static class StamContAppContainer
                 commandLine,
                 IntPtr.Zero,
                 IntPtr.Zero,
-                true,
+                false,
                 EXTENDED_STARTUPINFO_PRESENT |
                     CREATE_UNICODE_ENVIRONMENT |
                     CREATE_SUSPENDED,
@@ -768,14 +670,6 @@ public static class StamContAppContainer
             {
                 Marshal.FreeHGlobal(environmentPtr);
             }
-            if (stdout != IntPtr.Zero && stdout != new IntPtr(-1))
-            {
-                CloseHandle(stdout);
-            }
-            if (stderr != IntPtr.Zero && stderr != new IntPtr(-1))
-            {
-                CloseHandle(stderr);
-            }
             if (processInfo.hThread != IntPtr.Zero)
             {
                 CloseHandle(processInfo.hThread);
@@ -798,10 +692,6 @@ public static class StamContAppContainer
             if (securityCapabilitiesPtr != IntPtr.Zero)
             {
                 Marshal.FreeHGlobal(securityCapabilitiesPtr);
-            }
-            if (handleListPtr != IntPtr.Zero)
-            {
-                Marshal.FreeHGlobal(handleListPtr);
             }
             if (jobInfoPtr != IntPtr.Zero)
             {
@@ -958,17 +848,23 @@ try {
 
   $stdoutPath = Join-Path ([string]$config.HomeDirectory) "sandbox-stdout.txt"
   $stderrPath = Join-Path ([string]$config.HomeDirectory) "sandbox-stderr.txt"
+  $commandPath = Join-Path ([string]$config.HomeDirectory) "sandbox-command.cmd"
   $commandText = [Text.Encoding]::UTF8.GetString(
     [Convert]::FromBase64String([string]$config.CommandUtf8Base64)
+  )
+  [IO.File]::WriteAllText(
+    $commandPath,
+    "@echo off`r`n" + $commandText + "`r`nexit /b %errorlevel%`r`n",
+    [Text.UTF8Encoding]::new($false)
   )
 
   $exitCode = [StamContAppContainer]::Run(
     [string]$config.ProfileName,
     [string]$config.CommandInterpreter,
-    $commandText,
-    [string]$config.Cwd,
+    $commandPath,
     $stdoutPath,
-    $stderrPath
+    $stderrPath,
+    [string]$config.Cwd
   )
 
   if (Test-Path -LiteralPath $stdoutPath) {
