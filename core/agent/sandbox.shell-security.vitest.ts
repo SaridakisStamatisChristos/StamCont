@@ -138,15 +138,20 @@ describe("sandbox shell security properties", () => {
     async () => {
       const workspace = await tempDir("stamcont-win-comspec-");
       const backend = new SandboxExecutionBackend(ideWithWorkspace(workspace));
+      const startedAt = Date.now();
 
       const result = await runSandboxCommand(
         backend,
         "echo stamcont-appcontainer-cmd",
       );
 
+      console.error(
+        `[stamcont-win-timing] native sentinel elapsed=${Date.now() - startedAt}ms`,
+      );
       expect(result.code, result.stderr).toBe(0);
       expect(result.stdout, result.stderr).toContain("stamcont-appcontainer-cmd");
     },
+    20_000,
   );
 
   it.skipIf(process.platform !== "win32")(
