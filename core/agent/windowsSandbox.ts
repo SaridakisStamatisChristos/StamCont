@@ -35,13 +35,9 @@ public static class StamContAppContainer
     public static string LastStderrBase64 = "";
     private const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
     private const uint STARTF_USESTDHANDLES = 0x00000100;
-    private const uint DUPLICATE_SAME_ACCESS = 0x00000002;
     private const uint HANDLE_FLAG_INHERIT = 0x00000001;
     private const uint CREATE_NO_WINDOW = 0x08000000;
     private const int ERROR_BROKEN_PIPE = 109;
-    private const int STD_INPUT_HANDLE = -10;
-    private const int STD_OUTPUT_HANDLE = -11;
-    private const int STD_ERROR_HANDLE = -12;
     private const uint FILE_GENERIC_READ = 0x00120089;
     private const uint FILE_GENERIC_EXECUTE = 0x001200A0;
     private const uint FILE_ALL_ACCESS = 0x001F01FF;
@@ -300,22 +296,6 @@ public static class StamContAppContainer
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr hObject);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern IntPtr GetStdHandle(int nStdHandle);
-
-    [DllImport("kernel32.dll")]
-    private static extern IntPtr GetCurrentProcess();
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool DuplicateHandle(
-        IntPtr hSourceProcessHandle,
-        IntPtr hSourceHandle,
-        IntPtr hTargetProcessHandle,
-        out IntPtr lpTargetHandle,
-        uint dwDesiredAccess,
-        bool bInheritHandle,
-        uint dwOptions);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CreatePipe(
@@ -703,6 +683,7 @@ public static class StamContAppContainer
         IntPtr jobListPtr = IntPtr.Zero;
         IntPtr handleListPtr = IntPtr.Zero;
         IntPtr childStdIn = IntPtr.Zero;
+        IntPtr stdinWrite = IntPtr.Zero;
         IntPtr childStdOut = IntPtr.Zero;
         IntPtr childStdErr = IntPtr.Zero;
         IntPtr stdoutRead = IntPtr.Zero;
@@ -824,41 +805,32 @@ public static class StamContAppContainer
                     "Setting AppContainer Job Object attribute failed");
             }
 
-            // Keep stdin as a narrowly duplicated broker handle, but create
-            // fresh anonymous pipes for stdout/stderr. Hosted Windows runners
-            // can expose broker std handles with semantics that are unsuitable
-            // for a lowbox child; dedicated pipes match the native AppContainer
-            // pattern and keep the inherited handle surface explicit.
-            IntPtr currentProcess = GetCurrentProcess();
-            IntPtr parentStdIn = GetStdHandle(STD_INPUT_HANDLE);
-            if (parentStdIn == IntPtr.Zero ||
-                parentStdIn == new IntPtr(-1))
-            {
-                throw new Win32Exception(
-                    Marshal.GetLastWin32Error(),
-                    "Broker standard input handle is unavailable");
-            }
-
-            if (!DuplicateHandle(
-                    currentProcess,
-                    parentStdIn,
-                    currentProcess,
-                    out childStdIn,
-                    0,
-                    true,
-                    DUPLICATE_SAME_ACCESS))
-            {
-                throw new Win32Exception(
-                    Marshal.GetLastWin32Error(),
-                    "Duplicating sandbox stdin handle failed");
-            }
-
+            // Use broker-owned anonymous pipes for all standard streams.
+            // The sandbox is non-interactive: stdin receives a private pipe
+            // whose writer is closed immediately after process creation, so
+            // reads observe deterministic EOF rather than inheriting a live
+            // GitHub/PowerShell console or pipe.
             SECURITY_ATTRIBUTES pipeAttributes = new SECURITY_ATTRIBUTES
             {
                 nLength = (uint)Marshal.SizeOf(typeof(SECURITY_ATTRIBUTES)),
                 lpSecurityDescriptor = IntPtr.Zero,
                 bInheritHandle = true,
             };
+
+            if (!CreatePipe(
+                    out childStdIn,
+                    out stdinWrite,
+                    ref pipeAttributes,
+                    0) ||
+                !SetHandleInformation(
+                    stdinWrite,
+                    HANDLE_FLAG_INHERIT,
+                    0))
+            {
+                throw new Win32Exception(
+                    Marshal.GetLastWin32Error(),
+                    "Creating sandbox stdin pipe failed");
+            }
             if (!CreatePipe(
                     out stdoutRead,
                     out childStdOut,
@@ -943,6 +915,15 @@ public static class StamContAppContainer
                     Marshal.GetLastWin32Error(),
                     "CreateProcessW(AppContainer) failed");
             }
+
+            // The child owns its inherited stdin read handle. Drop both broker
+            // copies so the child immediately observes EOF if it attempts to
+            // read from stdin.
+            CloseHandle(childStdIn);
+            childStdIn = IntPtr.Zero;
+            CloseHandle(stdinWrite);
+            stdinWrite = IntPtr.Zero;
+
             // The lowbox inherited its write ends; drop the broker copies so
             // EOF is observable when the contained process tree exits.
             CloseHandle(childStdOut);
@@ -1079,6 +1060,10 @@ public static class StamContAppContainer
             if (childStdIn != IntPtr.Zero)
             {
                 CloseHandle(childStdIn);
+            }
+            if (stdinWrite != IntPtr.Zero)
+            {
+                CloseHandle(stdinWrite);
             }
             if (childStdOut != IntPtr.Zero)
             {
