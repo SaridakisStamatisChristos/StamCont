@@ -13,6 +13,7 @@ async function main() {
   script = script.replace(/^(\s*)Write-StamContDiagnostic -Stage "([^"]+)"/gm, "$1[Console]::Error.WriteLine('probe: $2')\n$&");
   const safe = new Set(["PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT"]);
   const runtime = new Set(["USERPROFILE", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "PROGRAMFILES", "PROGRAMFILES(X86)", "COMMONPROGRAMFILES", "COMMONPROGRAMFILES(X86)", "HOMEDRIVE", "HOMEPATH", "SYSTEMDRIVE"]);
+  let failed = false;
   for (const mode of ["broker-runtime", "broker-builtins"]) {
     const workspace = mkdtempSync(path.join(process.cwd(), "stamcont-probe-"));
     const home = path.join(workspace, "home");
@@ -39,7 +40,18 @@ async function main() {
     const config = {
       ProfileName: `StamContSandbox_${randomUUID().replaceAll("-", "").slice(0, 24)}`,
       Roots: [workspace], Cwd: workspace, ReadOnly: false,
-      Environment: childEnv,
+      EnvironmentUtf8Base64: Buffer.from(
+        Object.entries(childEnv)
+          .filter(([key, value]) =>
+            typeof value === "string" &&
+            key.length > 0 &&
+            !key.includes("=") &&
+            !key.includes("\0") &&
+            !value.includes("\0"))
+          .map(([key, value]) => `${key}=${value}`)
+          .join("\0"),
+        "utf8"
+      ).toString("base64"),
       CommandInterpreter: path.join(env.SYSTEMROOT, "System32", "cmd.exe"),
       CommandUtf8Base64: Buffer.from(command).toString("base64"),
       CommandUtf8Length: Buffer.byteLength(command),
@@ -56,18 +68,28 @@ async function main() {
     const report = data => process.stdout.write(`[${mode} +${Date.now() - start}ms] ${data}`);
     child.stdout.on("data", report);
     child.stderr.on("data", report);
+    let timedOut = false;
     const timer = setTimeout(() => {
+      timedOut = true;
+      failed = true;
       report("probe timeout; stopping owned process tree\n");
       spawnSync("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" });
     }, 45000);
     await new Promise((resolve, reject) => {
       child.on("error", reject);
-      child.on("close", code => { report(`exit=${code}\n`); resolve(); });
+      child.on("close", code => {
+        report(`exit=${code}\n`);
+        if (!timedOut && code !== 0) failed = true;
+        resolve();
+      });
     });
     clearTimeout(timer);
     try { report(readFileSync(config.DiagnosticsPath, "utf8")); } catch {}
     try { rmSync(workspace, { recursive: true, force: true }); }
     catch (error) { report(`probe cleanup: ${error.code}\n`); }
+  }
+  if (failed) {
+    process.exitCode = 1;
   }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
