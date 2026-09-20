@@ -55,7 +55,6 @@ export class CapturedTerminal {
   private readonly shellCmd: string;
   private readonly ptyProcess: any;
 
-  private shellPrompt: string | undefined = undefined;
   private dataBuffer = "";
 
   private onDataListeners: ((data: string) => void)[] = [];
@@ -69,7 +68,6 @@ export class CapturedTerminal {
   }
 
   private commandQueue: [string, (output: string) => void][] = [];
-  private hasRunCommand = false;
 
   private dataEndsInPrompt(strippedData: string): boolean {
     const lines = strippedData.split("\n");
