@@ -1,0 +1,76 @@
+name: Pre-AgentLoop Hygiene Diagnostics
+
+on:
+  push:
+    branches:
+      - stamcont/pre-agentloop-code-hygiene
+
+permissions:
+  contents: read
+
+env:
+  CI: "true"
+  IGNORE_API_KEY_TESTS: "true"
+
+jobs:
+  diagnostics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build local packages
+        uses: ./.github/actions/setup-packages
+
+      - name: Setup core
+        uses: ./.github/actions/setup-component
+        with:
+          component: core
+          include-root: true
+
+      - name: Setup GUI
+        uses: ./.github/actions/setup-component
+        with:
+          component: gui
+          include-packages: false
+
+      - name: Setup VS Code extension
+        uses: ./.github/actions/setup-component
+        with:
+          component: vscode
+          include-packages: false
+
+      - name: Setup CLI
+        working-directory: extensions/cli
+        run: npm ci --include=optional
+
+      - name: Core unused locals diagnostics
+        working-directory: core
+        shell: bash
+        run: |
+          set +e
+          npx tsc -p ./ --noEmit --noUnusedLocals true --noUnusedParameters false
+          echo "CORE_DIAGNOSTIC_EXIT=$?"
+          exit 0
+
+      - name: GUI unused locals diagnostics
+        working-directory: gui
+        shell: bash
+        run: |
+          set +e
+          npx tsc -p ./ --noEmit --noUnusedLocals true --noUnusedParameters false
+          echo "GUI_DIAGNOSTIC_EXIT=$?"
+          exit 0
+
+      - name: VS Code unused locals diagnostics
+        working-directory: extensions/vscode
+        shell: bash
+        run: |
+          set +e
+          npx tsc -p ./ --noEmit --noUnusedLocals true --noUnusedParameters false
+          echo "VSCODE_DIAGNOSTIC_EXIT=$?"
+          exit 0
+
+      - name: CLI existing lint
+        working-directory: extensions/cli
+        run: npm run lint
