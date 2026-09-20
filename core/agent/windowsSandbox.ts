@@ -730,9 +730,17 @@ export function spawnWindowsAppContainerShell(
 
   const pathEntries = (options.env.PATH ?? "")
     .split(path.delimiter)
-    .map((entry) => entry.trim())
+    .map((entry) => entry.trim().replace(/^"|"$/g, ""))
     .filter(Boolean);
   const sandboxPowerShell = resolveAppContainerPowerShell(options.env);
+  const sandboxPowerShellDir = path.dirname(sandboxPowerShell);
+  const sandboxPathEntries = [
+    ...new Set([...pathEntries, sandboxPowerShellDir]),
+  ];
+  const sandboxEnv = {
+    ...options.env,
+    PATH: sandboxPathEntries.join(path.delimiter),
+  };
 
   const config = {
     ProfileName: profileName,
@@ -741,7 +749,7 @@ export function spawnWindowsAppContainerShell(
     ReadOnly: options.readOnly,
     HomeDirectory: options.homeDirectory,
     TempDirectory: options.tempDirectory,
-    PathEntries: pathEntries,
+    PathEntries: sandboxPathEntries,
     PowerShellExecutable: sandboxPowerShell,
     // PowerShell -EncodedCommand requires UTF-16LE.
     CommandBase64: Buffer.from(command, "utf16le").toString("base64"),
@@ -778,7 +786,7 @@ export function spawnWindowsAppContainerShell(
     {
       ...options.spawnOptions,
       cwd: options.cwd,
-      env: options.env,
+      env: sandboxEnv,
       windowsHide: true,
       detached: true,
     },
