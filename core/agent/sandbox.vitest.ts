@@ -273,6 +273,108 @@ describe("Interactive restricted network policy", () => {
     expect(resolver).toHaveBeenCalledWith("private.example");
   });
 
+  it("strips caller Host/proxy auth and cross-origin credentials on redirects", async () => {
+    const delegate = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 302,
+        headers: {
+          get: (name: string) =>
+            name.toLowerCase() === "location"
+              ? "https://other.example/next"
+              : null,
+        },
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        headers: { get: () => null },
+      });
+
+    const fetch = createRestrictedFetch(delegate as any, {
+      resolver: publicResolver,
+    });
+
+    await fetch("https://public.example/start", {
+      headers: {
+        Host: "attacker.invalid",
+        Authorization: "Bearer secret",
+        Cookie: "sid=secret",
+        "Proxy-Authorization": "Basic secret",
+        "X-Trace": "kept",
+      },
+    } as any);
+
+    expect(delegate).toHaveBeenCalledTimes(2);
+
+    const firstHeaders = Object.fromEntries(
+      Object.entries(delegate.mock.calls[0][1].headers).map(([key, value]) => [
+        key.toLowerCase(),
+        value,
+      ]),
+    );
+    expect(firstHeaders.host).toBeUndefined();
+    expect(firstHeaders["proxy-authorization"]).toBeUndefined();
+    expect(firstHeaders.authorization).toBe("Bearer secret");
+    expect(firstHeaders.cookie).toBe("sid=secret");
+
+    const redirectedHeaders = Object.fromEntries(
+      Object.entries(delegate.mock.calls[1][1].headers).map(([key, value]) => [
+        key.toLowerCase(),
+        value,
+      ]),
+    );
+    expect(redirectedHeaders.host).toBeUndefined();
+    expect(redirectedHeaders["proxy-authorization"]).toBeUndefined();
+    expect(redirectedHeaders.authorization).toBeUndefined();
+    expect(redirectedHeaders.cookie).toBeUndefined();
+    expect(redirectedHeaders["x-trace"]).toBe("kept");
+  });
+
+  it("uses fetch-compatible POST redirect semantics without forwarding body metadata", async () => {
+    const delegate = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 302,
+        headers: {
+          get: (name: string) =>
+            name.toLowerCase() === "location" ? "/next" : null,
+        },
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        headers: { get: () => null },
+      });
+
+    const fetch = createRestrictedFetch(delegate as any, {
+      resolver: publicResolver,
+    });
+
+    await fetch("https://public.example/start", {
+      method: "POST",
+      body: "a=1",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Content-Length": "3",
+        "X-Trace": "kept",
+      },
+    } as any);
+
+    expect(delegate).toHaveBeenCalledTimes(2);
+    const redirectedInit = delegate.mock.calls[1][1];
+    expect(redirectedInit.method).toBe("GET");
+    expect(redirectedInit.body).toBeUndefined();
+
+    const redirectedHeaders = Object.fromEntries(
+      Object.entries(redirectedInit.headers).map(([key, value]) => [
+        key.toLowerCase(),
+        value,
+      ]),
+    );
+    expect(redirectedHeaders["content-type"]).toBeUndefined();
+    expect(redirectedHeaders["content-length"]).toBeUndefined();
+    expect(redirectedHeaders["x-trace"]).toBe("kept");
+  });
+
   it("pins the connection lookup to the validated DNS answer", async () => {
     let resolverCalls = 0;
     const resolver: RestrictedDnsResolver = async () => {
