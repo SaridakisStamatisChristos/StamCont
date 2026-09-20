@@ -605,6 +605,7 @@ export class SandboxExecutionBackend implements ExecutionBackend {
     const candidates = await this.resolveCandidates(inputPath);
     for (const candidate of candidates) {
       try {
+        await this.assertLexicallyInsideWorkspace(candidate);
         const canonical = await fs.realpath(candidate);
         await this.assertInsideWorkspace(canonical);
         return this.toResolvedPath(canonical, inputPath);
@@ -817,10 +818,15 @@ export class SandboxExecutionBackend implements ExecutionBackend {
       return [fileURLToPath(trimmed)];
     }
     const expanded = untildify(trimmed);
+    if (/^[a-zA-Z]:(?:$|[^\\/])/.test(expanded)) {
+      throw new SandboxViolationError(
+        `Sandbox rejects ambiguous drive-relative path: ${inputPath}`,
+      );
+    }
     if (
       path.isAbsolute(expanded) ||
       expanded.startsWith("\\\\") ||
-      /^[a-zA-Z]:/.test(expanded)
+      /^[a-zA-Z]:[\\/]/.test(expanded)
     ) {
       return [path.resolve(expanded)];
     }
@@ -829,6 +835,16 @@ export class SandboxExecutionBackend implements ExecutionBackend {
       return [path.resolve(roots[0], expanded)];
     }
     return roots.map((root) => path.resolve(root, expanded));
+  }
+
+  private async assertLexicallyInsideWorkspace(candidate: string): Promise<void> {
+    const roots = await this.getWorkspaceRoots();
+    const normalizedCandidate = path.resolve(candidate);
+    if (!roots.some((root) => pathWithin(root, normalizedCandidate))) {
+      throw new SandboxViolationError(
+        `Sandbox blocked path outside workspace before canonicalization: ${candidate}`,
+      );
+    }
   }
 
   private async assertInsideWorkspace(candidate: string): Promise<void> {
@@ -842,6 +858,7 @@ export class SandboxExecutionBackend implements ExecutionBackend {
 
   private async assertWritableCandidate(candidate: string): Promise<void> {
     const absolute = path.resolve(candidate);
+    await this.assertLexicallyInsideWorkspace(absolute);
     let existing = absolute;
     while (true) {
       try {
