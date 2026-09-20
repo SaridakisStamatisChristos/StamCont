@@ -2,12 +2,12 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import type { IDE } from "core/index.js";
+import type { BuiltInExecutionProfileId } from "core/agent/capabilities.js";
 import {
   createExecutionBackend,
   type ExecutionBackend,
 } from "core/agent/execution.js";
-import type { BuiltInExecutionProfileId } from "core/agent/capabilities.js";
+import type { IDE } from "core/index.js";
 
 import type { PermissionMode } from "../permissions/types.js";
 
