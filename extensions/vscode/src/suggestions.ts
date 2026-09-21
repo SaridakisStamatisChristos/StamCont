@@ -140,6 +140,7 @@ export function suggestionDownCommand() {
     return;
   }
   const editorUri = editor.document.uri.toString();
+  const uriString = editorUri.toString();
   const suggestions = editorToSuggestions.get(editorUri);
   const idx = currentSuggestion.get(editorUri);
   if (!suggestions || idx === undefined) {
