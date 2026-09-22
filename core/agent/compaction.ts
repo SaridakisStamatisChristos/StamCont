@@ -755,7 +755,8 @@ function assertArtifactMatchesRecords(
   if (
     firstSequence === undefined ||
     artifact.sourceSequenceStart !== firstSequence ||
-    artifact.sourceSequenceEnd > lastSequence
+    artifact.sourceSequenceEnd > lastSequence ||
+    artifact.createdAtLogSequence > lastSequence
   ) {
     throw new AgentCompactionError(
       "stale_artifact",
