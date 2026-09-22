@@ -15,13 +15,13 @@ import {
 } from "vitest";
 
 import {
-  AgentCompactionError,
   buildCompactedAgentInput,
   compactAgentHistory,
   compactAndPersistAgentHistory,
   findLatestSafeAgentCompactionBoundary,
   getAgentCompactionPath,
   readAgentCompactionArtifact,
+  type AgentCompactionError,
   type AgentCompactionSummarizer,
   type AgentCompactionSummarizerRequest,
 } from "./compaction";
@@ -784,6 +784,56 @@ describe("StamCont agent compaction", () => {
     expect(
       await readFile(store.paths.log, "utf8"),
     ).toBe(logBefore);
+
+    await store.close();
+  });
+
+  it("rejects tampered protected references as stale derived state", async () => {
+    const root = await makeRoot();
+    const store = await AgentSessionStore.open({
+      rootDirectory: root,
+      sessionId: "tampered-protection",
+    });
+
+    await store.appendModelInput({
+      type: "message",
+      role: "system",
+      content: "protected system",
+    });
+    await store.appendModelInput({
+      type: "message",
+      role: "user",
+      content: "task",
+    });
+    await appendMessageTurn(
+      store,
+      1,
+      "response-1",
+      "answer",
+    );
+    const artifact =
+      await compactAndPersistAgentHistory(
+        store,
+        summarizer("summary"),
+      );
+
+    await writeFile(
+      getAgentCompactionPath(store),
+      JSON.stringify({
+        ...artifact,
+        protectedSourceSequences: [],
+      }) + "\\n",
+      "utf8",
+    );
+
+    expect(
+      await readAgentCompactionArtifact(store),
+    ).toMatchObject({
+      status: "stale",
+      error: {
+        code: "stale_artifact",
+      },
+    });
 
     await store.close();
   });
