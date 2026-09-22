@@ -3,5 +3,7 @@ export * from "./capabilities";
 export * from "./events";
 export * from "./execution";
 export * from "./kernel";
+export * from "./protocol";
+export * from "./reducer";
 export * from "./session";
 export * from "./tools";
