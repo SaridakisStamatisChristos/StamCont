@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type {
   AgentModelInputItem,
+  AgentModelMessageInput,
   AgentToolResult,
 } from "./model";
 import {
@@ -536,7 +537,7 @@ describe("StamCont durable agent lifecycle", () => {
       rootDirectory: root,
       sessionId: "created-prefix-repair",
     });
-    const fullInput: readonly AgentModelInputItem[] = [
+    const fullInput: readonly AgentModelMessageInput[] = [
       {
         type: "message",
         role: "system",
