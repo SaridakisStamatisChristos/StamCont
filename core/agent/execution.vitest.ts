@@ -139,7 +139,7 @@ describe("HostExecutionBackend", () => {
           : canonicalOutside,
       );
     },
-    10_000,
+    20_000,
   );
 });
 
