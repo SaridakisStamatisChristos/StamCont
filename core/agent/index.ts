@@ -5,6 +5,7 @@ export * from "./compaction";
 export * from "./events";
 export * from "./execution";
 export * from "./kernel";
+export * from "./lifecycle";
 export * from "./loop";
 export * from "./model";
 export * from "./persistence";
