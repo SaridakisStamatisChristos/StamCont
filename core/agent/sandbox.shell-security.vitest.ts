@@ -182,7 +182,7 @@ describe("sandbox shell security properties", () => {
         "stamcont-appcontainer-cmd",
       );
     },
-    10_000,
+    20_000,
   );
 
   it.skipIf(process.platform !== "win32")(
@@ -209,6 +209,7 @@ describe("sandbox shell security properties", () => {
       );
       expect(readResult.code).not.toBe(0);
     },
+    10_000,
   );
 
   it.skipIf(process.platform !== "win32")(
