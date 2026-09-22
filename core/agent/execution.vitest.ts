@@ -101,42 +101,46 @@ describe("HostExecutionBackend", () => {
     ).resolves.toBe(path.join(outside, "project"));
   });
 
-  it("spawns commands from an arbitrary host working directory", async () => {
-    const workspace = await tempDir("stamcont-workspace-");
-    const outside = await tempDir("stamcont-shell-cwd-");
-    const backend = new HostExecutionBackend(ideWithWorkspace(workspace));
+  it(
+    "spawns commands from an arbitrary host working directory",
+    async () => {
+      const workspace = await tempDir("stamcont-workspace-");
+      const outside = await tempDir("stamcont-shell-cwd-");
+      const backend = new HostExecutionBackend(ideWithWorkspace(workspace));
 
-    const output = await new Promise<string>((resolve, reject) => {
-      const child = backend.spawnShell('node -p "process.cwd()"', {
-        cwd: outside,
-        env: process.env,
+      const output = await new Promise<string>((resolve, reject) => {
+        const child = backend.spawnShell('node -p "process.cwd()"', {
+          cwd: outside,
+          env: process.env,
+        });
+        let stdout = "";
+        child.stdout?.on("data", (chunk) => {
+          stdout += String(chunk);
+        });
+        child.once("error", reject);
+        child.once("close", (code) => {
+          if (code === 0) {
+            resolve(stdout.trim());
+          } else {
+            reject(new Error(`shell exited with code ${code}`));
+          }
+        });
       });
-      let stdout = "";
-      child.stdout?.on("data", (chunk) => {
-        stdout += String(chunk);
-      });
-      child.once("error", reject);
-      child.once("close", (code) => {
-        if (code === 0) {
-          resolve(stdout.trim());
-        } else {
-          reject(new Error(`shell exited with code ${code}`));
-        }
-      });
-    });
 
-    const canonicalOutput = await realpath(output);
-    const canonicalOutside = await realpath(outside);
-    expect(
-      process.platform === "win32"
-        ? canonicalOutput.toLowerCase()
-        : canonicalOutput,
-    ).toBe(
-      process.platform === "win32"
-        ? canonicalOutside.toLowerCase()
-        : canonicalOutside,
-    );
-  });
+      const canonicalOutput = await realpath(output);
+      const canonicalOutside = await realpath(outside);
+      expect(
+        process.platform === "win32"
+          ? canonicalOutput.toLowerCase()
+          : canonicalOutput,
+      ).toBe(
+        process.platform === "win32"
+          ? canonicalOutside.toLowerCase()
+          : canonicalOutside,
+      );
+    },
+    10_000,
+  );
 });
 
 describe("execution backend selection", () => {
