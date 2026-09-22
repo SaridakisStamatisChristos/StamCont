@@ -2,6 +2,7 @@ import {
   buildCompactedAgentInput,
   findLatestSafeAgentCompactionBoundary,
   readAgentCompactionArtifact,
+  AgentCompactionError,
   type AgentCompactionArtifact,
   type AgentCompactionArtifactReadResult,
   type AgentCompactionArtifactStatus,
@@ -142,7 +143,9 @@ export function createFallbackAgentContextEstimator(): AgentContextEstimator {
       return estimateJsonBytes(input);
     },
     estimateToolDefinitionTokens(tools) {
-      return estimateJsonBytes(tools);
+      return tools.length === 0
+        ? 0
+        : estimateJsonBytes(tools);
     },
     estimateContinuationOverheadTokens() {
       return 0;
@@ -227,7 +230,10 @@ export function planAgentContextBudget(
         toolDefinitionTokens,
         budget,
       );
-    } catch {
+    } catch (error) {
+      if (!(error instanceof AgentCompactionError)) {
+        throw error;
+      }
       effectiveCompactionStatus = "stale";
       artifact = undefined;
       compactedInput = undefined;
@@ -513,13 +519,7 @@ function collectRequiredSourceSequences(
 ): readonly number[] {
   const required = new Set<number>();
   let latestUserSequence: number | undefined;
-  const toolCalls = new Map<
-    string,
-    {
-      readonly sequence: number;
-      readonly itemId: string;
-    }
-  >();
+  const toolCalls = new Map<string, number>();
 
   for (const record of records) {
     if (record.kind === "model_input") {
@@ -554,10 +554,13 @@ function collectRequiredSourceSequences(
       }
 
       if (event.item.type === "tool_call") {
-        toolCalls.set(event.item.callId, {
-          sequence: record.sequence,
-          itemId: event.item.id,
-        });
+        toolCalls.set(
+          toolPairKey(
+            event.item.callId,
+            event.item.id,
+          ),
+          record.sequence,
+        );
       }
       continue;
     }
@@ -573,12 +576,14 @@ function collectRequiredSourceSequences(
       ) {
         continue;
       }
-      const call = toolCalls.get(result.callId);
-      if (
-        call &&
-        call.itemId === result.toolCallItemId
-      ) {
-        required.add(call.sequence);
+      const callSequence = toolCalls.get(
+        toolPairKey(
+          result.callId,
+          result.toolCallItemId,
+        ),
+      );
+      if (callSequence !== undefined) {
+        required.add(callSequence);
         required.add(record.sequence);
       }
     }
@@ -589,4 +594,11 @@ function collectRequiredSourceSequences(
   }
 
   return [...required].sort((left, right) => left - right);
+}
+
+function toolPairKey(
+  callId: string,
+  itemId: string,
+): string {
+  return callId + "\u0000" + itemId;
 }
