@@ -2,6 +2,7 @@ import type {
   AgentRunError,
   AgentRunEvent,
   AgentStopReason,
+  JsonObject,
 } from "./protocol";
 import {
   createInitialAgentRunState,
@@ -15,6 +16,7 @@ import {
   type AgentModelDriver,
   type AgentModelInputItem,
   type AgentModelToolDefinition,
+  type AgentToolExecutionOutcome,
   type AgentToolExecutor,
 } from "./model";
 
@@ -53,7 +55,7 @@ export interface AgentLoopOptions {
   input: readonly AgentModelInputItem[];
   toolExecutor?: AgentToolExecutor;
   tools?: readonly AgentModelToolDefinition[];
-  metadata?: Readonly<Record<string, import("./protocol").JsonValue>>;
+  metadata?: JsonObject;
   signal?: AbortSignal;
   maxIterations?: number;
   onEvent?: (
@@ -310,7 +312,7 @@ export async function runAgentLoop(
             return finish("cancelled", "cancelled");
           }
 
-          let outcome;
+          let outcome: AgentToolExecutionOutcome;
           try {
             outcome = await options.toolExecutor.execute(toolCall, {
               signal,
