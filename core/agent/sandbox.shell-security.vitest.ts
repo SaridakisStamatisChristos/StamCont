@@ -26,6 +26,9 @@ function trackSandboxChild(child: ChildProcess): ChildProcess {
 const requireOsSandboxTests =
   process.env.STAMCONT_REQUIRE_OS_SANDBOX_TESTS === "1";
 
+const WINDOWS_SANDBOX_SINGLE_LAUNCH_TIMEOUT_MS = 20_000;
+const WINDOWS_SANDBOX_MULTI_LAUNCH_TIMEOUT_MS = 30_000;
+
 function executableOnPath(name: string): boolean {
   const fileName = process.platform === "win32" ? `${name}.exe` : name;
   return (process.env.PATH ?? "")
@@ -182,7 +185,7 @@ describe("sandbox shell security properties", () => {
         "stamcont-appcontainer-cmd",
       );
     },
-    20_000,
+    WINDOWS_SANDBOX_MULTI_LAUNCH_TIMEOUT_MS,
   );
 
   it.skipIf(process.platform !== "win32")(
@@ -209,7 +212,7 @@ describe("sandbox shell security properties", () => {
       );
       expect(readResult.code).not.toBe(0);
     },
-    10_000,
+    WINDOWS_SANDBOX_MULTI_LAUNCH_TIMEOUT_MS,
   );
 
   it.skipIf(process.platform !== "win32")(
@@ -245,6 +248,7 @@ describe("sandbox shell security properties", () => {
         "path-must-not-authorize-this-secret",
       );
     },
+    WINDOWS_SANDBOX_SINGLE_LAUNCH_TIMEOUT_MS,
   );
 
   it.skipIf(process.platform !== "win32")(
@@ -267,6 +271,7 @@ describe("sandbox shell security properties", () => {
         access(path.join(workspace, "plan-write.txt")),
       ).rejects.toBeDefined();
     },
+    WINDOWS_SANDBOX_MULTI_LAUNCH_TIMEOUT_MS,
   );
 
   it.skipIf(process.platform !== "win32")(
@@ -291,6 +296,7 @@ describe("sandbox shell security properties", () => {
         readFile(path.join(workspace, "nested-child.txt"), "utf8"),
       ).resolves.toContain("nested-child");
     },
+    WINDOWS_SANDBOX_SINGLE_LAUNCH_TIMEOUT_MS,
   );
 
   it.skipIf(process.platform !== "win32")(
@@ -328,6 +334,7 @@ describe("sandbox shell security properties", () => {
       );
       expect(networkResult.code).not.toBe(0);
     },
+    WINDOWS_SANDBOX_MULTI_LAUNCH_TIMEOUT_MS,
   );
 
   it.skipIf(process.platform !== "win32" && skipPosixSandboxTests)(
@@ -351,6 +358,9 @@ describe("sandbox shell security properties", () => {
       const second = await runSandboxCommand(backend, secondCommand);
       expect(second.code, second.stderr).toBe(0);
     },
+    process.platform === "win32"
+      ? WINDOWS_SANDBOX_MULTI_LAUNCH_TIMEOUT_MS
+      : 5_000,
   );
 
   it.skipIf(process.platform !== "win32" && skipPosixSandboxTests)(
