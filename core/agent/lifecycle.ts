@@ -158,6 +158,7 @@ const ALLOWED_LIFECYCLE_TRANSITIONS: Readonly<
   created: ["running", "cancelled", "failed", "closed"],
   running: [
     "waiting_for_model",
+    "waiting_for_tool",
     "resumable",
     "interrupted",
     "cancelled",
