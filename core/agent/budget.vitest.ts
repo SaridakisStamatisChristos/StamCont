@@ -160,7 +160,7 @@ async function appendMessageTurn(
         type: "message",
         role: "assistant",
         content,
-        providerMetadata,
+        ...(providerMetadata ? { providerMetadata } : {}),
       },
     }),
   );
