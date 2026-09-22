@@ -179,6 +179,31 @@ describe("StamCont canonical agent reducer", () => {
     ]);
   });
 
+  it("does not expose completed tool items as actionable after response abort", () => {
+    const state = reduce([
+      started(),
+      e(2, { type: "output_item.added", responseId: "response-1", item: { id: "tool-1", type: "tool_call" } }),
+      e(3, {
+        type: "output_item.completed",
+        responseId: "response-1",
+        item: {
+          id: "tool-1",
+          type: "tool_call",
+          callId: "call-1",
+          name: "read_file",
+          input: { path: "README.md" },
+        },
+      }),
+      e(4, { type: "response.aborted", responseId: "response-1", reason: "cancelled" }),
+    ]);
+
+    expect(getExecutableToolCalls(state)).toEqual([]);
+    expect(getLatestAgentResponse(state)?.outputItems[0]).toMatchObject({
+      type: "tool_call",
+      status: "completed",
+    });
+  });
+
   it("handles parallel tool calls with interleaved deltas", () => {
     const state = reduce([
       started(),
