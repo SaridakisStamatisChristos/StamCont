@@ -8,7 +8,10 @@ import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { IDE } from "..";
-import { terminateProcessTree } from "../util/processTerminalStates";
+import {
+  terminateProcessTree,
+  terminateProcessTreeAndWait,
+} from "../util/processTerminalStates";
 import { SandboxExecutionBackend } from "./sandbox";
 
 const tempRoots: string[] = [];
@@ -179,6 +182,7 @@ describe("sandbox shell security properties", () => {
         "stamcont-appcontainer-cmd",
       );
     },
+    10_000,
   );
 
   it.skipIf(process.platform !== "win32")(
@@ -374,13 +378,38 @@ describe("sandbox shell security properties", () => {
         },
       );
 
-      const descendantCommand =
-        process.platform === "win32"
-          ? [
-              'start "" /b cmd.exe /d /s /c "echo child-started>child-started.txt & choice.exe /c Y /d Y /t 4 /n & echo escaped>child-after-kill.txt"',
-              "choice.exe /c Y /d Y /t 10 /n",
-            ].join(" & ")
-          : "(sleep 1.6; printf escaped > child-after-kill.txt) & sleep 10";
+      let descendantCommand: string;
+      if (process.platform === "win32") {
+        await writeFile(
+          path.join(workspace, "descendant-wait.cmd"),
+          [
+            "@echo off",
+            "echo child-started>child-started.txt",
+            ":wait",
+            "if exist child-release.txt goto released",
+            "choice.exe /c Y /d Y /t 1 /n >nul 2>&1",
+            "goto wait",
+            ":released",
+            "echo escaped>child-after-kill.txt",
+          ].join("\r\n"),
+          "utf8",
+        );
+        await writeFile(
+          path.join(workspace, "tree-root.cmd"),
+          [
+            "@echo off",
+            'start "" /b cmd.exe /d /c call descendant-wait.cmd',
+            ":wait",
+            "choice.exe /c Y /d Y /t 1 /n >nul 2>&1",
+            "goto wait",
+          ].join("\r\n"),
+          "utf8",
+        );
+        descendantCommand = "call tree-root.cmd";
+      } else {
+        descendantCommand =
+          "(sleep 1.6; printf escaped > child-after-kill.txt) & sleep 10";
+      }
 
       const unrelatedClose = new Promise<void>((resolve, reject) => {
         unrelated.once("error", reject);
@@ -415,23 +444,31 @@ describe("sandbox shell security properties", () => {
       } else {
         await new Promise((resolve) => setTimeout(resolve, 350));
       }
-      terminateProcessTree(child, "SIGTERM");
+      const afterKillTarget = path.join(
+        workspace,
+        "child-after-kill.txt",
+      );
+      expect(existsSync(afterKillTarget)).toBe(false);
 
-      await Promise.race([
-        childClose,
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error("sandbox process tree did not terminate")),
-            5_000,
-          ),
-        ),
-      ]);
+      await terminateProcessTreeAndWait(child, "SIGTERM");
+      await childClose;
+
+      if (process.platform === "win32") {
+        // Only release the descendant after termination has reported complete.
+        // If any owned child survived, it will observe this marker and prove
+        // the cancellation boundary was not actually complete.
+        await writeFile(
+          path.join(workspace, "child-release.txt"),
+          "release",
+          "utf8",
+        );
+      }
 
       await unrelatedClose;
-      await new Promise((resolve) => setTimeout(resolve, 4_300));
-      await expect(
-        access(path.join(workspace, "child-after-kill.txt")),
-      ).rejects.toBeDefined();
+      await new Promise((resolve) =>
+        setTimeout(resolve, process.platform === "win32" ? 1_500 : 1_800),
+      );
+      await expect(access(afterKillTarget)).rejects.toBeDefined();
       await expect(readFile(unrelatedTarget, "utf8")).resolves.toBe("alive");
     },
     10_000,
