@@ -678,9 +678,12 @@ function sanitizeInputForSummary(
   input: AgentModelInputItem,
 ): AgentModelInputItem | undefined {
   if (input.type === "message") {
+    if (input.role === "system") {
+      return undefined;
+    }
     return {
       type: "message",
-      role: input.role,
+      role: "user",
       content: input.content,
     };
   }
