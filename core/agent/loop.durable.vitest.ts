@@ -600,4 +600,105 @@ describe("StamCont durable AgentLoop integration", () => {
     expect(driver.calls).toBe(1);
     await reopened.close();
   });
+
+  it("blocks restart after a cancelled tool attempt when no durable result or terminal cancellation was persisted", async () => {
+    const root = await makeRoot();
+    const store = await AgentSessionStore.open({
+      rootDirectory: root,
+      sessionId: "cancelled-tool-crash-window",
+    });
+    await seedToolBoundary(store, oneToolResponse());
+    await appendAgentToolAttempt(
+      store,
+      toolCall1,
+      "started",
+      1,
+    );
+    await appendAgentToolAttempt(
+      store,
+      toolCall1,
+      "cancelled",
+      1,
+      "abort observed before terminal lifecycle persistence",
+    );
+    await store.close();
+
+    const reopened = await AgentSessionStore.open({
+      rootDirectory: root,
+      sessionId: "cancelled-tool-crash-window",
+    });
+    const executor = successExecutor();
+    const driver = new ScriptedDriver([]);
+
+    const result = await runAgentLoop({
+      driver,
+      input: initialInput,
+      toolExecutor: executor,
+      durability: durability(reopened),
+    });
+
+    expect(result.status).toBe("resume_blocked");
+    expect(result.error?.code).toBe(
+      "ambiguous_tool_execution",
+    );
+    expect(executor.execute).not.toHaveBeenCalled();
+    expect(driver.calls).toBe(0);
+    expect(
+      (await reopened.replay()).lifecycle,
+    ).toMatchObject({
+      type: "state",
+      state: "interrupted",
+    });
+    await reopened.close();
+  });
+
+  it("fails a persisted tool_use response with zero executable calls instead of issuing another model request", async () => {
+    const root = await makeRoot();
+    const store = await AgentSessionStore.open({
+      rootDirectory: root,
+      sessionId: "persisted-empty-tool-use",
+    });
+    await initializeDurableAgentSession(store, initialInput);
+    await appendAgentLifecycleState(
+      store,
+      "waiting_for_model",
+      1,
+    );
+    await store.appendModelEvent(
+      started(1, "response-empty"),
+    );
+    await store.appendModelEvent(
+      stopped(2, "response-empty", "tool_use"),
+    );
+    await store.close();
+
+    const reopened = await AgentSessionStore.open({
+      rootDirectory: root,
+      sessionId: "persisted-empty-tool-use",
+    });
+    const driver = new ScriptedDriver([]);
+    const executor = successExecutor();
+
+    const result = await runAgentLoop({
+      driver,
+      input: initialInput,
+      toolExecutor: executor,
+      durability: durability(reopened),
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.error?.code).toBe(
+      "tool_use_without_executable_calls",
+    );
+    expect(driver.calls).toBe(0);
+    expect(executor.execute).not.toHaveBeenCalled();
+    expect(
+      (await reopened.replay()).lifecycle,
+    ).toMatchObject({
+      type: "state",
+      state: "failed",
+    });
+    await reopened.close();
+  });
+
 });
