@@ -54,6 +54,7 @@ export interface AgentCompactionArtifact {
   readonly sourceSequenceStart: number;
   readonly sourceSequenceEnd: number;
   readonly sourceFingerprint: string;
+  readonly summaryFingerprint: string;
   readonly createdAt: number;
   readonly createdAtLogSequence: number;
   readonly retainedTailStartSequence: number;
@@ -253,6 +254,7 @@ export async function compactAgentHistory(
     sourceSequenceStart: sourceRecords[0]?.sequence ?? 1,
     sourceSequenceEnd: boundary.sequence,
     sourceFingerprint: fingerprintRecords(sourceRecords),
+    summaryFingerprint: fingerprintText(summary),
     createdAt: options.createdAt ?? Date.now(),
     createdAtLogSequence: lastLogSequence,
     retainedTailStartSequence: boundary.sequence + 1,
@@ -444,7 +446,7 @@ function scanSafeBoundaries(
   records: readonly AgentPersistedRecord[],
 ): SafeBoundaryScan {
   let state: AgentRunState = createInitialAgentRunState();
-  let pendingToolCalls = new Map<string, string>();
+  let pendingToolCalls = new Set<string>();
   let pendingResponseId: string | undefined;
   let pendingToolCallIds: string[] = [];
   const boundaries: AgentCompactionBoundary[] = [];
@@ -460,16 +462,17 @@ function scanSafeBoundaries(
             state,
             event.responseId,
           );
-          pendingToolCalls = new Map(
-            calls.map((call) => [
-              call.callId,
-              call.id,
-            ]),
+          pendingToolCalls = new Set(
+            calls.map((call) =>
+              toolResultKey(call.callId, call.id),
+            ),
           );
           pendingResponseId = event.responseId;
-          pendingToolCallIds = calls.map(
-            (call) => call.callId,
-          );
+          pendingToolCallIds = [
+            ...new Set(
+              calls.map((call) => call.callId),
+            ),
+          ];
         } else if (pendingToolCalls.size === 0) {
           boundaries.push({
             sequence: record.sequence,
@@ -487,15 +490,12 @@ function scanSafeBoundaries(
       pendingToolCalls.size > 0
     ) {
       const result = record.payload as AgentToolResult;
-      const expectedItemId = pendingToolCalls.get(
-        result.callId,
+      pendingToolCalls.delete(
+        toolResultKey(
+          result.callId,
+          result.toolCallItemId,
+        ),
       );
-      if (
-        expectedItemId &&
-        expectedItemId === result.toolCallItemId
-      ) {
-        pendingToolCalls.delete(result.callId);
-      }
 
       if (
         pendingToolCalls.size === 0 &&
@@ -748,12 +748,18 @@ function assertArtifactMatchesRecords(
   artifact: AgentCompactionArtifact,
 ): void {
   validateArtifact(artifact, sessionId);
+  replayAgentSession(records, sessionId);
 
+  const firstSequence = records[0]?.sequence;
   const lastSequence = records.at(-1)?.sequence ?? 0;
-  if (artifact.sourceSequenceEnd > lastSequence) {
+  if (
+    firstSequence === undefined ||
+    artifact.sourceSequenceStart !== firstSequence ||
+    artifact.sourceSequenceEnd > lastSequence
+  ) {
     throw new AgentCompactionError(
       "stale_artifact",
-      "Compaction source extends beyond the durable log",
+      "Compaction source range is not the durable history prefix",
     );
   }
 
@@ -782,6 +788,42 @@ function assertArtifactMatchesRecords(
     throw new AgentCompactionError(
       "stale_artifact",
       "Compaction source fingerprint does not match durable history",
+    );
+  }
+
+  const expectedBoundary = scanSafeBoundaries(records)
+    .boundaries.find(
+      (boundary) =>
+        boundary.sequence ===
+        artifact.sourceSequenceEnd,
+    );
+  if (
+    !expectedBoundary ||
+    !sameBoundary(expectedBoundary, artifact.boundary)
+  ) {
+    throw new AgentCompactionError(
+      "stale_artifact",
+      "Compaction boundary no longer matches durable history",
+    );
+  }
+
+  const expectedProtected =
+    collectProtectedSourceSequences(
+      projectAgentInput(records),
+      expectedBoundary,
+    );
+  if (
+    expectedProtected.length !==
+      artifact.protectedSourceSequences.length ||
+    expectedProtected.some(
+      (sequence, index) =>
+        sequence !==
+        artifact.protectedSourceSequences[index],
+    )
+  ) {
+    throw new AgentCompactionError(
+      "stale_artifact",
+      "Compaction protected references no longer match durable history",
     );
   }
 }
@@ -814,19 +856,25 @@ function validateArtifact(
     !isPositiveSafeInteger(value.sourceSequenceEnd) ||
     value.sourceSequenceStart > value.sourceSequenceEnd ||
     typeof value.sourceFingerprint !== "string" ||
-    value.sourceFingerprint.length === 0 ||
+    !/^[0-9a-f]{64}$/.test(value.sourceFingerprint) ||
+    typeof value.summaryFingerprint !== "string" ||
+    !/^[0-9a-f]{64}$/.test(value.summaryFingerprint) ||
     typeof value.createdAt !== "number" ||
     !Number.isFinite(value.createdAt) ||
     !isNonNegativeSafeInteger(
       value.createdAtLogSequence,
     ) ||
+    value.createdAtLogSequence <
+      value.sourceSequenceEnd ||
     !isPositiveSafeInteger(
       value.retainedTailStartSequence,
     ) ||
     value.retainedTailStartSequence !==
       value.sourceSequenceEnd + 1 ||
     typeof value.summary !== "string" ||
-    value.summary.trim().length === 0
+    value.summary.trim().length === 0 ||
+    fingerprintText(value.summary) !==
+      value.summaryFingerprint
   ) {
     throw invalidArtifact(
       "Agent compaction artifact has an invalid envelope",
@@ -873,10 +921,15 @@ function validateArtifact(
       value.boundary.kind !==
         "resolved_tool_round") ||
     typeof value.boundary.responseId !== "string" ||
+    value.boundary.responseId.trim().length === 0 ||
     !Array.isArray(value.boundary.toolCallIds) ||
     !value.boundary.toolCallIds.every(
-      (callId) => typeof callId === "string",
-    )
+      (callId) =>
+        typeof callId === "string" &&
+        callId.trim().length > 0,
+    ) ||
+    new Set(value.boundary.toolCallIds).size !==
+      value.boundary.toolCallIds.length
   ) {
     throw invalidArtifact(
       "Agent compaction boundary provenance is invalid",
@@ -889,9 +942,37 @@ function validateArtifact(
 function fingerprintRecords(
   records: readonly AgentPersistedRecord[],
 ): string {
+  return fingerprintText(JSON.stringify(records));
+}
+
+function fingerprintText(value: string): string {
   return createHash("sha256")
-    .update(JSON.stringify(records), "utf8")
+    .update(value, "utf8")
     .digest("hex");
+}
+
+function sameBoundary(
+  left: AgentCompactionBoundary,
+  right: AgentCompactionBoundary,
+): boolean {
+  return (
+    left.sequence === right.sequence &&
+    left.kind === right.kind &&
+    left.responseId === right.responseId &&
+    left.toolCallIds.length ===
+      right.toolCallIds.length &&
+    left.toolCallIds.every(
+      (callId, index) =>
+        callId === right.toolCallIds[index],
+    )
+  );
+}
+
+function toolResultKey(
+  callId: string,
+  itemId: string,
+): string {
+  return callId + "\u0000" + itemId;
 }
 
 function itemSequenceKey(
