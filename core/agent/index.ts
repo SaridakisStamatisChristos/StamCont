@@ -5,6 +5,7 @@ export * from "./execution";
 export * from "./kernel";
 export * from "./loop";
 export * from "./model";
+export * from "./persistence";
 export * from "./protocol";
 export * from "./reducer";
 export * from "./session";
