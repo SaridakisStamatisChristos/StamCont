@@ -26,9 +26,14 @@ async function makeRoot(): Promise<string> {
   return root;
 }
 
+type EventWithoutEnvelope<T> = T extends AgentRunEvent
+  ? Omit<T, "eventId" | "sequence">
+  : never;
+type EventInput = EventWithoutEnvelope<AgentRunEvent>;
+
 function event(
   sequence: number,
-  value: Omit<AgentRunEvent, "eventId" | "sequence">,
+  value: EventInput,
 ): AgentRunEvent {
   return {
     ...value,
@@ -239,14 +244,18 @@ describe("StamCont durable agent persistence", () => {
     const records = await reopened.readAllRecords();
 
     expect(records[2].payload).toEqual(completed);
-    expect(
-      reopened.replay().then((value) =>
-        value.runState.responses[0].outputItems[0],
-      ),
-    ).resolves.toMatchObject({
+    const replay = await reopened.replay();
+    expect(replay.runState.responses[0].outputItems[0]).toMatchObject({
       completedItem: {
-        opaque: completed.item.opaque,
-        providerMetadata: completed.item.providerMetadata,
+        opaque: {
+          encrypted: "abc123",
+          signature: "sig123",
+          nested: [1, true, null, { future: "field" }],
+        },
+        providerMetadata: {
+          provider: "future-provider",
+          continuationToken: "token-1",
+        },
         futureItemField: {
           preserved: true,
         },
