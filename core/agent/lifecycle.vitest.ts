@@ -416,22 +416,17 @@ describe("StamCont durable agent lifecycle", () => {
       iteration: 0,
     });
 
+    const records = await store.readAllRecords();
     expect(() =>
       analyzeDurableAgentSession(
-        await store.readAllRecords(),
+        records,
         store.sessionId,
       ),
-    ).rejects;
-    await expect(
-      Promise.resolve().then(() =>
-        analyzeDurableAgentSession(
-          await store.readAllRecords(),
-          store.sessionId,
-        ),
-      ),
-    ).rejects.toMatchObject({
-      code: "unsupported_lifecycle_schema",
-    });
+    ).toThrowError(
+      expect.objectContaining({
+        code: "unsupported_lifecycle_schema",
+      }),
+    );
     await store.close();
   });
 
@@ -524,9 +519,10 @@ describe("StamCont durable agent lifecycle", () => {
       content: "must not exist after terminal",
     });
 
+    const records = await store.readAllRecords();
     expect(() =>
       analyzeDurableAgentSession(
-        await store.readAllRecords(),
+        records,
         store.sessionId,
       ),
     ).toThrowError(AgentLifecycleError);
