@@ -211,7 +211,7 @@ const generousContext = {
 
 function durability(
   store: AgentSessionStore,
-  context = generousContext,
+  context: AgentLoopDurabilityOptions["context"] = generousContext,
 ): AgentLoopDurabilityOptions {
   return {
     store,
