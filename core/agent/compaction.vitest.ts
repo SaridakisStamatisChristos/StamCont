@@ -466,6 +466,9 @@ describe("StamCont agent compaction", () => {
     expect(
       JSON.stringify(requests[0]),
     ).not.toContain("provider-token");
+    expect(
+      JSON.stringify(requests[0].input),
+    ).not.toContain("keep this invariant");
 
     const compacted = buildCompactedAgentInput(
       records,
