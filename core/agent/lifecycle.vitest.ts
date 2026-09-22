@@ -417,16 +417,17 @@ describe("StamCont durable agent lifecycle", () => {
     });
 
     const records = await store.readAllRecords();
-    expect(() =>
+    try {
       analyzeDurableAgentSession(
         records,
         store.sessionId,
-      ),
-    ).toThrowError(
-      expect.objectContaining({
+      );
+      throw new Error("expected unsupported lifecycle schema rejection");
+    } catch (error) {
+      expect(error).toMatchObject({
         code: "unsupported_lifecycle_schema",
-      }),
-    );
+      });
+    }
     await store.close();
   });
 
