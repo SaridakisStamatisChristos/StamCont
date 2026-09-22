@@ -9,14 +9,17 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type {
   AgentModelInputItem,
+  AgentModelMessageInput,
   AgentToolResult,
 } from "./model";
 import {
   appendAgentLifecycleState,
+  AgentLifecycleError,
   appendAgentToolAttempt,
   analyzeDurableAgentSession,
   initializeDurableAgentSession,
   prepareDurableAgentContext,
+  reconcileDurableAgentToolAttempt,
 } from "./lifecycle";
 import {
   AgentSessionStore,
@@ -400,4 +403,250 @@ describe("StamCont durable agent lifecycle", () => {
     );
     await reopened.close();
   });
+
+  it("rejects unsupported lifecycle schema versions instead of ignoring them", async () => {
+    const root = await makeRoot();
+    const store = await AgentSessionStore.open({
+      rootDirectory: root,
+      sessionId: "unsupported-lifecycle-schema",
+    });
+    await store.appendLifecycle({
+      schemaVersion: 999,
+      type: "state",
+      state: "created",
+      iteration: 0,
+    });
+
+    const records = await store.readAllRecords();
+    try {
+      analyzeDurableAgentSession(
+        records,
+        store.sessionId,
+      );
+      throw new Error("expected unsupported lifecycle schema rejection");
+    } catch (error) {
+      expect(error).toMatchObject({
+        code: "unsupported_lifecycle_schema",
+      });
+    }
+    await store.close();
+  });
+
+  it("enforces the durable lifecycle transition graph", async () => {
+    const root = await makeRoot();
+    const store = await AgentSessionStore.open({
+      rootDirectory: root,
+      sessionId: "invalid-transition",
+    });
+    await initializeDurableAgentSession(store, initialInput);
+
+    await expect(
+      appendAgentLifecycleState(
+        store,
+        "completed",
+        0,
+        { stopReason: "end_turn" },
+      ),
+    ).rejects.toMatchObject({
+      code: "invalid_lifecycle",
+    });
+    await store.close();
+  });
+
+  it("treats a cancelled tool attempt without a durable result as ambiguous until explicitly reconciled", async () => {
+    const root = await makeRoot();
+    const store = await AgentSessionStore.open({
+      rootDirectory: root,
+      sessionId: "cancelled-tool-ambiguity",
+    });
+    await initializeDurableAgentSession(store, initialInput);
+    await appendToolUseRound(store);
+    await appendAgentToolAttempt(store, toolCall, "started", 1);
+    await appendAgentToolAttempt(
+      store,
+      toolCall,
+      "cancelled",
+      1,
+      "abort observed",
+    );
+
+    let analysis = analyzeDurableAgentSession(
+      await store.readAllRecords(),
+      store.sessionId,
+    );
+    expect(analysis.disposition).toBe("blocked");
+    expect(analysis.blockReason).toBe("ambiguous_tool_execution");
+    expect(analysis.ambiguousToolAttempts).toEqual([
+      expect.objectContaining({
+        toolCallItemId: toolCall.id,
+        callId: toolCall.callId,
+        status: "cancelled",
+      }),
+    ]);
+
+    await reconcileDurableAgentToolAttempt(
+      store,
+      toolCall,
+      {
+        iteration: 1,
+        reason: "operator verified the external action never started",
+      },
+    );
+    analysis = analyzeDurableAgentSession(
+      await store.readAllRecords(),
+      store.sessionId,
+    );
+    expect(analysis.disposition).toBe("resume");
+    expect(analysis.ambiguousToolAttempts).toEqual([]);
+    expect(analysis.pendingToolResponseId).toBe("response-1");
+    await store.close();
+  });
+
+  it("rejects execution activity appended after a terminal lifecycle state", async () => {
+    const root = await makeRoot();
+    const store = await AgentSessionStore.open({
+      rootDirectory: root,
+      sessionId: "activity-after-terminal",
+    });
+    await initializeDurableAgentSession(store, initialInput);
+    await appendAgentLifecycleState(
+      store,
+      "cancelled",
+      1,
+      { stopReason: "cancelled" },
+    );
+    await store.appendModelInput({
+      type: "message",
+      role: "user",
+      content: "must not exist after terminal",
+    });
+
+    const records = await store.readAllRecords();
+    expect(() =>
+      analyzeDurableAgentSession(
+        records,
+        store.sessionId,
+      ),
+    ).toThrowError(AgentLifecycleError);
+    await store.close();
+  });
+
+  it("repairs a crash during created-state initial input persistence from an exact durable prefix", async () => {
+    const root = await makeRoot();
+    const store = await AgentSessionStore.open({
+      rootDirectory: root,
+      sessionId: "created-prefix-repair",
+    });
+    const fullInput: readonly AgentModelMessageInput[] = [
+      {
+        type: "message",
+        role: "system",
+        content: "system",
+      },
+      {
+        type: "message",
+        role: "user",
+        content: "task",
+      },
+    ];
+
+    await appendAgentLifecycleState(store, "created", 0);
+    await store.appendModelInput(fullInput[0]);
+
+    const analysis = await initializeDurableAgentSession(
+      store,
+      fullInput,
+    );
+    expect(analysis.disposition).toBe("resume");
+    expect(analysis.lifecycleState).toBe("running");
+    expect(analysis.replay.input).toEqual(fullInput);
+    await store.close();
+  });
+
+  it("preserves the live-loop invariant that tool_use without executable calls is terminally failed", async () => {
+    const root = await makeRoot();
+    const store = await AgentSessionStore.open({
+      rootDirectory: root,
+      sessionId: "empty-tool-use",
+    });
+    await initializeDurableAgentSession(store, initialInput);
+    await appendAgentLifecycleState(
+      store,
+      "waiting_for_model",
+      1,
+    );
+    await store.appendModelEvent(
+      event(1, {
+        type: "response.started",
+        responseId: "response-empty",
+      }),
+    );
+    await store.appendModelEvent(
+      event(2, {
+        type: "response.completed",
+        responseId: "response-empty",
+        stopReason: "tool_use",
+      }),
+    );
+
+    const analysis = analyzeDurableAgentSession(
+      await store.readAllRecords(),
+      store.sessionId,
+    );
+    expect(analysis).toMatchObject({
+      disposition: "terminal",
+      terminalKind: "failed",
+      stopReason: "error",
+      error: {
+        code: "tool_use_without_executable_calls",
+      },
+    });
+    await store.close();
+  });
+
+
+  it("rejects non-empty durable histories that have no lifecycle state", async () => {
+    const root = await makeRoot();
+    const store = await AgentSessionStore.open({
+      rootDirectory: root,
+      sessionId: "missing-lifecycle-state",
+    });
+    await store.appendModelInput({
+      type: "message",
+      role: "user",
+      content: "legacy record without lifecycle",
+    });
+
+    const records = await store.readAllRecords();
+    expect(() =>
+      analyzeDurableAgentSession(
+        records,
+        store.sessionId,
+      ),
+    ).toThrowError(AgentLifecycleError);
+    await store.close();
+  });
+
+  it("enforces the durable tool-attempt transition graph on writes", async () => {
+    const root = await makeRoot();
+    const store = await AgentSessionStore.open({
+      rootDirectory: root,
+      sessionId: "invalid-tool-attempt-transition",
+    });
+    await initializeDurableAgentSession(store, initialInput);
+    await appendToolUseRound(store);
+
+    await expect(
+      appendAgentToolAttempt(
+        store,
+        toolCall,
+        "completed",
+        1,
+      ),
+    ).rejects.toMatchObject({
+      code: "invalid_lifecycle",
+    });
+    await store.close();
+  });
+
 });
