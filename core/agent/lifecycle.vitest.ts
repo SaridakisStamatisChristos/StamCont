@@ -603,4 +603,49 @@ describe("StamCont durable agent lifecycle", () => {
     await store.close();
   });
 
+
+  it("rejects non-empty durable histories that have no lifecycle state", async () => {
+    const root = await makeRoot();
+    const store = await AgentSessionStore.open({
+      rootDirectory: root,
+      sessionId: "missing-lifecycle-state",
+    });
+    await store.appendModelInput({
+      type: "message",
+      role: "user",
+      content: "legacy record without lifecycle",
+    });
+
+    const records = await store.readAllRecords();
+    expect(() =>
+      analyzeDurableAgentSession(
+        records,
+        store.sessionId,
+      ),
+    ).toThrowError(AgentLifecycleError);
+    await store.close();
+  });
+
+  it("enforces the durable tool-attempt transition graph on writes", async () => {
+    const root = await makeRoot();
+    const store = await AgentSessionStore.open({
+      rootDirectory: root,
+      sessionId: "invalid-tool-attempt-transition",
+    });
+    await initializeDurableAgentSession(store, initialInput);
+    await appendToolUseRound(store);
+
+    await expect(
+      appendAgentToolAttempt(
+        store,
+        toolCall,
+        "completed",
+        1,
+      ),
+    ).rejects.toMatchObject({
+      code: "invalid_lifecycle",
+    });
+    await store.close();
+  });
+
 });
