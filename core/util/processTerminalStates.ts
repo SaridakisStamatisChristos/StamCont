@@ -10,12 +10,80 @@ export function markIsolatedProcessGroup(process: ChildProcess): ChildProcess {
   return process;
 }
 
+const PROCESS_TREE_TERMINATION_TIMEOUT_MS = 5_000;
+
+function isIsolatedProcessGroup(child: ChildProcess): boolean {
+  return (child as StamContChildProcess).__stamcontIsolatedProcessGroup === true;
+}
+
 function isChildProcessActive(child: ChildProcess): boolean {
   return (
     !child.killed &&
     (child.exitCode ?? null) === null &&
     (child.signalCode ?? null) === null
   );
+}
+
+function windowsTaskkillArgs(
+  child: ChildProcess,
+  signal: NodeJS.Signals,
+): string[] {
+  const args = ["/PID", String(child.pid), "/T"];
+  // Windows has no POSIX-style SIGTERM semantics for a hidden broker
+  // process. StamCont-owned isolated trees must terminate deterministically
+  // so the broker closes its kill-on-close Job Object and descendants cannot
+  // escape cancellation. Preserve the softer behavior for ordinary host
+  // children.
+  if (signal === "SIGKILL" || isIsolatedProcessGroup(child)) {
+    args.push("/F");
+  }
+  return args;
+}
+
+function waitForChildProcessClose(
+  child: ChildProcess,
+  timeoutMs: number,
+): Promise<void> {
+  if (!isChildProcessActive(child)) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      child.off("close", onClose);
+      child.off("error", onError);
+      if (error) {
+        reject(error);
+      } else {
+        resolve();
+      }
+    };
+    const onClose = () => finish();
+    const onError = (error: Error) => finish(error);
+    const timer = setTimeout(
+      () =>
+        finish(
+          new Error(
+            `Process tree did not terminate within ${timeoutMs}ms`,
+          ),
+        ),
+      timeoutMs,
+    );
+
+    child.once("close", onClose);
+    child.once("error", onError);
+
+    // Avoid missing an exit that raced with listener registration.
+    if (!isChildProcessActive(child)) {
+      finish();
+    }
+  });
 }
 
 export function terminateProcessTree(
@@ -27,19 +95,7 @@ export function terminateProcessTree(
   }
 
   if (process.platform === "win32" && child.pid) {
-    const args = ["/PID", String(child.pid), "/T"];
-    // Windows has no POSIX-style SIGTERM semantics for a hidden broker
-    // process. StamCont-owned isolated trees must terminate deterministically
-    // so the broker closes its kill-on-close Job Object and descendants cannot
-    // escape cancellation. Preserve the softer behavior for ordinary host
-    // children.
-    if (
-      signal === "SIGKILL" ||
-      (child as StamContChildProcess).__stamcontIsolatedProcessGroup
-    ) {
-      args.push("/F");
-    }
-    const killer = spawn("taskkill", args, {
+    const killer = spawn("taskkill", windowsTaskkillArgs(child, signal), {
       detached: true,
       stdio: "ignore",
       windowsHide: true,
@@ -48,10 +104,7 @@ export function terminateProcessTree(
     return;
   }
 
-  if (
-    (child as StamContChildProcess).__stamcontIsolatedProcessGroup &&
-    child.pid
-  ) {
+  if (isIsolatedProcessGroup(child) && child.pid) {
     try {
       process.kill(-child.pid, signal);
       return;
@@ -61,6 +114,41 @@ export function terminateProcessTree(
   }
 
   child.kill(signal);
+}
+
+export async function terminateProcessTreeAndWait(
+  child: ChildProcess,
+  signal: NodeJS.Signals = "SIGTERM",
+  timeoutMs: number = PROCESS_TREE_TERMINATION_TIMEOUT_MS,
+): Promise<void> {
+  if (!isChildProcessActive(child)) {
+    return;
+  }
+
+  const childClose = waitForChildProcessClose(child, timeoutMs);
+
+  if (process.platform === "win32" && child.pid) {
+    const killer = spawn("taskkill", windowsTaskkillArgs(child, signal), {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    const taskkillComplete = new Promise<void>((resolve, reject) => {
+      killer.once("error", reject);
+      killer.once("close", (code) => {
+        if (code === 0 || !isChildProcessActive(child)) {
+          resolve();
+          return;
+        }
+        reject(new Error(`taskkill exited with code ${code ?? "unknown"}`));
+      });
+    });
+
+    await Promise.all([taskkillComplete, childClose]);
+    return;
+  }
+
+  terminateProcessTree(child, signal);
+  await childClose;
 }
 
 // Track which processes have been backgrounded
@@ -134,6 +222,20 @@ export async function killTerminalProcess(toolCallId: string): Promise<void> {
   const processInfo = processTerminalForegroundStates.get(toolCallId);
   if (processInfo && !processInfo.process.killed) {
     const { process } = processInfo;
+
+    if (isIsolatedProcessGroup(process)) {
+      try {
+        await terminateProcessTreeAndWait(process, "SIGTERM");
+      } catch (error) {
+        if (!isChildProcessActive(process)) {
+          processTerminalForegroundStates.delete(toolCallId);
+          return;
+        }
+        await terminateProcessTreeAndWait(process, "SIGKILL");
+      }
+      processTerminalForegroundStates.delete(toolCallId);
+      return;
+    }
 
     terminateProcessTree(process, "SIGTERM");
 
