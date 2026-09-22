@@ -244,6 +244,12 @@ export async function appendAgentToolAttempt(
   iteration: number,
   reason?: string,
 ): Promise<AgentPersistedRecord> {
+  if (!toolCall.id || !toolCall.callId || !toolCall.name) {
+    throw new AgentLifecycleError(
+      "invalid_lifecycle",
+      "Durable tool attempts require non-empty item id, call id, and tool name",
+    );
+  }
   if (
     status === "reconciled_not_executed" &&
     (typeof reason !== "string" || !reason.trim())
@@ -385,6 +391,12 @@ export function analyzeDurableAgentSession(
       },
     ];
   });
+  if (lifecycleEntries.length === 0) {
+    throw new AgentLifecycleError(
+      "invalid_lifecycle",
+      "A non-empty durable agent session has no lifecycle records",
+    );
+  }
   validateLifecycleHistory(records, lifecycleEntries);
   const stateEntries = lifecycleEntries.filter(
     (
@@ -394,6 +406,12 @@ export function analyzeDurableAgentSession(
       payload: AgentDurableLifecycleStateRecord;
     } => entry.payload.type === "state",
   );
+  if (stateEntries.length === 0) {
+    throw new AgentLifecycleError(
+      "invalid_lifecycle",
+      "A durable agent session has lifecycle records but no lifecycle state",
+    );
+  }
   const lastStateEntry = stateEntries.at(-1);
   const lastIteration = lifecycleEntries.reduce(
     (maximum, entry) => Math.max(maximum, entry.payload.iteration),
