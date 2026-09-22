@@ -13,6 +13,7 @@ import {
 } from "./budget";
 import type {
   AgentModelInputItem,
+  AgentModelMessageInput,
   AgentModelToolDefinition,
   AgentToolResult,
 } from "./model";
@@ -1062,7 +1063,7 @@ async function repairCreatedDurableAgentSession(
 
 function validateInitialInput(
   initialInput: readonly AgentModelInputItem[],
-): void {
+): asserts initialInput is readonly AgentModelMessageInput[] {
   for (const input of initialInput) {
     if (input.type !== "message") {
       throw new AgentLifecycleError(
