@@ -273,11 +273,13 @@ async function prepareLoopRuntime(
 
   if (!wasEmpty) {
     try {
-      await appendAgentLifecycleState(
-        options.durability.store,
-        "resumable",
-        analysis.lastIteration,
-      );
+      if (analysis.lifecycleState !== "resumable") {
+        await appendAgentLifecycleState(
+          options.durability.store,
+          "resumable",
+          analysis.lastIteration,
+        );
+      }
       await appendAgentLifecycleState(
         options.durability.store,
         "running",

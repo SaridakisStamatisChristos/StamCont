@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from "node:util";
+
 import {
   compactAndPersistAgentHistory,
   type AgentCompactionSummarizer,
@@ -11,6 +13,7 @@ import {
 } from "./budget";
 import type {
   AgentModelInputItem,
+  AgentModelMessageInput,
   AgentModelToolDefinition,
   AgentToolResult,
 } from "./model";
@@ -49,7 +52,8 @@ export type AgentDurableToolAttemptStatus =
   | "started"
   | "completed"
   | "executor_failed"
-  | "cancelled";
+  | "cancelled"
+  | "reconciled_not_executed";
 
 export type AgentDurableResumeDisposition =
   | "new"
@@ -101,7 +105,7 @@ export interface AgentDurableAmbiguousToolAttempt {
   readonly callId: string;
   readonly name: string;
   readonly iteration: number;
-  readonly status: "started" | "executor_failed";
+  readonly status: "started" | "executor_failed" | "cancelled";
 }
 
 export interface AgentDurableResumeAnalysis {
@@ -128,6 +132,7 @@ export type AgentLifecycleErrorCode =
   | "invalid_initial_input"
   | "context_compaction_required"
   | "context_overflow"
+  | "unsupported_lifecycle_schema"
   | "invalid_lifecycle";
 
 export class AgentLifecycleError extends Error {
@@ -147,6 +152,67 @@ export function createAgentToolAttemptId(
   return "tool:" + toolCall.id + ":" + toolCall.callId;
 }
 
+const ALLOWED_LIFECYCLE_TRANSITIONS: Readonly<
+  Record<AgentDurableLifecycleState, readonly AgentDurableLifecycleState[]>
+> = {
+  created: ["running", "cancelled", "failed", "closed"],
+  running: [
+    "waiting_for_model",
+    "waiting_for_tool",
+    "resumable",
+    "interrupted",
+    "cancelled",
+    "failed",
+    "closed",
+  ],
+  waiting_for_model: [
+    "waiting_for_tool",
+    "resumable",
+    "completed",
+    "cancelled",
+    "failed",
+    "interrupted",
+  ],
+  waiting_for_tool: [
+    "running",
+    "resumable",
+    "cancelled",
+    "failed",
+    "interrupted",
+  ],
+  resumable: ["running", "cancelled", "failed", "interrupted"],
+  interrupted: ["resumable", "cancelled", "failed", "closed"],
+  completed: ["closed"],
+  cancelled: ["closed"],
+  failed: ["closed"],
+  closed: [],
+};
+
+export function assertAgentLifecycleTransition(
+  previous: AgentDurableLifecycleState | undefined,
+  next: AgentDurableLifecycleState,
+): void {
+  if (previous === undefined) {
+    if (next !== "created") {
+      throw new AgentLifecycleError(
+        "invalid_lifecycle",
+        "A durable agent lifecycle must begin in the created state",
+      );
+    }
+    return;
+  }
+
+  if (!ALLOWED_LIFECYCLE_TRANSITIONS[previous].includes(next)) {
+    throw new AgentLifecycleError(
+      "invalid_lifecycle",
+      "Invalid durable agent lifecycle transition: " +
+        previous +
+        " -> " +
+        next,
+    );
+  }
+}
+
 export async function appendAgentLifecycleState(
   store: AgentSessionStore,
   state: AgentDurableLifecycleState,
@@ -157,6 +223,10 @@ export async function appendAgentLifecycleState(
     readonly error?: AgentRunError;
   } = {},
 ): Promise<AgentPersistedRecord> {
+  const records = await store.readAllRecords();
+  const previousState = findLastLifecycleState(records);
+  assertAgentLifecycleTransition(previousState, state);
+
   const payload: JsonObject = {
     schemaVersion: AGENT_LIFECYCLE_SCHEMA_VERSION,
     type: "state",
@@ -176,6 +246,47 @@ export async function appendAgentToolAttempt(
   iteration: number,
   reason?: string,
 ): Promise<AgentPersistedRecord> {
+  if (!toolCall.id || !toolCall.callId || !toolCall.name) {
+    throw new AgentLifecycleError(
+      "invalid_lifecycle",
+      "Durable tool attempts require non-empty item id, call id, and tool name",
+    );
+  }
+  if (
+    status === "reconciled_not_executed" &&
+    (typeof reason !== "string" || !reason.trim())
+  ) {
+    throw new AgentLifecycleError(
+      "invalid_lifecycle",
+      "A reconciled tool attempt requires a non-empty audit reason",
+    );
+  }
+
+  const records = await store.readAllRecords();
+  const lifecycleState = findLastLifecycleState(records);
+  const allowedLifecycleStates =
+    status === "reconciled_not_executed"
+      ? ["waiting_for_tool", "interrupted"]
+      : ["waiting_for_tool"];
+  if (
+    lifecycleState === undefined ||
+    !allowedLifecycleStates.includes(lifecycleState)
+  ) {
+    throw new AgentLifecycleError(
+      "invalid_lifecycle",
+      "Durable tool-attempt state " +
+        status +
+        " is not valid while lifecycle is " +
+        String(lifecycleState),
+    );
+  }
+
+  const previousAttemptStatus = findLatestToolAttemptStatus(
+    records,
+    toolCall,
+  );
+  assertToolAttemptTransition(previousAttemptStatus, status);
+
   const payload: JsonObject = {
     schemaVersion: AGENT_LIFECYCLE_SCHEMA_VERSION,
     type: "tool_attempt",
@@ -190,23 +301,64 @@ export async function appendAgentToolAttempt(
   return store.appendLifecycle(payload);
 }
 
+export async function reconcileDurableAgentToolAttempt(
+  store: AgentSessionStore,
+  toolCall: AgentToolCallItem,
+  options: {
+    readonly iteration: number;
+    readonly reason: string;
+  },
+): Promise<AgentPersistedRecord> {
+  if (!options.reason.trim()) {
+    throw new AgentLifecycleError(
+      "invalid_lifecycle",
+      "Tool-attempt reconciliation requires a non-empty audit reason",
+    );
+  }
+
+  const records = await store.readAllRecords();
+  const analysis = analyzeDurableAgentSession(records, store.sessionId);
+  const matching = analysis.ambiguousToolAttempts.find(
+    (attempt) =>
+      attempt.toolCallItemId === toolCall.id &&
+      attempt.callId === toolCall.callId,
+  );
+  if (!matching) {
+    throw new AgentLifecycleError(
+      "invalid_lifecycle",
+      "Only an ambiguous durable tool attempt can be reconciled as not executed",
+    );
+  }
+
+  return appendAgentToolAttempt(
+    store,
+    toolCall,
+    "reconciled_not_executed",
+    options.iteration,
+    options.reason,
+  );
+}
+
 export async function initializeDurableAgentSession(
   store: AgentSessionStore,
   initialInput: readonly AgentModelInputItem[],
 ): Promise<AgentDurableResumeAnalysis> {
   const existing = await store.readAllRecords();
   if (existing.length > 0) {
-    return analyzeDurableAgentSession(existing, store.sessionId);
-  }
-
-  await appendAgentLifecycleState(store, "created", 0);
-  for (const input of initialInput) {
-    if (input.type !== "message") {
-      throw new AgentLifecycleError(
-        "invalid_initial_input",
-        "A new durable agent session accepts only initial system/user message input; canonical model output and tool results must come from persisted execution",
+    const analysis = analyzeDurableAgentSession(existing, store.sessionId);
+    if (analysis.lifecycleState === "created") {
+      return repairCreatedDurableAgentSession(
+        store,
+        existing,
+        initialInput,
       );
     }
+    return analysis;
+  }
+
+  validateInitialInput(initialInput);
+  await appendAgentLifecycleState(store, "created", 0);
+  for (const input of initialInput) {
     await store.appendModelInput(input);
   }
   await appendAgentLifecycleState(store, "running", 0);
@@ -234,9 +386,20 @@ export function analyzeDurableAgentSession(
     if (record.kind !== "lifecycle") {
       return [];
     }
-    const parsed = parseLifecycleRecord(record.payload);
-    return parsed ? [{ sequence: record.sequence, payload: parsed }] : [];
+    return [
+      {
+        sequence: record.sequence,
+        payload: parseLifecycleRecord(record.payload),
+      },
+    ];
   });
+  if (lifecycleEntries.length === 0) {
+    throw new AgentLifecycleError(
+      "invalid_lifecycle",
+      "A non-empty durable agent session has no lifecycle records",
+    );
+  }
+  validateLifecycleHistory(records, lifecycleEntries);
   const stateEntries = lifecycleEntries.filter(
     (
       entry,
@@ -245,6 +408,12 @@ export function analyzeDurableAgentSession(
       payload: AgentDurableLifecycleStateRecord;
     } => entry.payload.type === "state",
   );
+  if (stateEntries.length === 0) {
+    throw new AgentLifecycleError(
+      "invalid_lifecycle",
+      "A durable agent session has lifecycle records but no lifecycle state",
+    );
+  }
   const lastStateEntry = stateEntries.at(-1);
   const lastIteration = lifecycleEntries.reduce(
     (maximum, entry) => Math.max(maximum, entry.payload.iteration),
@@ -284,10 +453,11 @@ export function analyzeDurableAgentSession(
       (
         attempt,
       ): attempt is AgentDurableToolAttemptRecord & {
-        status: "started" | "executor_failed";
+        status: "started" | "executor_failed" | "cancelled";
       } =>
         (attempt.status === "started" ||
-          attempt.status === "executor_failed") &&
+          attempt.status === "executor_failed" ||
+          attempt.status === "cancelled") &&
         !resultKeys.has(
           toolPairKey(attempt.toolCallItemId, attempt.callId),
         ),
@@ -418,6 +588,19 @@ export function analyzeDurableAgentSession(
           replay.runState,
           response.responseId,
         );
+        if (calls.length === 0) {
+          return {
+            disposition: "terminal",
+            ...common,
+            terminalKind: "failed",
+            stopReason: "error",
+            error: {
+              code: "tool_use_without_executable_calls",
+              message:
+                "Persisted model response requested tool use without any canonical completed executable tool calls",
+            },
+          };
+        }
         const unresolved = calls.filter(
           (call) =>
             !resultKeys.has(toolPairKey(call.id, call.callId)),
@@ -532,15 +715,25 @@ function terminalFromLifecycle(
 
 function parseLifecycleRecord(
   value: unknown,
-): AgentDurableLifecycleRecord | undefined {
+): AgentDurableLifecycleRecord {
   if (!isRecord(value)) {
-    return undefined;
+    throw new AgentLifecycleError(
+      "invalid_lifecycle",
+      "Persisted agent lifecycle payload must be an object",
+    );
   }
-  if (
-    value.schemaVersion !== AGENT_LIFECYCLE_SCHEMA_VERSION ||
-    (value.type !== "state" && value.type !== "tool_attempt")
-  ) {
-    return undefined;
+  if (value.schemaVersion !== AGENT_LIFECYCLE_SCHEMA_VERSION) {
+    throw new AgentLifecycleError(
+      "unsupported_lifecycle_schema",
+      "Unsupported persisted agent lifecycle schema version: " +
+        String(value.schemaVersion),
+    );
+  }
+  if (value.type !== "state" && value.type !== "tool_attempt") {
+    throw new AgentLifecycleError(
+      "invalid_lifecycle",
+      "Persisted agent lifecycle record has an unknown type",
+    );
   }
 
   if (
@@ -561,19 +754,70 @@ function parseLifecycleRecord(
         "Persisted agent lifecycle state is invalid",
       );
     }
+    if (
+      value.stopReason !== undefined &&
+      !isAgentStopReason(value.stopReason)
+    ) {
+      throw new AgentLifecycleError(
+        "invalid_lifecycle",
+        "Persisted agent lifecycle stop reason is invalid",
+      );
+    }
+    if (
+      value.reason !== undefined &&
+      (typeof value.reason !== "string" || !value.reason.trim())
+    ) {
+      throw new AgentLifecycleError(
+        "invalid_lifecycle",
+        "Persisted agent lifecycle reason must be a non-empty string",
+      );
+    }
+    if (value.error !== undefined) {
+      validatePersistedRunError(value.error);
+    }
     return value as unknown as AgentDurableLifecycleStateRecord;
   }
 
   if (
     typeof value.attemptId !== "string" ||
+    !value.attemptId ||
     typeof value.toolCallItemId !== "string" ||
+    !value.toolCallItemId ||
     typeof value.callId !== "string" ||
+    !value.callId ||
     typeof value.name !== "string" ||
+    !value.name ||
     !isToolAttemptStatus(value.status)
   ) {
     throw new AgentLifecycleError(
       "invalid_lifecycle",
       "Persisted agent tool-attempt record is invalid",
+    );
+  }
+  const expectedAttemptId =
+    "tool:" + value.toolCallItemId + ":" + value.callId;
+  if (value.attemptId !== expectedAttemptId) {
+    throw new AgentLifecycleError(
+      "invalid_lifecycle",
+      "Persisted agent tool-attempt identity does not match its tool-call identity",
+    );
+  }
+  if (
+    value.reason !== undefined &&
+    (typeof value.reason !== "string" || !value.reason.trim())
+  ) {
+    throw new AgentLifecycleError(
+      "invalid_lifecycle",
+      "Persisted agent tool-attempt reason must be a non-empty string",
+    );
+  }
+  if (
+    value.status === "reconciled_not_executed" &&
+    (typeof value.reason !== "string" || !value.reason.trim())
+  ) {
+    throw new AgentLifecycleError(
+      "invalid_lifecycle",
+      "A reconciled durable tool attempt requires an audit reason",
     );
   }
   return value as unknown as AgentDurableToolAttemptRecord;
@@ -606,8 +850,229 @@ function isToolAttemptStatus(
     value === "started" ||
     value === "completed" ||
     value === "executor_failed" ||
-    value === "cancelled"
+    value === "cancelled" ||
+    value === "reconciled_not_executed"
   );
+}
+
+function isAgentStopReason(value: unknown): value is AgentStopReason {
+  return (
+    value === "tool_use" ||
+    value === "end_turn" ||
+    value === "max_tokens" ||
+    value === "cancelled" ||
+    value === "error" ||
+    value === "unknown"
+  );
+}
+
+function validatePersistedRunError(value: unknown): void {
+  if (
+    !isRecord(value) ||
+    typeof value.message !== "string" ||
+    !value.message.trim() ||
+    (value.code !== undefined && typeof value.code !== "string") ||
+    (value.retryable !== undefined &&
+      typeof value.retryable !== "boolean")
+  ) {
+    throw new AgentLifecycleError(
+      "invalid_lifecycle",
+      "Persisted agent lifecycle error payload is invalid",
+    );
+  }
+}
+
+function findLastLifecycleState(
+  records: readonly AgentPersistedRecord[],
+): AgentDurableLifecycleState | undefined {
+  const lifecycleEntries = records.flatMap((record) => {
+    if (record.kind !== "lifecycle") {
+      return [];
+    }
+    return [
+      {
+        sequence: record.sequence,
+        payload: parseLifecycleRecord(record.payload),
+      },
+    ];
+  });
+  validateLifecycleHistory(records, lifecycleEntries);
+  return lifecycleEntries
+    .filter(
+      (
+        entry,
+      ): entry is {
+        sequence: number;
+        payload: AgentDurableLifecycleStateRecord;
+      } => entry.payload.type === "state",
+    )
+    .at(-1)?.payload.state;
+}
+
+function findLatestToolAttemptStatus(
+  records: readonly AgentPersistedRecord[],
+  toolCall: Pick<AgentToolCallItem, "id" | "callId">,
+): AgentDurableToolAttemptStatus | undefined {
+  let status: AgentDurableToolAttemptStatus | undefined;
+  for (const record of records) {
+    if (record.kind !== "lifecycle") {
+      continue;
+    }
+    const parsed = parseLifecycleRecord(record.payload);
+    if (
+      parsed.type === "tool_attempt" &&
+      parsed.toolCallItemId === toolCall.id &&
+      parsed.callId === toolCall.callId
+    ) {
+      status = parsed.status;
+    }
+  }
+  return status;
+}
+
+function assertToolAttemptTransition(
+  previous: AgentDurableToolAttemptStatus | undefined,
+  next: AgentDurableToolAttemptStatus,
+): void {
+  const valid =
+    previous === undefined
+      ? next === "started"
+      : previous === "started"
+        ? next === "completed" ||
+          next === "executor_failed" ||
+          next === "cancelled"
+        : previous === "executor_failed" || previous === "cancelled"
+          ? next === "reconciled_not_executed"
+          : previous === "reconciled_not_executed"
+            ? next === "started"
+            : false;
+
+  if (!valid) {
+    throw new AgentLifecycleError(
+      "invalid_lifecycle",
+      "Invalid durable tool-attempt transition: " +
+        String(previous) +
+        " -> " +
+        next,
+    );
+  }
+}
+
+function validateLifecycleHistory(
+  records: readonly AgentPersistedRecord[],
+  lifecycleEntries: readonly {
+    readonly sequence: number;
+    readonly payload: AgentDurableLifecycleRecord;
+  }[],
+): void {
+  let previousState: AgentDurableLifecycleState | undefined;
+  let terminalSequence: number | undefined;
+
+  for (const entry of lifecycleEntries) {
+    if (entry.payload.type !== "state") {
+      if (terminalSequence !== undefined) {
+        throw new AgentLifecycleError(
+          "invalid_lifecycle",
+          "Persisted tool-attempt activity exists after a terminal durable lifecycle state",
+        );
+      }
+      continue;
+    }
+
+    assertAgentLifecycleTransition(previousState, entry.payload.state);
+    previousState = entry.payload.state;
+    if (
+      entry.payload.state === "completed" ||
+      entry.payload.state === "cancelled" ||
+      entry.payload.state === "failed" ||
+      entry.payload.state === "closed"
+    ) {
+      terminalSequence ??= entry.sequence;
+    }
+  }
+
+  if (terminalSequence === undefined) {
+    return;
+  }
+
+  for (const record of records) {
+    if (record.sequence <= terminalSequence || record.kind === "metadata") {
+      continue;
+    }
+    if (record.kind === "lifecycle") {
+      const parsed = parseLifecycleRecord(record.payload);
+      if (parsed.type === "state" && parsed.state === "closed") {
+        continue;
+      }
+    }
+    throw new AgentLifecycleError(
+      "invalid_lifecycle",
+      "Persisted execution activity exists after a terminal durable lifecycle state",
+    );
+  }
+}
+
+async function repairCreatedDurableAgentSession(
+  store: AgentSessionStore,
+  records: readonly AgentPersistedRecord[],
+  initialInput: readonly AgentModelInputItem[],
+): Promise<AgentDurableResumeAnalysis> {
+  validateInitialInput(initialInput);
+
+  const persistedInput: AgentModelInputItem[] = [];
+  for (const record of records) {
+    if (record.kind === "model_input") {
+      persistedInput.push(record.payload as AgentModelInputItem);
+      continue;
+    }
+    if (record.kind === "lifecycle") {
+      const parsed = parseLifecycleRecord(record.payload);
+      if (parsed.type === "state" && parsed.state === "created") {
+        continue;
+      }
+    }
+    throw new AgentLifecycleError(
+      "invalid_lifecycle",
+      "A created durable session contains execution records before initialization completed",
+    );
+  }
+
+  if (persistedInput.length > initialInput.length) {
+    throw new AgentLifecycleError(
+      "invalid_initial_input",
+      "Persisted initial input is longer than the supplied durable session input",
+    );
+  }
+  for (let index = 0; index < persistedInput.length; index += 1) {
+    if (!isDeepStrictEqual(persistedInput[index], initialInput[index])) {
+      throw new AgentLifecycleError(
+        "invalid_initial_input",
+        "Persisted initial input does not match the supplied durable session input",
+      );
+    }
+  }
+
+  for (let index = persistedInput.length; index < initialInput.length; index += 1) {
+    await store.appendModelInput(initialInput[index]);
+  }
+  await appendAgentLifecycleState(store, "running", 0);
+  return analyzeDurableAgentSession(
+    await store.readAllRecords(),
+    store.sessionId,
+  );
+}
+
+function validateInitialInput(
+  initialInput: readonly AgentModelInputItem[],
+): asserts initialInput is readonly AgentModelMessageInput[] {
+  for (const input of initialInput) {
+    if (input.type !== "message") {
+      throw new AgentLifecycleError(
+        "invalid_initial_input",
+        "A new durable agent session accepts only initial system/user message input; canonical model output and tool results must come from persisted execution",
+      );
+    }
+  }
 }
 
 function validateIteration(iteration: number): number {
