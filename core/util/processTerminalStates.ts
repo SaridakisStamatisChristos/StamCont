@@ -1,6 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
 
-
 type StamContChildProcess = ChildProcess & {
   __stamcontIsolatedProcessGroup?: boolean;
 };
@@ -69,9 +68,7 @@ function waitForChildProcessClose(
     const timer = setTimeout(
       () =>
         finish(
-          new Error(
-            `Process tree did not terminate within ${timeoutMs}ms`,
-          ),
+          new Error(`Process tree did not terminate within ${timeoutMs}ms`),
         ),
       timeoutMs,
     );
@@ -226,7 +223,7 @@ export async function killTerminalProcess(toolCallId: string): Promise<void> {
     if (isIsolatedProcessGroup(process)) {
       try {
         await terminateProcessTreeAndWait(process, "SIGTERM");
-      } catch (error) {
+      } catch {
         if (!isChildProcessActive(process)) {
           processTerminalForegroundStates.delete(toolCallId);
           return;
