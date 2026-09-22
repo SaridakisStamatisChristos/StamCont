@@ -825,7 +825,7 @@ describe("StamCont agent compaction", () => {
       JSON.stringify({
         ...artifact,
         protectedSourceSequences: [],
-      }) + "\\n",
+      }) + "\n",
       "utf8",
     );
 
