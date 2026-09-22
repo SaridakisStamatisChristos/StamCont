@@ -701,4 +701,47 @@ describe("StamCont durable AgentLoop integration", () => {
     await reopened.close();
   });
 
+
+  it("continues safely after a crash between resumable and running lifecycle markers", async () => {
+    const root = await makeRoot();
+    const store = await AgentSessionStore.open({
+      rootDirectory: root,
+      sessionId: "crash-after-resumable",
+    });
+    await initializeDurableAgentSession(store, initialInput);
+    await appendAgentLifecycleState(
+      store,
+      "interrupted",
+      0,
+      { reason: "simulated interruption" },
+    );
+    await appendAgentLifecycleState(
+      store,
+      "resumable",
+      0,
+    );
+    await store.close();
+
+    const reopened = await AgentSessionStore.open({
+      rootDirectory: root,
+      sessionId: "crash-after-resumable",
+    });
+    const driver = new ScriptedDriver([
+      [
+        started(1, "response-1"),
+        stopped(2, "response-1", "end_turn"),
+      ],
+    ]);
+
+    const result = await runAgentLoop({
+      driver,
+      input: initialInput,
+      durability: durability(reopened),
+    });
+
+    expect(result.status).toBe("completed");
+    expect(driver.calls).toBe(1);
+    await reopened.close();
+  });
+
 });
