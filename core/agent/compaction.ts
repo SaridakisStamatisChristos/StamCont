@@ -885,17 +885,37 @@ function validateArtifact(
     );
   }
 
-  if (!Array.isArray(value.protectedSourceSequences)) {
+  validateProtectedSourceSequences(
+    value.protectedSourceSequences,
+    value.sourceSequenceStart,
+    value.sourceSequenceEnd,
+  );
+  validateCompactionAlgorithm(value.algorithm);
+  validateCompactionBoundary(
+    value.boundary,
+    value.sourceSequenceEnd,
+  );
+
+  return value as unknown as AgentCompactionArtifact;
+}
+
+function validateProtectedSourceSequences(
+  value: unknown,
+  sourceSequenceStart: number,
+  sourceSequenceEnd: number,
+): void {
+  if (!Array.isArray(value)) {
     throw invalidArtifact(
       "Agent compaction protected source references are invalid",
     );
   }
+
   let previousSequence = 0;
-  for (const sequence of value.protectedSourceSequences) {
+  for (const sequence of value) {
     if (
       !isPositiveSafeInteger(sequence) ||
-      sequence < value.sourceSequenceStart ||
-      sequence > value.sourceSequenceEnd ||
+      sequence < sourceSequenceStart ||
+      sequence > sourceSequenceEnd ||
       sequence <= previousSequence
     ) {
       throw invalidArtifact(
@@ -904,43 +924,47 @@ function validateArtifact(
     }
     previousSequence = sequence;
   }
+}
 
+function validateCompactionAlgorithm(
+  value: unknown,
+): void {
   if (
-    !isUnknownRecord(value.algorithm) ||
-    value.algorithm.id !==
-      AGENT_COMPACTION_ALGORITHM_ID ||
-    value.algorithm.version !==
+    !isUnknownRecord(value) ||
+    value.id !== AGENT_COMPACTION_ALGORITHM_ID ||
+    value.version !==
       AGENT_COMPACTION_ALGORITHM_VERSION
   ) {
     throw invalidArtifact(
       "Agent compaction algorithm identity is unsupported",
     );
   }
+}
 
+function validateCompactionBoundary(
+  value: unknown,
+  sourceSequenceEnd: number,
+): void {
   if (
-    !isUnknownRecord(value.boundary) ||
-    value.boundary.sequence !==
-      value.sourceSequenceEnd ||
-    (value.boundary.kind !== "completed_turn" &&
-      value.boundary.kind !==
-        "resolved_tool_round") ||
-    typeof value.boundary.responseId !== "string" ||
-    value.boundary.responseId.trim().length === 0 ||
-    !Array.isArray(value.boundary.toolCallIds) ||
-    !value.boundary.toolCallIds.every(
+    !isUnknownRecord(value) ||
+    value.sequence !== sourceSequenceEnd ||
+    (value.kind !== "completed_turn" &&
+      value.kind !== "resolved_tool_round") ||
+    typeof value.responseId !== "string" ||
+    value.responseId.trim().length === 0 ||
+    !Array.isArray(value.toolCallIds) ||
+    !value.toolCallIds.every(
       (callId) =>
         typeof callId === "string" &&
         callId.trim().length > 0,
     ) ||
-    new Set(value.boundary.toolCallIds).size !==
-      value.boundary.toolCallIds.length
+    new Set(value.toolCallIds).size !==
+      value.toolCallIds.length
   ) {
     throw invalidArtifact(
       "Agent compaction boundary provenance is invalid",
     );
   }
-
-  return value as unknown as AgentCompactionArtifact;
 }
 
 function fingerprintRecords(
