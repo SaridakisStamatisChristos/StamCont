@@ -344,7 +344,10 @@ describe("StamCont durable AgentLoop integration", () => {
       durability: durability(reopened),
     });
 
-    expect(result.status).toBe("completed");
+    expect(
+      result.status,
+      result.error ? JSON.stringify(result.error) : undefined,
+    ).toBe("completed");
     expect(executor.execute).toHaveBeenCalledTimes(1);
     expect(executor.execute.mock.calls[0][0]).toMatchObject({
       id: "tool-1",
@@ -450,7 +453,10 @@ describe("StamCont durable AgentLoop integration", () => {
       durability: durability(reopened),
     });
 
-    expect(result.status).toBe("completed");
+    expect(
+      result.status,
+      result.error ? JSON.stringify(result.error) : undefined,
+    ).toBe("completed");
     expect(executedNames).toEqual(["second"]);
     const toolResults = driver.requests[0].input.filter(
       (item) => item.type === "tool_result",
