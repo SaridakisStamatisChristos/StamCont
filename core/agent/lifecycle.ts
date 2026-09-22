@@ -164,7 +164,7 @@ export async function appendAgentLifecycleState(
     iteration: validateIteration(iteration),
     ...(details.stopReason ? { stopReason: details.stopReason } : {}),
     ...(details.reason ? { reason: details.reason } : {}),
-    ...(details.error ? { error: details.error } : {}),
+    ...(details.error ? { error: toJsonRunError(details.error) } : {}),
   };
   return store.appendLifecycle(payload);
 }
@@ -618,6 +618,15 @@ function validateIteration(iteration: number): number {
     );
   }
   return iteration;
+}
+
+function toJsonRunError(error: AgentRunError): JsonObject {
+  return {
+    message: error.message,
+    ...(error.code ? { code: error.code } : {}),
+    ...(error.retryable !== undefined ? { retryable: error.retryable } : {}),
+    ...(error.details !== undefined ? { details: error.details } : {}),
+  };
 }
 
 function toolPairKey(
