@@ -152,7 +152,11 @@ export function getExecutableToolCalls(
     ? state.responses.find((candidate) => candidate.responseId === responseId)
     : getLatestAgentResponse(state);
 
-  if (!response) {
+  if (
+    !response ||
+    response.status !== "completed" ||
+    response.stopReason !== "tool_use"
+  ) {
     return [];
   }
 
