@@ -254,6 +254,31 @@ export async function appendAgentToolAttempt(
     );
   }
 
+  const records = await store.readAllRecords();
+  const lifecycleState = findLastLifecycleState(records);
+  const allowedLifecycleStates =
+    status === "reconciled_not_executed"
+      ? ["waiting_for_tool", "interrupted"]
+      : ["waiting_for_tool"];
+  if (
+    lifecycleState === undefined ||
+    !allowedLifecycleStates.includes(lifecycleState)
+  ) {
+    throw new AgentLifecycleError(
+      "invalid_lifecycle",
+      "Durable tool-attempt state " +
+        status +
+        " is not valid while lifecycle is " +
+        String(lifecycleState),
+    );
+  }
+
+  const previousAttemptStatus = findLatestToolAttemptStatus(
+    records,
+    toolCall,
+  );
+  assertToolAttemptTransition(previousAttemptStatus, status);
+
   const payload: JsonObject = {
     schemaVersion: AGENT_LIFECYCLE_SCHEMA_VERSION,
     type: "tool_attempt",
@@ -840,17 +865,77 @@ function validatePersistedRunError(value: unknown): void {
 function findLastLifecycleState(
   records: readonly AgentPersistedRecord[],
 ): AgentDurableLifecycleState | undefined {
-  let state: AgentDurableLifecycleState | undefined;
+  const lifecycleEntries = records.flatMap((record) => {
+    if (record.kind !== "lifecycle") {
+      return [];
+    }
+    return [
+      {
+        sequence: record.sequence,
+        payload: parseLifecycleRecord(record.payload),
+      },
+    ];
+  });
+  validateLifecycleHistory(records, lifecycleEntries);
+  return lifecycleEntries
+    .filter(
+      (
+        entry,
+      ): entry is {
+        sequence: number;
+        payload: AgentDurableLifecycleStateRecord;
+      } => entry.payload.type === "state",
+    )
+    .at(-1)?.payload.state;
+}
+
+function findLatestToolAttemptStatus(
+  records: readonly AgentPersistedRecord[],
+  toolCall: Pick<AgentToolCallItem, "id" | "callId">,
+): AgentDurableToolAttemptStatus | undefined {
+  let status: AgentDurableToolAttemptStatus | undefined;
   for (const record of records) {
     if (record.kind !== "lifecycle") {
       continue;
     }
     const parsed = parseLifecycleRecord(record.payload);
-    if (parsed.type === "state") {
-      state = parsed.state;
+    if (
+      parsed.type === "tool_attempt" &&
+      parsed.toolCallItemId === toolCall.id &&
+      parsed.callId === toolCall.callId
+    ) {
+      status = parsed.status;
     }
   }
-  return state;
+  return status;
+}
+
+function assertToolAttemptTransition(
+  previous: AgentDurableToolAttemptStatus | undefined,
+  next: AgentDurableToolAttemptStatus,
+): void {
+  const valid =
+    previous === undefined
+      ? next === "started"
+      : previous === "started"
+        ? next === "completed" ||
+          next === "executor_failed" ||
+          next === "cancelled"
+        : previous === "executor_failed" || previous === "cancelled"
+          ? next === "reconciled_not_executed"
+          : previous === "reconciled_not_executed"
+            ? next === "started"
+            : false;
+
+  if (!valid) {
+    throw new AgentLifecycleError(
+      "invalid_lifecycle",
+      "Invalid durable tool-attempt transition: " +
+        String(previous) +
+        " -> " +
+        next,
+    );
+  }
 }
 
 function validateLifecycleHistory(
