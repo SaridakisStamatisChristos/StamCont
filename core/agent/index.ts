@@ -1,3 +1,4 @@
+export * from "./adapters/continueModel";
 export * from "./adapters/coreTool";
 export * from "./capabilities";
 export * from "./budget";
