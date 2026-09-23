@@ -115,7 +115,11 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
             extras.executionSignal,
           );
 
-          if (toolCallId && !waitForCompletion) {
+          if (
+            extras.managedBackgroundJobs &&
+            toolCallId &&
+            !waitForCompletion
+          ) {
             markProcessAsBackgrounded(processId);
           }
 
