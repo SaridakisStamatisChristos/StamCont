@@ -255,7 +255,8 @@ export type CoreToolFailureCode =
   | "approval_required"
   | "tool_cancelled"
   | "kernel_rejection"
-  | "process_failure";
+  | "process_failure"
+  | "executor_failure";
 
 export interface CoreToolCallResult {
   contextItems: ContextItem[];
@@ -301,31 +302,36 @@ export async function callTool(
         sessionId: executionContext.sessionId,
         signal: executionContext.signal,
         authorize: executionContext.authorize,
-        execute: async (agentContext) =>
-          tool.uri
-            ? callToolFromUri(tool.uri, args, {
-                ...extras,
-                fetch: executionBackend.wrapFetch(extras.fetch),
-                executionSignal: agentContext.signal,
-              })
-            : {
-                contextItems: await callBuiltInTool(
-                  tool.function.name,
-                  args,
-                  {
-                    ...extras,
-                    fetch: executionBackend.wrapFetch(extras.fetch),
-                    executionBackend,
-                    executionSignal: agentContext.signal,
-                    executionProcessId: executionContext.processId,
-                    strictProcessFailures:
-                      executionContext.strictProcessFailures,
-                    managedBackgroundJobs:
-                      executionContext.managedBackgroundJobs,
-                  },
-                ),
-                mcpUiState: undefined,
-              },
+        execute: async (agentContext) => {
+          try {
+            return tool.uri
+              ? await callToolFromUri(tool.uri, args, {
+                  ...extras,
+                  fetch: executionBackend.wrapFetch(extras.fetch),
+                  executionSignal: agentContext.signal,
+                })
+              : {
+                  contextItems: await callBuiltInTool(
+                    tool.function.name,
+                    args,
+                    {
+                      ...extras,
+                      fetch: executionBackend.wrapFetch(extras.fetch),
+                      executionBackend,
+                      executionSignal: agentContext.signal,
+                      executionProcessId: executionContext.processId,
+                      strictProcessFailures:
+                        executionContext.strictProcessFailures,
+                      managedBackgroundJobs:
+                        executionContext.managedBackgroundJobs,
+                    },
+                  ),
+                  mcpUiState: undefined,
+                };
+          } catch (error) {
+            throw new CoreToolInvocationError(error);
+          }
+        },
       });
     if (tool.faviconUrl) {
       contextItems.forEach((item) => {
@@ -339,28 +345,46 @@ export async function callTool(
       mcpUiState,
     };
   } catch (e) {
-    let errorMessage = `${e}`;
+    const invocationFailure = e instanceof CoreToolInvocationError;
+    const error = invocationFailure ? e.causeValue : e;
+    let errorMessage = `${error}`;
     let errorReason: ContinueErrorReason | undefined;
 
-    if (e instanceof ContinueError) {
-      errorMessage = e.message;
-      errorReason = e.reason;
-    } else if (e instanceof Error) {
-      errorMessage = e.message;
+    if (error instanceof ContinueError) {
+      errorMessage = error.message;
+      errorReason = error.reason;
+    } else if (error instanceof Error) {
+      errorMessage = error.message;
     }
 
     return {
       contextItems: [],
       errorMessage,
       errorReason,
-      errorCode: classifyCoreToolFailure(e, executionContext.signal),
+      errorCode: classifyCoreToolFailure(
+        error,
+        executionContext.signal,
+        invocationFailure,
+      ),
     };
+  }
+}
+
+class CoreToolInvocationError extends Error {
+  constructor(readonly causeValue: unknown) {
+    super(
+      causeValue instanceof Error
+        ? causeValue.message
+        : String(causeValue),
+    );
+    this.name = "CoreToolInvocationError";
   }
 }
 
 function classifyCoreToolFailure(
   error: unknown,
   signal?: AbortSignal,
+  fromToolInvocation = false,
 ): CoreToolFailureCode {
   if (signal?.aborted) {
     return "tool_cancelled";
@@ -383,6 +407,7 @@ function classifyCoreToolFailure(
     if (error.reason === ContinueErrorReason.FileIsSecurityConcern) {
       return "kernel_rejection";
     }
+    return "tool_failure";
   }
-  return "tool_failure";
+  return fromToolInvocation ? "tool_failure" : "executor_failure";
 }
