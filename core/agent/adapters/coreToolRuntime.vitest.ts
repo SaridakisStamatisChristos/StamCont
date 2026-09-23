@@ -468,7 +468,9 @@ describe("CoreAgentToolExecutor", () => {
   });
 });
 
-type EventBody = Omit<AgentRunEvent, "eventId" | "sequence">;
+type EventBody<T = AgentRunEvent> = T extends AgentRunEvent
+  ? Omit<T, "eventId" | "sequence">
+  : never;
 
 function event(
   sequence: number,
