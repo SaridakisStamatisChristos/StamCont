@@ -4,6 +4,7 @@ import { renderWithProviders } from "../../../util/test/render";
 import { sendInputWithMockedResponse } from "../../../util/test/utils";
 import { Chat } from "../Chat";
 import { updateConfig } from "../../../redux/slices/configSlice";
+import { setMode } from "../../../redux/slices/sessionSlice";
 
 describe("Parallel Tool Calls - Basic", () => {
   const PARALLEL_TOOL_CALL_RESPONSE: ChatMessage[] = [
@@ -40,6 +41,8 @@ describe("Parallel Tool Calls - Basic", () => {
 
   test("should handle assistant message with multiple tool calls", async () => {
     const { ideMessenger, store } = await renderWithProviders(<Chat />);
+
+    store.dispatch(setMode("background"));
 
     // Mock required responses
     ideMessenger.responses["tools/evaluatePolicy"] = {

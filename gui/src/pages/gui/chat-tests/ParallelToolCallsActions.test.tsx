@@ -6,6 +6,7 @@ import { Chat } from "../Chat";
 import { findAllCurToolCallsByStatus } from "../../../redux/util";
 import { cancelToolCall } from "../../../redux/slices/sessionSlice";
 import { updateConfig } from "../../../redux/slices/configSlice";
+import { setMode } from "../../../redux/slices/sessionSlice";
 
 describe("Parallel Tool Calls - Actions", () => {
   const PARALLEL_TOOL_CALL_RESPONSE: ChatMessage[] = [
@@ -42,6 +43,8 @@ describe("Parallel Tool Calls - Actions", () => {
 
   test("should handle individual tool call actions without breaking other calls", async () => {
     const { ideMessenger, store } = await renderWithProviders(<Chat />);
+
+    store.dispatch(setMode("background"));
 
     // Mock required responses
     ideMessenger.responses["tools/evaluatePolicy"] = {

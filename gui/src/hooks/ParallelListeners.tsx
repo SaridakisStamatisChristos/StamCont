@@ -1,8 +1,10 @@
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
+import { useStore } from "react-redux";
 import { IdeMessengerContext } from "../context/IdeMessenger";
 
 import { FromCoreProtocol } from "core/protocol";
 import { useAppDispatch, useAppSelector } from "../redux/hooks";
+import type { RootState } from "../redux/store";
 import { setConfigLoading, setConfigResult } from "../redux/slices/configSlice";
 import { setLastNonEditSessionEmpty } from "../redux/slices/editState";
 import { updateIndexingStatus } from "../redux/slices/indexingSlice";
@@ -30,6 +32,8 @@ import {
   setDocumentStylesFromTheme,
 } from "../styles/theme";
 import { isJetBrains } from "../util";
+import { callClientTool } from "../util/clientTools/callClientTool";
+import { findToolCallById } from "../redux/util";
 import { setLocalStorage } from "../util/localStorage";
 import { migrateLocalStorage } from "../util/migrateLocalStorage";
 import { useWebviewListener } from "./useWebviewListener";
@@ -37,6 +41,7 @@ import { useWebviewListener } from "./useWebviewListener";
 function ParallelListeners() {
   const dispatch = useAppDispatch();
   const ideMessenger = useContext(IdeMessengerContext);
+  const reduxStore = useStore<RootState>();
   const history = useAppSelector((store) => store.session.history);
   const isInEdit = useAppSelector((store) => store.session.isInEdit);
   const selectedProfileId = useAppSelector(
@@ -248,6 +253,63 @@ function ParallelListeners() {
     [],
   );
 
+  useWebviewListener(
+    "agent/executeClientTool",
+    async (request) => {
+      const state = reduxStore.getState();
+      const tool = state.config.config.tools.find(
+        (candidate) =>
+          candidate.function.name === request.toolName,
+      );
+      if (!tool) {
+        return {
+          contextItems: [],
+          errorMessage: `Client tool "${request.toolName}" is not available`,
+        };
+      }
+
+      const result = await callClientTool(
+        {
+          toolCallId: request.callId,
+          toolCall: {
+            id: request.callId,
+            type: "function",
+            function: {
+              name: request.toolName,
+              arguments: JSON.stringify(request.input),
+            },
+          },
+          status: "calling",
+          parsedArgs: request.input,
+          tool,
+        },
+        {
+          getState: reduxStore.getState,
+          dispatch,
+          ideMessenger,
+        },
+      );
+
+      if (result.error) {
+        return {
+          contextItems: [],
+          errorMessage: result.error.message,
+        };
+      }
+      if (result.respondImmediately) {
+        return {
+          contextItems: result.output ?? [],
+        };
+      }
+
+      return await waitForClientToolCompletion(
+        reduxStore,
+        request.callId,
+      );
+    },
+    [dispatch, ideMessenger, reduxStore],
+  );
+
   useEffect(() => {
     if (!isInEdit) {
       dispatch(setLastNonEditSessionEmpty(history.length === 0));
@@ -259,6 +321,45 @@ function ParallelListeners() {
   }, []);
 
   return <></>;
+}
+
+function waitForClientToolCompletion(
+  store: ReturnType<typeof useStore<RootState>>,
+  toolCallId: string,
+): Promise<{
+  contextItems: any[];
+  errorMessage?: string;
+}> {
+  return new Promise((resolve) => {
+    const inspect = () => {
+      const toolCall = findToolCallById(
+        store.getState().session.history,
+        toolCallId,
+      );
+      if (!toolCall) {
+        return;
+      }
+      if (toolCall.status === "done") {
+        unsubscribe();
+        resolve({
+          contextItems: toolCall.output ?? [],
+        });
+      } else if (
+        toolCall.status === "errored" ||
+        toolCall.status === "canceled"
+      ) {
+        unsubscribe();
+        resolve({
+          contextItems: toolCall.output ?? [],
+          errorMessage:
+            toolCall.output?.map((item) => item.content).join("\n") ||
+            "Client tool execution did not complete",
+        });
+      }
+    };
+    const unsubscribe = store.subscribe(inspect);
+    inspect();
+  });
 }
 
 export default ParallelListeners;

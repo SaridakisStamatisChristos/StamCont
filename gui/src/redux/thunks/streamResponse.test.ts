@@ -73,6 +73,13 @@ export function getRootStateWithClaude(): RootState {
   const state = getEmptyRootState();
   return {
     ...state,
+    session: {
+      ...state.session,
+      // This helper backs legacy streamResponse suites. Background mode
+      // keeps the inherited frontend streaming/tool-loop path available
+      // without routing Agent/Plan away from the canonical Core AgentLoop.
+      mode: "background",
+    },
     config: {
       ...state.config,
       config: {

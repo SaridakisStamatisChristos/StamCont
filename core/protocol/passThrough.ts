@@ -79,6 +79,12 @@ export const WEBVIEW_TO_CORE_PASS_THROUGH: (keyof ToCoreFromWebviewProtocol)[] =
     "onboarding/complete",
     "addAutocompleteModel",
     "didChangeSelectedProfile",
+    "agent/run",
+    "agent/approve",
+    "agent/cancel",
+    "agent/session",
+    "agent/listSessions",
+    "agent/closeSession",
     "tools/call",
     "tools/evaluatePolicy",
     "tools/preprocessArgs",
@@ -106,4 +112,5 @@ export const CORE_TO_WEBVIEW_PASS_THROUGH: (keyof ToWebviewFromCoreProtocol)[] =
     "sessionUpdate",
     "didCloseFiles",
     "toolCallPartialOutput",
+    "agent/executeClientTool",
   ];

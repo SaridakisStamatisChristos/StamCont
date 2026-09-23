@@ -6,6 +6,7 @@ import {
   getElementByText,
   sendInputWithMockedResponse,
 } from "../../../util/test/utils";
+import { setMode } from "../../../redux/slices/sessionSlice";
 import { Chat } from "../Chat";
 
 test("should render input box", async () => {
@@ -43,6 +44,8 @@ test("should be able to toggle modes", async () => {
 
 test("should send a message and receive a response", async () => {
   const { ideMessenger, store } = await renderWithProviders(<Chat />);
+
+  store.dispatch(setMode("chat"));
 
   // First add and select the mock LLM
   await act(async () => {

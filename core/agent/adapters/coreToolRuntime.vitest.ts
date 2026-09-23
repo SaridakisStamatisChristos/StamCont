@@ -125,6 +125,69 @@ describe("CoreAgentToolExecutor", () => {
     ]);
   });
 
+  it("authorizes client-only edit tools before delegating to the webview adapter", async () => {
+    const fetch = vi.fn(async () => jsonResponse([]));
+    const executeClientTool = vi.fn(async () => ({
+      contextItems: [
+        {
+          name: "Edit",
+          description: "Applied",
+          content: "done",
+        },
+      ],
+    }));
+    const editTool = {
+      ...tool(BuiltInToolNames.EditExistingFile),
+      uri: undefined,
+      readonly: false,
+    };
+    const deniedRuntime = new CoreAgentToolExecutor({
+      tools: [editTool],
+      extras: extras(fetch),
+      sessionId: "client-edit-denied",
+      profile: "interactive",
+      executeClientTool,
+    });
+
+    const denied = await deniedRuntime.execute(
+      call({
+        name: BuiltInToolNames.EditExistingFile,
+        input: { filepath: "a.ts", changes: "change" },
+      }),
+      executionContext(),
+    );
+
+    expect(denied).toMatchObject({
+      status: "failure",
+      error: { code: "approval_required" },
+    });
+    expect(executeClientTool).not.toHaveBeenCalled();
+    await deniedRuntime.close();
+
+    const approve = vi.fn(async () => true);
+    const allowedRuntime = new CoreAgentToolExecutor({
+      tools: [editTool],
+      extras: extras(fetch),
+      sessionId: "client-edit-approved",
+      profile: "interactive",
+      approve,
+      executeClientTool,
+    });
+
+    const allowed = await allowedRuntime.execute(
+      call({
+        name: BuiltInToolNames.EditExistingFile,
+        input: { filepath: "a.ts", changes: "change" },
+      }),
+      executionContext(),
+    );
+
+    expect(allowed.status).toBe("success");
+    expect(approve).toHaveBeenCalledTimes(1);
+    expect(executeClientTool).toHaveBeenCalledTimes(1);
+    await allowedRuntime.close();
+  });
+
   it("executes through AgentKernel and preserves canonical input", async () => {
     const fetch = vi.fn(async (_url: string, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body));
@@ -232,6 +295,28 @@ describe("CoreAgentToolExecutor", () => {
     await runtime.close();
   });
 
+  it("fails closed on malformed surface policy input", async () => {
+    const fetch = vi.fn(async () => jsonResponse([]));
+    const runtime = new CoreAgentToolExecutor({
+      tools: [tool()],
+      extras: extras(fetch),
+      sessionId: "agent-malformed-policy",
+      profile: "full_access",
+      policyOverrides: {
+        remote_tool: "unexpected-policy" as any,
+      },
+    });
+
+    const result = await runtime.execute(call(), executionContext());
+
+    expect(result).toMatchObject({
+      status: "failure",
+      error: { code: "tool_denied" },
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    await runtime.close();
+  });
+
   it("uses the surface only to collect a required approval decision", async () => {
     const fetch = vi.fn(async () =>
       jsonResponse([
@@ -263,6 +348,39 @@ describe("CoreAgentToolExecutor", () => {
       input: { value: "hello" },
       policy: "allowedWithPermission",
     });
+    await runtime.close();
+  });
+
+  it("applies user base-policy preferences inside the kernel authorization path", async () => {
+    const fetch = vi.fn(async () => jsonResponse([]));
+    const approve = vi.fn(async () => true);
+    const bridge = new CoreToolKernelBridge();
+    const events: string[] = [];
+    bridge.kernel.subscribe((event) => {
+      events.push(event.type);
+    });
+    const runtime = new CoreAgentToolExecutor({
+      tools: [tool()],
+      extras: extras(fetch),
+      sessionId: "agent-policy-override",
+      profile: "interactive",
+      policyOverrides: {
+        remote_tool: "allowedWithoutPermission",
+      },
+      approve,
+      bridge,
+    });
+
+    const result = await runtime.execute(call(), executionContext());
+
+    // The restricted transport may reject the synthetic example.test URL,
+    // but the configured policy must bypass approval and reach execution.
+    expect(result).not.toMatchObject({
+      status: "failure",
+      error: { code: "approval_required" },
+    });
+    expect(approve).not.toHaveBeenCalled();
+    expect(events).toContain("tool.started");
     await runtime.close();
   });
 

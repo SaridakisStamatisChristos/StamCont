@@ -6,7 +6,7 @@ import { Chat } from "../Chat";
 import { waitFor } from "@testing-library/dom";
 import { act } from "@testing-library/react";
 import { ChatMessage } from "core";
-import { setInactive } from "../../../redux/slices/sessionSlice";
+import { setInactive, setMode } from "../../../redux/slices/sessionSlice";
 import {
   getElementByTestId,
   getElementByText,
@@ -59,6 +59,10 @@ test(
   async () => {
     // Setup
     const { ideMessenger, store, user } = await renderWithProviders(<Chat />);
+
+    // This regression fixture exercises the inherited frontend edit UI.
+    // Agent/Plan runtime coverage lives in the canonical agent/run tests.
+    store.dispatch(setMode("background"));
 
     // Reset mocks to ensure clean state
     ideMessenger.resetMocks();
