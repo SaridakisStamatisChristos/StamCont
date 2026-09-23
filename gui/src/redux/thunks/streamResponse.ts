@@ -11,6 +11,7 @@ import {
   updateHistoryItemAtIndex,
 } from "../slices/sessionSlice";
 import { ThunkApiType } from "../store";
+import { streamAgentInput } from "./streamAgentInput";
 import { streamNormalInput } from "./streamNormalInput";
 import { streamThunkWrapper } from "./streamThunkWrapper";
 import { updateFileSymbolsFromFiles } from "./updateFileSymbols";
@@ -83,21 +84,29 @@ export const streamResponseThunk = createAsyncThunk<
           }),
         );
 
-        unwrapResult(
-          await dispatch(
-            streamNormalInput({
-              legacySlashCommandData: legacyCommandWithInput
-                ? {
-                    command: legacyCommandWithInput.command,
-                    contextItems: selectedContextItems,
-                    historyIndex: inputIndex,
-                    input: legacyCommandWithInput.input,
-                    selectedCode,
-                  }
-                : undefined,
-            }),
-          ),
-        );
+        const currentMode = getState().session.mode;
+        if (
+          (currentMode === "agent" || currentMode === "plan") &&
+          !legacyCommandWithInput
+        ) {
+          unwrapResult(await dispatch(streamAgentInput()));
+        } else {
+          unwrapResult(
+            await dispatch(
+              streamNormalInput({
+                legacySlashCommandData: legacyCommandWithInput
+                  ? {
+                      command: legacyCommandWithInput.command,
+                      contextItems: selectedContextItems,
+                      historyIndex: inputIndex,
+                      input: legacyCommandWithInput.input,
+                      selectedCode,
+                    }
+                  : undefined,
+              }),
+            ),
+          );
+        }
       }),
     );
   },
