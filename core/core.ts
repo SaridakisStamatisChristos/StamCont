@@ -1076,9 +1076,40 @@ export class Core {
       return { url: "" };
     });
 
-    on("agent/closeSession", async ({ data: { sessionId } }) => ({
-      closed: await coreToolKernelBridge.closeSession(sessionId),
+    on("agent/run", (msg) =>
+      this.handleAgentSurfaceRun(msg.messageId, msg.data),
+    );
+
+    on("agent/approve", async ({ data }) => ({
+      resolved: await this.agentSurfaceRuntime.approve(
+        data.sessionId,
+        data.approvalId,
+        data.approved,
+      ),
     }));
+
+    on("agent/cancel", async ({ data }) => ({
+      cancelled: await this.agentSurfaceRuntime.cancel(
+        data.sessionId,
+        data.reason,
+      ),
+    }));
+
+    on("agent/session", async ({ data }) =>
+      this.agentSurfaceRuntime.getSession(data.sessionId),
+    );
+
+    on("agent/listSessions", async () =>
+      this.agentSurfaceRuntime.listSessions(),
+    );
+
+    on("agent/closeSession", async ({ data: { sessionId } }) => {
+      const [surfaceClosed, kernelClosed] = await Promise.all([
+        this.agentSurfaceRuntime.closeSession(sessionId),
+        coreToolKernelBridge.closeSession(sessionId),
+      ]);
+      return { closed: surfaceClosed || kernelClosed };
+    });
 
     on(
       "tools/call",
