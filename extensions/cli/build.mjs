@@ -112,7 +112,11 @@ try {
     // Add banner to create require for CommonJS packages
     banner: {
       js: `import { createRequire as __createRequire } from 'module';
-const require = __createRequire(import.meta.url);`,
+import { fileURLToPath as __fileURLToPath } from 'url';
+import { dirname as __pathDirname } from 'path';
+const require = __createRequire(import.meta.url);
+const __filename = __fileURLToPath(import.meta.url);
+const __dirname = __pathDirname(__filename);`,
     },
   });
 
