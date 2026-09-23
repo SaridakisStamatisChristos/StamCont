@@ -20,6 +20,7 @@ import { useFindWidget } from "../../components/find/FindWidget";
 import TimelineItem from "../../components/gui/TimelineItem";
 import { NewSessionButton } from "../../components/mainInput/belowMainInput/NewSessionButton";
 import ThinkingBlockPeek from "../../components/mainInput/belowMainInput/ThinkingBlockPeek";
+import { AgentRuntimeBanner } from "../../components/mainInput/AgentRuntimeBanner";
 import ContinueInputBox from "../../components/mainInput/ContinueInputBox";
 import { useOnboardingCard } from "../../components/OnboardingCard";
 import StepContainer from "../../components/StepContainer";
@@ -412,6 +413,7 @@ export function Chat() {
           ))}
       </StepsDiv>
       <div className={"relative shrink-0"}>
+        <AgentRuntimeBanner />
         <ContinueInputBox
           isMainInput
           isLastUserInput={false}
