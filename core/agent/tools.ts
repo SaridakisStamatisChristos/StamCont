@@ -167,6 +167,7 @@ export class AgentToolDispatcher {
       let rawDecision: boolean | AgentToolAuthorizationDecision;
       try {
         rawDecision = await tool.authorize(input, context);
+        session.assertActive();
       } catch (error) {
         await this.emit(session, "tool.failed", tool.name, {
           stage: "authorization",
@@ -199,6 +200,7 @@ export class AgentToolDispatcher {
     await this.emit(session, "tool.started", tool.name);
 
     try {
+      session.assertActive();
       const output = await tool.execute(input, context);
 
       session.assertActive();
