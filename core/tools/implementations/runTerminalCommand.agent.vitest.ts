@@ -31,7 +31,11 @@ afterEach(() => {
 describe("runTerminalCommand agent semantics", () => {
   it("surfaces non-zero exits as process failures in strict agent mode", async () => {
     const child = fakeChild();
-    const backend = fakeBackend(child.process);
+    let markSpawned!: () => void;
+    const spawned = new Promise<void>((resolve) => {
+      markSpawned = resolve;
+    });
+    const backend = fakeBackend(child.process, [], markSpawned);
     const pending = runTerminalCommandImpl(
       { command: "fail" },
       {
@@ -41,7 +45,8 @@ describe("runTerminalCommand agent semantics", () => {
       } as any,
     );
 
-    queueMicrotask(() => child.close(7));
+    await spawned;
+    child.close(7);
 
     await expect(pending).rejects.toMatchObject({
       name: "ContinueError",
@@ -51,7 +56,11 @@ describe("runTerminalCommand agent semantics", () => {
 
   it("retains legacy context-item failure behavior outside strict mode", async () => {
     const child = fakeChild();
-    const backend = fakeBackend(child.process);
+    let markSpawned!: () => void;
+    const spawned = new Promise<void>((resolve) => {
+      markSpawned = resolve;
+    });
+    const backend = fakeBackend(child.process, [], markSpawned);
     const pending = runTerminalCommandImpl(
       { command: "fail" },
       {
@@ -60,7 +69,8 @@ describe("runTerminalCommand agent semantics", () => {
       } as any,
     );
 
-    queueMicrotask(() => child.close(3));
+    await spawned;
+    child.close(3);
 
     await expect(pending).resolves.toMatchObject([
       {
@@ -110,6 +120,7 @@ describe("runTerminalCommand agent semantics", () => {
 function fakeBackend(
   child: ChildProcess,
   capturedOptions: SpawnOptions[] = [],
+  onSpawn?: () => void,
 ): ExecutionBackend {
   return {
     kind: "host",
@@ -128,6 +139,7 @@ function fakeBackend(
     isLocalShell: async () => true,
     spawnShell: (_command, options) => {
       capturedOptions.push(options);
+      onSpawn?.();
       return child;
     },
     runShell: async () => undefined,
