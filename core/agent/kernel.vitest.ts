@@ -93,6 +93,51 @@ describe("StamCont Agent Kernel", () => {
     expect(executed).toBe(false);
   });
 
+  it("does not start a tool if cancellation wins while approval is pending", async () => {
+    let releaseApproval!: () => void;
+    let approvalStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      approvalStarted = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseApproval = resolve;
+    });
+    let executed = false;
+    const kernel = new AgentKernel({
+      tools: [
+        {
+          name: "delayed-write",
+          description: "Delayed write",
+          authorize: async () => {
+            approvalStarted();
+            await release;
+            return true;
+          },
+          execute: () => {
+            executed = true;
+            return "written";
+          },
+        },
+      ],
+      idFactory: () => "session-pending-approval",
+    });
+    const session = await kernel.createSession({
+      profile: "interactive",
+    });
+    const execution = kernel.executeTool(
+      session,
+      "delayed-write",
+      undefined,
+    );
+
+    await started;
+    await kernel.cancelSession(session, "user cancelled");
+    releaseApproval();
+
+    await expect(execution).rejects.toThrow("user cancelled");
+    expect(executed).toBe(false);
+  });
+
   it("keeps child session state isolated and propagates parent cancellation", async () => {
     let nextId = 0;
     const kernel = new AgentKernel({
