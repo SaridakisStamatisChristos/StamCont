@@ -1,4 +1,6 @@
 import type {
+  ContextItem,
+  McpUiState,
   Tool,
   ToolCall,
   ToolExtras,
@@ -19,9 +21,12 @@ import type {
   JsonObject,
   JsonValue,
 } from "../protocol";
-import type {
-  AgentToolAuthorizationDecision,
-  AgentToolAuthorizer,
+import {
+  AgentCapabilityDeniedError,
+  AgentToolAuthorizationDeniedError,
+  AgentToolNotFoundError,
+  type AgentToolAuthorizationDecision,
+  type AgentToolAuthorizer,
 } from "../tools";
 import {
   callTool,
@@ -56,12 +61,32 @@ export type CoreAgentToolApprovalHandler = (
   request: CoreAgentToolApprovalRequest,
 ) => boolean | Promise<boolean>;
 
+export interface CoreAgentClientToolExecutionRequest {
+  readonly sessionId: string;
+  readonly profile: BuiltInExecutionProfileId;
+  readonly itemId: string;
+  readonly callId: string;
+  readonly toolName: string;
+  readonly input: JsonObject;
+}
+
+export interface CoreAgentClientToolExecutionResult {
+  readonly contextItems: readonly ContextItem[];
+  readonly mcpUiState?: McpUiState;
+  readonly errorMessage?: string;
+}
+
+export type CoreAgentClientToolExecutionHandler = (
+  request: CoreAgentClientToolExecutionRequest,
+) => Promise<CoreAgentClientToolExecutionResult>;
+
 export interface CoreAgentToolRuntimeOptions {
   readonly tools: readonly Tool[];
   readonly extras: Omit<ToolExtras, "tool" | "toolCallId">;
   readonly sessionId: string;
   readonly profile?: BuiltInExecutionProfileId;
   readonly approve?: CoreAgentToolApprovalHandler;
+  readonly executeClientTool?: CoreAgentClientToolExecutionHandler;
   readonly bridge?: CoreToolKernelBridge;
 }
 
@@ -92,7 +117,7 @@ export class CoreAgentToolExecutor implements AgentToolExecutor {
       if (this.tools.has(name)) {
         throw new Error(`Duplicate Core agent tool name: ${name}`);
       }
-      if (clientOnlyToolNames.has(name)) {
+      if (clientOnlyToolNames.has(name) && !options.executeClientTool) {
         unsupportedToolNames.push(name);
         continue;
       }
@@ -135,6 +160,10 @@ export class CoreAgentToolExecutor implements AgentToolExecutor {
           toolName: toolCall.name,
         },
       );
+    }
+
+    if (clientOnlyToolNames.has(toolCall.name)) {
+      return this.executeClientTool(tool, toolCall, input, context);
     }
 
     const continueToolCall: ToolCall = {
@@ -211,6 +240,110 @@ export class CoreAgentToolExecutor implements AgentToolExecutor {
 
   async close(): Promise<boolean> {
     return this.bridge.closeSession(this.sessionId, this.profile);
+  }
+
+  private async executeClientTool(
+    tool: Tool,
+    toolCall: AgentToolCallItem,
+    input: JsonObject,
+    context: AgentToolExecutionContext,
+  ): Promise<AgentToolExecutionOutcome> {
+    const executeClientTool = this.options.executeClientTool;
+    if (!executeClientTool) {
+      return failure(
+        "kernel_rejection",
+        `Agent tool "${toolCall.name}" requires a client execution adapter`,
+        {
+          itemId: toolCall.id,
+          callId: toolCall.callId,
+          toolName: toolCall.name,
+        },
+      );
+    }
+
+    try {
+      const result = await this.bridge.execute({
+        tool,
+        input,
+        profile: this.profile,
+        sessionId: this.sessionId,
+        signal: context.signal,
+        authorize: this.createKernelAuthorizer(tool, toolCall, input),
+        execute: async () =>
+          executeClientTool({
+            sessionId: this.sessionId,
+            profile: this.profile,
+            itemId: toolCall.id,
+            callId: toolCall.callId,
+            toolName: toolCall.name,
+            input,
+          }),
+      });
+
+      if (result.errorMessage) {
+        return failure(
+          "tool_failure",
+          result.errorMessage,
+          {
+            itemId: toolCall.id,
+            callId: toolCall.callId,
+            toolName: toolCall.name,
+          },
+        );
+      }
+
+      return {
+        status: "success",
+        output: toJsonValue({
+          contextItems: result.contextItems,
+          ...(result.mcpUiState
+            ? { mcpUiState: result.mcpUiState }
+            : {}),
+        }),
+      };
+    } catch (error) {
+      if (context.signal.aborted) {
+        throw new Error(
+          `Agent tool "${toolCall.name}" was cancelled`,
+        );
+      }
+      if (error instanceof AgentToolAuthorizationDeniedError) {
+        return failure(
+          error.code === "approval_required"
+            ? "approval_required"
+            : "tool_denied",
+          error.message,
+          {
+            itemId: toolCall.id,
+            callId: toolCall.callId,
+            toolName: toolCall.name,
+          },
+        );
+      }
+      if (
+        error instanceof AgentCapabilityDeniedError ||
+        error instanceof AgentToolNotFoundError
+      ) {
+        return failure(
+          "kernel_rejection",
+          error.message,
+          {
+            itemId: toolCall.id,
+            callId: toolCall.callId,
+            toolName: toolCall.name,
+          },
+        );
+      }
+      return failure(
+        "tool_failure",
+        error instanceof Error ? error.message : String(error),
+        {
+          itemId: toolCall.id,
+          callId: toolCall.callId,
+          toolName: toolCall.name,
+        },
+      );
+    }
   }
 
   private createKernelAuthorizer(
