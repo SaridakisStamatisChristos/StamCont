@@ -1286,6 +1286,7 @@ export class Core {
       sessionId: request.sessionId,
       profile: request.profile,
       approve,
+      policyOverrides: request.toolPolicies,
       onAuthorized: (authorization) =>
         onToolRunning({
           itemId: authorization.itemId,
