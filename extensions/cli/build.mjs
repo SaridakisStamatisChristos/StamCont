@@ -49,6 +49,17 @@ const coreDevDataSqliteStubPlugin = {
         path: resolve(__dirname, "stubs/core-devdata-sqlite.js"),
       };
     });
+
+    // PR9 pulls Core provider classes into the standalone CLI bundle.
+    // Some Core modules import sqlite eagerly even though CLI agent execution
+    // does not use indexing or the local dev-data DB. Replace those native
+    // packages at the bundle boundary so startup stays self-contained.
+    build.onResolve({ filter: /^sqlite$/ }, () => ({
+      path: resolve(__dirname, "stubs/sqlite.js"),
+    }));
+    build.onResolve({ filter: /^sqlite3$/ }, () => ({
+      path: resolve(__dirname, "stubs/sqlite3.js"),
+    }));
   },
 };
 
