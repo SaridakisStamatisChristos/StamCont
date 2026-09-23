@@ -402,10 +402,10 @@ export class CoreAgentToolExecutor implements AgentToolExecutor {
         return { allowed: true };
       }
       return {
-            allowed: false,
-            code: "tool_denied",
-            reason: "User denied tool execution",
-          };
+        allowed: false,
+        code: "tool_denied",
+        reason: "User denied tool execution",
+      };
     };
   }
 }
