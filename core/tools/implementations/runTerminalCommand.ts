@@ -5,6 +5,7 @@ import { getExecutionBackend } from "../../agent/execution";
 import { ToolImpl } from ".";
 import {
   isProcessBackgrounded,
+  markProcessAsBackgrounded,
   markProcessAsRunning,
   removeBackgroundedProcess,
   removeRunningProcess,
@@ -112,6 +113,10 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
             childProc,
             extras.executionSignal,
           );
+
+          if (toolCallId && !waitForCompletion) {
+            markProcessAsBackgrounded(toolCallId);
+          }
 
           // Track this process for foreground cancellation
           if (toolCallId && waitForCompletion) {
@@ -269,6 +274,14 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
                     status: status,
                   },
                 ]);
+              } else if (extras.strictProcessFailures) {
+                const error = new ContinueError(
+                  ContinueErrorReason.CommandExecutionFailed,
+                  `Command failed with exit code ${code}`,
+                );
+                (error as ContinueError & { stderr?: string }).stderr =
+                  terminalOutput;
+                reject(error);
               } else {
                 const status = `Command failed with exit code ${code}`;
                 resolve([
@@ -450,6 +463,9 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
             },
           ];
         } catch (error: any) {
+          if (extras.strictProcessFailures) {
+            throw error;
+          }
           const status = `Command failed with: ${error.message || error.toString()}`;
           return [
             {
@@ -467,8 +483,9 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
           const childProc = backend.spawnShell(command, {
             cwd,
             env: getColorEnv(),
-            // Detach the process so it's not tied to the parent
-            detached: true,
+            // Agent-owned background jobs remain attached to the owning
+            // process/session so cancellation cannot leak descendants.
+            detached: !extras.managedBackgroundJobs,
             // Redirect to /dev/null equivalent (works cross-platform)
             stdio: "ignore",
           });
@@ -476,8 +493,12 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
             childProc,
             extras.executionSignal,
           );
+          if (toolCallId) {
+            markProcessAsBackgrounded(toolCallId);
+          }
 
-          // Even for detached processes, add event handlers to clean up the background process map
+          // Background processes remain associated with their tool-call ID
+          // until close/error so session cancellation can terminate them.
           childProc.on("close", () => {
             cleanupAbort();
             if (isProcessBackgrounded(toolCallId)) {
@@ -492,8 +513,11 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
             }
           });
 
-          // Unref the child to allow the Node.js process to exit
-          childProc.unref();
+          // Legacy detached jobs may outlive the caller. Agent-managed jobs
+          // intentionally remain referenced and owned by the session.
+          if (!extras.managedBackgroundJobs) {
+            childProc.unref();
+          }
           const status = "Command is running in the background...";
           return [
             {
