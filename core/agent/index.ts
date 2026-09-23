@@ -15,3 +15,6 @@ export * from "./protocol";
 export * from "./reducer";
 export * from "./session";
 export * from "./tools";
+
+export * from "./surface";
+export * from "./surfaceRuntime";

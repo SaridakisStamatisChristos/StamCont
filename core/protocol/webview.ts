@@ -1,3 +1,7 @@
+import type {
+  CoreAgentClientToolExecutionRequest,
+  CoreAgentClientToolExecutionResult,
+} from "../agent/adapters/coreToolRuntime.js";
 import { ConfigResult } from "@continuedev/config-yaml";
 import type {
   BrowserSerializedContinueConfig,
@@ -41,4 +45,8 @@ export type ToWebviewFromIdeOrCoreProtocol = {
   "jetbrains/setColors": [Record<string, string | null | undefined>, void];
   sessionUpdate: [{ sessionInfo: any | undefined }, void];
   toolCallPartialOutput: [{ toolCallId: string; contextItems: any[] }, void];
+  "agent/executeClientTool": [
+    CoreAgentClientToolExecutionRequest,
+    CoreAgentClientToolExecutionResult,
+  ];
 };

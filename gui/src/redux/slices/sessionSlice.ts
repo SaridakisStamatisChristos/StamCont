@@ -26,6 +26,7 @@ import {
   ToolCallDelta,
   ToolCallState,
 } from "core";
+import type { AgentSurfaceRunStatus } from "core/agent/surface";
 import { mergeReasoningDetails } from "core/llm/openaiTypeConverters";
 import { NEW_SESSION_TITLE } from "core/util/constants";
 import {
@@ -201,6 +202,16 @@ export type ChatHistoryItemWithMessageId = ChatHistoryItem & {
   message: ChatMessage & { id: string };
 };
 
+export type AgentApprovalPresentation = {
+  approvalId: string;
+  sessionId: string;
+  profile: ExecutionProfileId;
+  itemId: string;
+  callId: string;
+  toolName: string;
+  input: unknown;
+};
+
 type SessionState = {
   lastSessionId?: string;
   isSessionMetadataLoading: boolean;
@@ -214,6 +225,8 @@ type SessionState = {
   symbols: FileSymbolMap;
   mode: MessageModes;
   executionProfile: ExecutionProfileId;
+  agentRuntimeStatus?: AgentSurfaceRunStatus;
+  agentApprovals: Record<string, AgentApprovalPresentation>;
   isInEdit: boolean;
   codeBlockApplyStates: {
     states: ApplyState[];
@@ -238,6 +251,8 @@ export const INITIAL_SESSION_STATE: SessionState = {
   symbols: {},
   mode: "agent",
   executionProfile: "interactive",
+  agentRuntimeStatus: undefined,
+  agentApprovals: {},
   isInEdit: false,
   codeBlockApplyStates: {
     states: [],
@@ -698,6 +713,8 @@ export const sessionSlice = createSlice({
       state.inlineErrorMessage = undefined;
       state.isPruned = false;
       state.contextPercentage = undefined;
+      state.agentRuntimeStatus = undefined;
+      state.agentApprovals = {};
 
       if (payload) {
         state.history = payload.history as any;
@@ -985,6 +1002,33 @@ export const sessionSlice = createSlice({
         state.mode = "agent";
       }
     },
+    setAgentRuntimeStatus: (
+      state,
+      action: PayloadAction<AgentSurfaceRunStatus | undefined>,
+    ) => {
+      state.agentRuntimeStatus = action.payload;
+    },
+    setAgentHydratedHistory: (
+      state,
+      action: PayloadAction<ChatHistoryItemWithMessageId[]>,
+    ) => {
+      state.history = action.payload;
+    },
+    setAgentApproval: (
+      state,
+      action: PayloadAction<AgentApprovalPresentation>,
+    ) => {
+      state.agentApprovals[action.payload.callId] = action.payload;
+    },
+    clearAgentApproval: (
+      state,
+      action: PayloadAction<{ callId: string }>,
+    ) => {
+      delete state.agentApprovals[action.payload.callId];
+    },
+    clearAgentApprovals: (state) => {
+      state.agentApprovals = {};
+    },
     setIsInEdit: (state, action: PayloadAction<boolean>) => {
       state.isInEdit = action.payload;
     },
@@ -1104,6 +1148,11 @@ export const {
   setProcessedToolCallArgs,
   setMode,
   setExecutionProfile,
+  setAgentRuntimeStatus,
+  setAgentHydratedHistory,
+  setAgentApproval,
+  clearAgentApproval,
+  clearAgentApprovals,
   setIsSessionMetadataLoading,
   setAllSessionMetadata,
   addSessionMetadata,

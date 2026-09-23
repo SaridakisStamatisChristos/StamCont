@@ -69,6 +69,7 @@ describe("sessionSlice streamUpdate", () => {
     symbols: {},
     mode: "chat" as const,
     executionProfile: "interactive" as const,
+    agentApprovals: {},
     isInEdit: false,
     codeBlockApplyStates: {
       states: [],

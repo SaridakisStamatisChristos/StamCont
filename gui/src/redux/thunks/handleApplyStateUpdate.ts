@@ -139,11 +139,15 @@ export const handleApplyStateUpdate = createAsyncThunk<
                 );
               }
 
-              void dispatch(
-                streamResponseAfterToolCall({
-                  toolCallId: applyState.toolCallId,
-                }),
-              );
+              if (
+                getState().session.agentRuntimeStatus !== "running"
+              ) {
+                void dispatch(
+                  streamResponseAfterToolCall({
+                    toolCallId: applyState.toolCallId,
+                  }),
+                );
+              }
             }
           }
         }

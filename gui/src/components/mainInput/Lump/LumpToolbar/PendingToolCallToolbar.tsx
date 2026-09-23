@@ -2,6 +2,7 @@ import { useAppDispatch, useAppSelector } from "../../../../redux/hooks";
 import { selectPendingToolCalls } from "../../../../redux/selectors/selectToolCalls";
 import { callToolById } from "../../../../redux/thunks/callToolById";
 import { cancelToolCallThunk } from "../../../../redux/thunks/cancelToolCall";
+import { resolveAgentApproval } from "../../../../redux/thunks/resolveAgentApproval";
 import { getAltKeyLabel, getMetaKeyLabel, isJetBrains } from "../../../../util";
 import { Button } from "../../../ui";
 import { useMainEditor } from "../../TipTapEditor";
@@ -17,6 +18,9 @@ export function PendingToolCallToolbar() {
   const dispatch = useAppDispatch();
   const jetbrains = isJetBrains();
   const pendingToolCalls = useAppSelector(selectPendingToolCalls);
+  const agentApprovals = useAppSelector(
+    (state) => state.session.agentApprovals,
+  );
   const editor = useMainEditor();
 
   if (pendingToolCalls.length === 0) {
@@ -24,6 +28,15 @@ export function PendingToolCallToolbar() {
   }
 
   const handleAccept = (toolCallId: string) => {
+    if (agentApprovals[toolCallId]) {
+      void dispatch(
+        resolveAgentApproval({
+          callId: toolCallId,
+          approved: true,
+        }),
+      );
+      return;
+    }
     void dispatch(callToolById({ toolCallId }));
   };
 
@@ -31,6 +44,15 @@ export function PendingToolCallToolbar() {
     // put cursor in editor after last rejection
     if (pendingToolCalls.length === 1) {
       editor.mainEditor?.commands.focus();
+    }
+    if (agentApprovals[toolCallId]) {
+      void dispatch(
+        resolveAgentApproval({
+          callId: toolCallId,
+          approved: false,
+        }),
+      );
+      return;
     }
     void dispatch(cancelToolCallThunk({ toolCallId }));
   };

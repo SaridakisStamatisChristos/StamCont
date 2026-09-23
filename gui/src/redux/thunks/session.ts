@@ -1,6 +1,18 @@
 import { createAsyncThunk, unwrapResult } from "@reduxjs/toolkit";
-import { BaseSessionMetadata, ChatMessage, Session } from "core";
+import {
+  BaseSessionMetadata,
+  ChatHistoryItem,
+  ChatMessage,
+  ContextItem,
+  Session,
+  ToolCallState,
+} from "core";
+import type {
+  AgentSurfaceSessionSnapshot,
+  AgentSurfaceTimelineItem,
+} from "core/agent/surface";
 import { NEW_SESSION_TITLE } from "core/util/constants";
+import { v4 as uuidv4 } from "uuid";
 import { renderChatMessage } from "core/util/messageContent";
 import { IIdeMessenger } from "../../context/IdeMessenger";
 import { selectSelectedChatModel } from "../slices/configSlice";
@@ -8,11 +20,13 @@ import { selectSelectedProfile } from "../slices/profilesSlice";
 import {
   deleteSessionMetadata,
   newSession,
+  setAgentHydratedHistory,
+  setAgentRuntimeStatus,
   setAllSessionMetadata,
   setIsSessionMetadataLoading,
   updateSessionMetadata,
 } from "../slices/sessionSlice";
-import { ThunkApiType } from "../store";
+import type { AppDispatch, RootState, ThunkApiType } from "../store";
 import { updateSelectedModelByRole } from "../thunks/updateSelectedModelByRole";
 
 const MAX_TITLE_LENGTH = 100;
@@ -132,6 +146,11 @@ export const loadSession = createAsyncThunk<
       await closeCoreAgentSession(extra.ideMessenger, currentSessionId);
     }
     dispatch(newSession(session));
+    await syncCoreAgentSnapshot(
+      extra.ideMessenger,
+      dispatch,
+      getState,
+    );
 
     // Restore selected chat model from session, if present
     if (session.chatModelTitle) {
@@ -195,11 +214,213 @@ export const loadLastSession = createAsyncThunk<void, void, ThunkApiType>(
       await closeCoreAgentSession(extra.ideMessenger, currentSessionId);
     }
     dispatch(newSession(session));
+    await syncCoreAgentSnapshot(
+      extra.ideMessenger,
+      dispatch,
+      getState,
+    );
     if (session.chatModelTitle) {
       dispatch(selectChatModelForProfile(session.chatModelTitle));
     }
   },
 );
+
+async function syncCoreAgentSnapshot(
+  ideMessenger: IIdeMessenger,
+  dispatch: AppDispatch,
+  getState: () => RootState,
+): Promise<void> {
+  const state = getState();
+  if (
+    state.session.mode !== "agent" &&
+    state.session.mode !== "plan"
+  ) {
+    dispatch(setAgentRuntimeStatus(undefined));
+    return;
+  }
+
+  const response = await ideMessenger.request("agent/session", {
+    sessionId: state.session.id,
+  });
+  if (response.status === "error") {
+    console.warn(
+      `Failed to load durable agent session ${state.session.id}: ${response.error}`,
+    );
+    return;
+  }
+
+  const snapshot = response.content;
+  if (!snapshot) {
+    dispatch(setAgentRuntimeStatus(undefined));
+    return;
+  }
+
+  dispatch(setAgentRuntimeStatus(snapshot.status));
+  if (snapshot.timeline.length > 0) {
+    dispatch(
+      setAgentHydratedHistory(
+        hydrateAgentHistory(
+          state.session.history,
+          snapshot,
+        ),
+      ),
+    );
+  }
+}
+
+function hydrateAgentHistory(
+  existing: ChatHistoryItem[],
+  snapshot: AgentSurfaceSessionSnapshot,
+): any[] {
+  const existingUsers = existing.filter(
+    (item) => item.message.role === "user",
+  );
+  let userIndex = 0;
+  const history: any[] = [];
+  const toolStates = new Map<string, ToolCallState>();
+
+  const ensureAssistant = () => {
+    const last = history.at(-1);
+    if (last?.message.role === "assistant") {
+      return last;
+    }
+    const assistant = {
+      message: {
+        id: uuidv4(),
+        role: "assistant",
+        content: "",
+      },
+      contextItems: [],
+      toolCallStates: [],
+    };
+    history.push(assistant);
+    return assistant;
+  };
+
+  for (const item of snapshot.timeline) {
+    if (item.type === "user_message") {
+      const preserved = existingUsers[userIndex];
+      userIndex += 1;
+      history.push(
+        preserved
+          ? {
+              ...preserved,
+              message: {
+                ...preserved.message,
+                id: (preserved.message as any).id ?? uuidv4(),
+              },
+            }
+          : {
+              message: {
+                id: uuidv4(),
+                role: "user",
+                content: item.content,
+              },
+              contextItems: [],
+            },
+      );
+      continue;
+    }
+
+    if (item.type === "assistant_message") {
+      history.push({
+        message: {
+          id: uuidv4(),
+          role: "assistant",
+          content: item.content,
+        },
+        contextItems: [],
+        toolCallStates: [],
+      });
+      continue;
+    }
+
+    if (item.type === "tool_call") {
+      const assistant = ensureAssistant();
+      const toolCallState: ToolCallState = {
+        toolCallId: item.callId,
+        toolCall: {
+          id: item.callId,
+          type: "function",
+          function: {
+            name: item.name,
+            arguments: JSON.stringify(item.input),
+          },
+        },
+        status: "generated",
+        parsedArgs: item.input,
+      };
+      assistant.toolCallStates ??= [];
+      assistant.toolCallStates.push(toolCallState);
+      toolStates.set(item.callId, toolCallState);
+      continue;
+    }
+
+    const toolCallState = toolStates.get(item.callId);
+    if (!toolCallState) {
+      continue;
+    }
+    if (item.status === "success") {
+      toolCallState.status = "done";
+      const projected = timelineToolOutput(item);
+      toolCallState.output = projected.contextItems;
+      toolCallState.mcpUiState = projected.mcpUiState;
+    } else {
+      toolCallState.status = "errored";
+      toolCallState.output = [
+        {
+          icon: "problems",
+          name: "Tool Error",
+          description: item.name,
+          content:
+            item.error?.message ?? "Tool execution failed",
+        },
+      ];
+    }
+  }
+
+  return history;
+}
+
+function timelineToolOutput(
+  item: Extract<AgentSurfaceTimelineItem, { type: "tool_result" }>,
+): {
+  contextItems: ContextItem[];
+  mcpUiState?: any;
+} {
+  const output = item.output;
+  if (
+    output &&
+    typeof output === "object" &&
+    !Array.isArray(output)
+  ) {
+    const record = output as Record<string, unknown>;
+    if (Array.isArray(record.contextItems)) {
+      return {
+        contextItems: record.contextItems as ContextItem[],
+        ...(record.mcpUiState
+          ? { mcpUiState: record.mcpUiState }
+          : {}),
+      };
+    }
+  }
+  if (output === undefined) {
+    return { contextItems: [] };
+  }
+  return {
+    contextItems: [
+      {
+        name: "Tool Output",
+        description: "",
+        content:
+          typeof output === "string"
+            ? output
+            : JSON.stringify(output),
+        hidden: true,
+      },
+    ],
+  };
+}
 
 function getChatTitleFromMessage(message: ChatMessage) {
   const text =

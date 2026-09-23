@@ -40,6 +40,10 @@ const DEFAULT_MOCK_CORE_RESPONSES: MockResponses = {
   "docs/getIndexedPages": [],
   "history/save": undefined,
   "agent/closeSession": { closed: false },
+  "agent/approve": { resolved: false },
+  "agent/cancel": { cancelled: false },
+  "agent/session": undefined,
+  "agent/listSessions": [],
   "config/getSerializedProfileInfo": {
     profileId: "local",
     profiles: [],

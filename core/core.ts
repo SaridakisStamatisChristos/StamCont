@@ -1,4 +1,5 @@
 import { fetchwithRequestOptions } from "@continuedev/fetch";
+import * as path from "path";
 import * as URI from "uri-js";
 import { v4 as uuidv4 } from "uuid";
 
@@ -20,13 +21,28 @@ import Ollama from "./llm/llms/Ollama";
 import { EditAggregator } from "./nextEdit/context/aggregateEdits";
 import { createNewPromptFileV2 } from "./promptFiles/createNewPromptFile";
 import { coreToolKernelBridge } from "./agent/adapters/coreToolExecution";
+import {
+  CoreAgentToolExecutor,
+  type CoreAgentToolApprovalHandler,
+} from "./agent/adapters/coreToolRuntime";
+import { ContinueAgentModelDriver } from "./agent/adapters/continueModel";
+import {
+  AgentSurfaceRuntime,
+  createAgentDriverCompactionSummarizer,
+  type AgentSurfaceResolvedRuntime,
+} from "./agent/surfaceRuntime";
+import type { AgentSurfaceRunRequest } from "./agent/surface";
 import { createExecutionBackend } from "./agent/execution";
 import { callTool } from "./tools/callTool";
 import { ChatDescriber } from "./util/chatDescriber";
 import { compactConversation } from "./util/conversationCompaction";
 import { GlobalContext } from "./util/GlobalContext";
 import historyManager from "./util/history";
-import { editConfigFile, migrateV1DevDataFiles } from "./util/paths";
+import {
+  editConfigFile,
+  getContinueGlobalPath,
+  migrateV1DevDataFiles,
+} from "./util/paths";
 
 import {
   isProcessBackgrounded,
@@ -98,6 +114,8 @@ export class Core {
   private globalContext = new GlobalContext();
   llmLogger = new LLMLogger();
 
+  private readonly agentSurfaceRuntime: AgentSurfaceRuntime;
+
   private messageAbortControllers = new Map<string, AbortController>();
   private addMessageAbortController(id: string): AbortController {
     const controller = new AbortController();
@@ -112,6 +130,7 @@ export class Core {
   }
 
   async dispose(): Promise<void> {
+    await this.agentSurfaceRuntime.closeAllSessions();
     await coreToolKernelBridge.closeAllSessions();
   }
 
@@ -143,6 +162,16 @@ export class Core {
       const ideInfoPromise = messenger.request("getIdeInfo", undefined);
       const ideSettingsPromise = messenger.request("getIdeSettings", undefined);
       this.configHandler = new ConfigHandler(this.ide, this.llmLogger);
+
+      this.agentSurfaceRuntime = new AgentSurfaceRuntime(
+        path.join(getContinueGlobalPath(), "agent-sessions"),
+        ({ request, approve, onToolRunning }) =>
+          this.createAgentSurfaceResolvedRuntime(
+            request,
+            approve,
+            onToolRunning,
+          ),
+      );
 
       this.docsService = DocsService.createSingleton(
         this.configHandler,
@@ -1051,9 +1080,40 @@ export class Core {
       return { url: "" };
     });
 
-    on("agent/closeSession", async ({ data: { sessionId } }) => ({
-      closed: await coreToolKernelBridge.closeSession(sessionId),
+    on("agent/run", (msg) =>
+      this.handleAgentSurfaceRun(msg.messageId, msg.data),
+    );
+
+    on("agent/approve", async ({ data }) => ({
+      resolved: await this.agentSurfaceRuntime.approve(
+        data.sessionId,
+        data.approvalId,
+        data.approved,
+      ),
     }));
+
+    on("agent/cancel", async ({ data }) => ({
+      cancelled: await this.agentSurfaceRuntime.cancel(
+        data.sessionId,
+        data.reason,
+      ),
+    }));
+
+    on("agent/session", async ({ data }) =>
+      this.agentSurfaceRuntime.getSession(data.sessionId),
+    );
+
+    on("agent/listSessions", async () =>
+      this.agentSurfaceRuntime.listSessions(),
+    );
+
+    on("agent/closeSession", async ({ data: { sessionId } }) => {
+      const [surfaceClosed, kernelClosed] = await Promise.all([
+        this.agentSurfaceRuntime.closeSession(sessionId),
+        coreToolKernelBridge.closeSession(sessionId),
+      ]);
+      return { closed: surfaceClosed || kernelClosed };
+    });
 
     on(
       "tools/call",
@@ -1169,6 +1229,110 @@ export class Core {
         return [];
       }
     });
+  }
+
+  private async *handleAgentSurfaceRun(
+    messageId: string,
+    request: AgentSurfaceRunRequest,
+  ) {
+    const abortController = this.addMessageAbortController(messageId);
+    try {
+      return yield* this.agentSurfaceRuntime.stream(
+        request,
+        abortController.signal,
+      );
+    } finally {
+      this.messageAbortControllers.delete(messageId);
+    }
+  }
+
+  private async createAgentSurfaceResolvedRuntime(
+    request: AgentSurfaceRunRequest,
+    approve: CoreAgentToolApprovalHandler,
+    onToolRunning: (request: {
+      readonly itemId: string;
+      readonly callId: string;
+      readonly toolName: string;
+    }) => void,
+  ): Promise<AgentSurfaceResolvedRuntime> {
+    const { config } = await this.configHandler.loadConfig();
+    if (!config) {
+      throw new Error("Config not loaded");
+    }
+
+    const llm = config.selectedModelByRole.chat;
+    if (!llm) {
+      throw new Error("No chat model selected");
+    }
+
+    const requestedToolNames = new Set(request.toolNames);
+    const tools = config.tools.filter((tool) =>
+      requestedToolNames.has(tool.function.name),
+    );
+    const driver = new ContinueAgentModelDriver(llm);
+    const toolExecutor = new CoreAgentToolExecutor({
+      tools,
+      extras: {
+        config,
+        ide: this.ide,
+        llm,
+        fetch: (url, init) =>
+          fetchwithRequestOptions(url, init, config.requestOptions),
+        onPartialOutput: (params) => {
+          this.messenger.send("toolCallPartialOutput", params);
+        },
+        codeBaseIndexer: this.codeBaseIndexer,
+      },
+      sessionId: request.sessionId,
+      profile: request.profile,
+      approve,
+      policyOverrides: request.toolPolicies,
+      onAuthorized: (authorization) =>
+        onToolRunning({
+          itemId: authorization.itemId,
+          callId: authorization.callId,
+          toolName: authorization.toolName,
+        }),
+      executeClientTool: async (clientRequest) =>
+        this.messenger.request("agent/executeClientTool", clientRequest),
+    });
+
+    const contextLimitTokens = driver.capabilities.contextLimitTokens;
+    const reservedOutputTokens =
+      driver.capabilities.outputLimitTokens ??
+      Math.min(
+        64_000,
+        Math.max(
+          1_000,
+          Math.floor(contextLimitTokens * 0.25),
+        ),
+      );
+    const safetyMarginTokens = Math.min(
+      15_000,
+      Math.max(
+        1_000,
+        Math.floor(contextLimitTokens * 0.05),
+      ),
+    );
+
+    return {
+      driver,
+      tools: toolExecutor.description.definitions,
+      toolExecutor,
+      context: {
+        budget: {
+          contextLimitTokens,
+          reservedOutputTokens,
+          safetyMarginTokens,
+        },
+        estimator: driver.capabilities.estimator,
+        compactionSummarizer:
+          createAgentDriverCompactionSummarizer(driver),
+      },
+      close: async () => {
+        await toolExecutor.close();
+      },
+    };
   }
 
   private async handleToolCall(
