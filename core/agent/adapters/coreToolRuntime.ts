@@ -179,6 +179,13 @@ export class CoreAgentToolExecutor implements AgentToolExecutor {
       );
     }
 
+    if (result.errorCode === "executor_failure") {
+      throw new Error(
+        result.errorMessage ??
+          `Core tool executor failed for "${toolCall.name}"`,
+      );
+    }
+
     if (result.errorMessage) {
       return coreFailure(result, toolCall);
     }
