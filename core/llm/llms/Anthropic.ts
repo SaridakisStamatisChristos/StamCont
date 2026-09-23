@@ -327,6 +327,16 @@ class Anthropic extends BaseLLM {
           if (deltaEvent.usage) {
             usage.completionTokens = deltaEvent.usage.output_tokens;
           }
+          const stopReason = (deltaEvent.delta as any).stop_reason;
+          if (typeof stopReason === "string" && stopReason.length > 0) {
+            yield {
+              role: "assistant",
+              content: "",
+              metadata: {
+                anthropicStopReason: stopReason,
+              },
+            };
+          }
           break;
         case "content_block_start":
           const blockStartEvent = rawEvent as RawContentBlockStartEvent;
