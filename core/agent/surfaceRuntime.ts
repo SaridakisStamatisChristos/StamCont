@@ -167,6 +167,14 @@ export class AgentSurfaceRuntime {
     return true;
   }
 
+  async closeAllSessions(): Promise<number> {
+    const sessionIds = [...this.activeRuns.keys()];
+    const results = await Promise.all(
+      sessionIds.map((sessionId) => this.closeSession(sessionId)),
+    );
+    return results.filter(Boolean).length;
+  }
+
   async getSession(
     requestedSessionId: string,
   ): Promise<AgentSurfaceSessionSnapshot | undefined> {
