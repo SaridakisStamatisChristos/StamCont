@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   AgentCapabilityDeniedError,
   AgentEvent,
+  AgentToolAuthorizationDeniedError,
   AgentEventBus,
   AgentKernel,
   AgentTool,
@@ -54,6 +55,87 @@ describe("StamCont Agent Kernel", () => {
     await expect(
       kernel.executeTool(fullAccess, "desktop.control", undefined),
     ).resolves.toBe("controlled");
+  });
+
+  it("enforces per-tool authorization inside the shared kernel boundary", async () => {
+    let executed = false;
+    const kernel = new AgentKernel({
+      tools: [
+        {
+          name: "write",
+          description: "Write data",
+          authorize: async () => ({
+            allowed: false,
+            code: "approval_required",
+            reason: "User approval is required",
+          }),
+          execute: () => {
+            executed = true;
+            return "written";
+          },
+        },
+      ],
+      idFactory: () => "session-authorization",
+    });
+    const session = await kernel.createSession({
+      profile: "interactive",
+    });
+
+    await expect(
+      kernel.executeTool(session, "write", undefined),
+    ).rejects.toMatchObject({
+      name: "AgentToolAuthorizationDeniedError",
+      code: "approval_required",
+    });
+    await expect(
+      kernel.executeTool(session, "write", undefined),
+    ).rejects.toBeInstanceOf(AgentToolAuthorizationDeniedError);
+    expect(executed).toBe(false);
+  });
+
+  it("does not start a tool if cancellation wins while approval is pending", async () => {
+    let releaseApproval!: () => void;
+    let approvalStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      approvalStarted = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseApproval = resolve;
+    });
+    let executed = false;
+    const kernel = new AgentKernel({
+      tools: [
+        {
+          name: "delayed-write",
+          description: "Delayed write",
+          authorize: async () => {
+            approvalStarted();
+            await release;
+            return true;
+          },
+          execute: () => {
+            executed = true;
+            return "written";
+          },
+        },
+      ],
+      idFactory: () => "session-pending-approval",
+    });
+    const session = await kernel.createSession({
+      profile: "interactive",
+    });
+    const execution = kernel.executeTool(
+      session,
+      "delayed-write",
+      undefined,
+    );
+
+    await started;
+    await kernel.cancelSession(session, "user cancelled");
+    releaseApproval();
+
+    await expect(execution).rejects.toThrow("user cancelled");
+    expect(executed).toBe(false);
   });
 
   it("keeps child session state isolated and propagates parent cancellation", async () => {

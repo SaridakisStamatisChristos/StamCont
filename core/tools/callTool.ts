@@ -7,8 +7,17 @@ import {
   ToolCall,
   ToolExtras,
 } from "..";
-import { coreToolKernelBridge } from "../agent/adapters/coreToolExecution";
+import {
+  CoreToolKernelBridge,
+  coreToolKernelBridge,
+} from "../agent/adapters/coreToolExecution";
 import { createExecutionBackend } from "../agent/execution";
+import {
+  AgentCapabilityDeniedError,
+  AgentToolAuthorizationDeniedError,
+  AgentToolNotFoundError,
+  type AgentToolAuthorizer,
+} from "../agent/tools";
 import { MCPManagerSingleton } from "../context/mcp/MCPManagerSingleton";
 import { ContinueError, ContinueErrorReason } from "../util/errors";
 import { canParseUrl } from "../util/url";
@@ -48,6 +57,7 @@ async function callHttpTool(
     body: JSON.stringify({
       arguments: args,
     }),
+    signal: extras.executionSignal,
   });
 
   const data = await response.json();
@@ -77,7 +87,7 @@ export function decodeMCPToolUri(uri: string): [string, string] | null {
 async function callToolFromUri(
   uri: string,
   args: any,
-  extras: ToolExtras,
+  extras: ToolExecutionExtras,
 ): Promise<{
   contextItems: ContextItem[];
   mcpUiState?: McpUiState;
@@ -239,9 +249,32 @@ export async function callBuiltInTool(
   }
 }
 
+export type CoreToolFailureCode =
+  | "tool_failure"
+  | "tool_denied"
+  | "approval_required"
+  | "tool_cancelled"
+  | "kernel_rejection"
+  | "process_failure"
+  | "executor_failure";
+
+export interface CoreToolCallResult {
+  contextItems: ContextItem[];
+  errorMessage: string | undefined;
+  errorReason?: ContinueErrorReason;
+  errorCode?: CoreToolFailureCode;
+  mcpUiState?: McpUiState;
+}
+
 export interface CoreToolExecutionContext {
   profile?: ExecutionProfileId;
   sessionId?: string;
+  signal?: AbortSignal;
+  authorize?: AgentToolAuthorizer<unknown>;
+  bridge?: CoreToolKernelBridge;
+  processId?: string;
+  strictProcessFailures?: boolean;
+  managedBackgroundJobs?: boolean;
 }
 
 // Handles calls for core/non-client tools
@@ -252,43 +285,53 @@ export async function callTool(
   toolCall: ToolCall,
   extras: ToolExtras,
   executionContext: CoreToolExecutionContext = {},
-): Promise<{
-  contextItems: ContextItem[];
-  errorMessage: string | undefined;
-  errorReason?: ContinueErrorReason;
-  mcpUiState?: McpUiState;
-}> {
+): Promise<CoreToolCallResult> {
   try {
     const args = safeParseToolCallArgs(toolCall);
     const profile = executionContext.profile ?? "interactive";
     const executionBackend = createExecutionBackend(profile, extras.ide);
+    const bridge = executionContext.bridge ?? coreToolKernelBridge;
     const { contextItems, mcpUiState } =
-      await coreToolKernelBridge.execute<{
+      await bridge.execute<{
         contextItems: ContextItem[];
         mcpUiState?: McpUiState;
       }>({
         tool,
+        input: args,
         profile,
         sessionId: executionContext.sessionId,
-        execute: async (agentContext) =>
-          tool.uri
-            ? callToolFromUri(tool.uri, args, {
-                ...extras,
-                fetch: executionBackend.wrapFetch(extras.fetch),
-              })
-            : {
-                contextItems: await callBuiltInTool(
-                  tool.function.name,
-                  args,
-                  {
-                    ...extras,
-                    fetch: executionBackend.wrapFetch(extras.fetch),
-                    executionBackend,
-                    executionSignal: agentContext.signal,
-                  },
-                ),
-                mcpUiState: undefined,
-              },
+        signal: executionContext.signal,
+        authorize: executionContext.authorize,
+        execute: async (agentContext) => {
+          try {
+            return tool.uri
+              ? await callToolFromUri(tool.uri, args, {
+                  ...extras,
+                  fetch: executionBackend.wrapFetch(extras.fetch),
+                  executionSignal: agentContext.signal,
+                })
+              : {
+                  contextItems: await callBuiltInTool(
+                    tool.function.name,
+                    args,
+                    {
+                      ...extras,
+                      fetch: executionBackend.wrapFetch(extras.fetch),
+                      executionBackend,
+                      executionSignal: agentContext.signal,
+                      executionProcessId: executionContext.processId,
+                      strictProcessFailures:
+                        executionContext.strictProcessFailures,
+                      managedBackgroundJobs:
+                        executionContext.managedBackgroundJobs,
+                    },
+                  ),
+                  mcpUiState: undefined,
+                };
+          } catch (error) {
+            throw new CoreToolInvocationError(error);
+          }
+        },
       });
     if (tool.faviconUrl) {
       contextItems.forEach((item) => {
@@ -302,20 +345,69 @@ export async function callTool(
       mcpUiState,
     };
   } catch (e) {
-    let errorMessage = `${e}`;
+    const invocationFailure = e instanceof CoreToolInvocationError;
+    const error = invocationFailure ? e.causeValue : e;
+    let errorMessage = `${error}`;
     let errorReason: ContinueErrorReason | undefined;
 
-    if (e instanceof ContinueError) {
-      errorMessage = e.message;
-      errorReason = e.reason;
-    } else if (e instanceof Error) {
-      errorMessage = e.message;
+    if (error instanceof ContinueError) {
+      errorMessage = error.message;
+      errorReason = error.reason;
+    } else if (error instanceof Error) {
+      errorMessage = error.message;
     }
 
     return {
       contextItems: [],
       errorMessage,
       errorReason,
+      errorCode: classifyCoreToolFailure(
+        error,
+        executionContext.signal,
+        invocationFailure,
+      ),
     };
   }
+}
+
+class CoreToolInvocationError extends Error {
+  constructor(readonly causeValue: unknown) {
+    super(
+      causeValue instanceof Error
+        ? causeValue.message
+        : String(causeValue),
+    );
+    this.name = "CoreToolInvocationError";
+  }
+}
+
+function classifyCoreToolFailure(
+  error: unknown,
+  signal?: AbortSignal,
+  fromToolInvocation = false,
+): CoreToolFailureCode {
+  if (signal?.aborted) {
+    return "tool_cancelled";
+  }
+  if (error instanceof AgentToolAuthorizationDeniedError) {
+    return error.code === "approval_required"
+      ? "approval_required"
+      : "tool_denied";
+  }
+  if (
+    error instanceof AgentCapabilityDeniedError ||
+    error instanceof AgentToolNotFoundError
+  ) {
+    return "kernel_rejection";
+  }
+  if (error instanceof ContinueError) {
+    if (error.reason === ContinueErrorReason.CommandExecutionFailed) {
+      return "process_failure";
+    }
+    if (error.reason === ContinueErrorReason.FileIsSecurityConcern) {
+      return "kernel_rejection";
+    }
+    return "tool_failure";
+  }
+  return fromToolInvocation ? "tool_failure" : "executor_failure";
 }

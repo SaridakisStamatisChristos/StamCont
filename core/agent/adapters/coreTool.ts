@@ -43,6 +43,7 @@ const networkTools = new Set(["search_web", "fetch_url_content"]);
 
 export function getCoreToolCapabilityRequirement(
   tool: Pick<Tool, "function" | "readonly" | "uri">,
+  input?: unknown,
 ): CapabilityRequirement {
   if (tool.uri) {
     try {
@@ -60,7 +61,14 @@ export function getCoreToolCapabilityRequirement(
 
   const name = tool.function.name;
   if (name === "run_terminal_command") {
-    return SHELL;
+    const requestsBackgroundJob =
+      typeof input === "object" &&
+      input !== null &&
+      !Array.isArray(input) &&
+      (input as Record<string, unknown>).waitForCompletion === false;
+    return requestsBackgroundJob
+      ? { ...SHELL, backgroundJobs: true }
+      : SHELL;
   }
   if (networkTools.has(name)) {
     return NETWORK;
