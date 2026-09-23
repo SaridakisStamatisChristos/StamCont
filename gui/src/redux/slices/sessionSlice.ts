@@ -26,6 +26,10 @@ import {
   ToolCallDelta,
   ToolCallState,
 } from "core";
+import type {
+  AgentSurfaceApproval,
+  AgentSurfaceRunStatus,
+} from "core/agent/surface";
 import { mergeReasoningDetails } from "core/llm/openaiTypeConverters";
 import { NEW_SESSION_TITLE } from "core/util/constants";
 import {
@@ -214,6 +218,8 @@ type SessionState = {
   symbols: FileSymbolMap;
   mode: MessageModes;
   executionProfile: ExecutionProfileId;
+  agentRuntimeStatus?: AgentSurfaceRunStatus;
+  agentApprovals: Record<string, AgentSurfaceApproval>;
   isInEdit: boolean;
   codeBlockApplyStates: {
     states: ApplyState[];
@@ -238,6 +244,8 @@ export const INITIAL_SESSION_STATE: SessionState = {
   symbols: {},
   mode: "agent",
   executionProfile: "interactive",
+  agentRuntimeStatus: undefined,
+  agentApprovals: {},
   isInEdit: false,
   codeBlockApplyStates: {
     states: [],
@@ -698,6 +706,8 @@ export const sessionSlice = createSlice({
       state.inlineErrorMessage = undefined;
       state.isPruned = false;
       state.contextPercentage = undefined;
+      state.agentRuntimeStatus = undefined;
+      state.agentApprovals = {};
 
       if (payload) {
         state.history = payload.history as any;
@@ -985,6 +995,24 @@ export const sessionSlice = createSlice({
         state.mode = "agent";
       }
     },
+    setAgentRuntimeStatus: (
+      state,
+      action: PayloadAction<AgentSurfaceRunStatus | undefined>,
+    ) => {
+      state.agentRuntimeStatus = action.payload;
+    },
+    setAgentApproval: (
+      state,
+      action: PayloadAction<AgentSurfaceApproval>,
+    ) => {
+      state.agentApprovals[action.payload.callId] = action.payload;
+    },
+    clearAgentApproval: (
+      state,
+      action: PayloadAction<{ callId: string }>,
+    ) => {
+      delete state.agentApprovals[action.payload.callId];
+    },
     setIsInEdit: (state, action: PayloadAction<boolean>) => {
       state.isInEdit = action.payload;
     },
@@ -1104,6 +1132,9 @@ export const {
   setProcessedToolCallArgs,
   setMode,
   setExecutionProfile,
+  setAgentRuntimeStatus,
+  setAgentApproval,
+  clearAgentApproval,
   setIsSessionMetadataLoading,
   setAllSessionMetadata,
   addSessionMetadata,
