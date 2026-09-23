@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import {
   AgentSessionStore,
   runAgentLoop,
+  validateSessionId,
   type AgentContextEstimator,
   type AgentLoopResult,
   type AgentModelDriver,
@@ -112,9 +113,15 @@ export async function resolveCliAgentResumeSessionId(
   requested: true | string | undefined,
 ): Promise<string | undefined> {
   if (typeof requested === "string") {
-    const value = requested.trim();
-    if (!value) {
-      throw new Error("Agent resume session id must not be empty");
+    const value = validateSessionId(requested.trim());
+    const logPath = path.join(rootDirectory, value, "session.jsonl");
+    try {
+      const stat = await fs.stat(logPath);
+      if (!stat.isFile()) {
+        throw new Error("not a file");
+      }
+    } catch {
+      throw new Error(`Durable agent session "${value}" does not exist`);
     }
     return value;
   }
@@ -134,7 +141,17 @@ export async function resolveCliAgentResumeSessionId(
 
   const candidates = await Promise.all(
     entries
-      .filter((entry) => entry.isDirectory())
+      .filter((entry) => {
+        if (!entry.isDirectory()) {
+          return false;
+        }
+        try {
+          validateSessionId(entry.name);
+          return true;
+        } catch {
+          return false;
+        }
+      })
       .map(async (entry) => {
         const logPath = path.join(
           rootDirectory,

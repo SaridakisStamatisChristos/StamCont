@@ -81,11 +81,14 @@ export function createCliCoreLlm(model: ModelConfig): ILLM {
     baseAgentSystemMessage: model.chatOptions?.baseAgentSystemMessage,
     basePlanSystemMessage: model.chatOptions?.basePlanSystemMessage,
     baseChatSystemMessage: model.chatOptions?.baseSystemMessage,
-    capabilities: {
-      tools: capabilities.has("tool_use"),
-      uploadImage: capabilities.has("image_input"),
-      nextEdit: capabilities.has("next_edit"),
-    },
+    capabilities:
+      model.capabilities === undefined
+        ? undefined
+        : {
+            tools: capabilities.has("tool_use"),
+            uploadImage: capabilities.has("image_input"),
+            nextEdit: capabilities.has("next_edit"),
+          },
     completionOptions: {
       ...(model.defaultCompletionOptions ?? {}),
       model: model.model,
