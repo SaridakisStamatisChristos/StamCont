@@ -347,7 +347,8 @@ export function fromChatResponse(response: ChatCompletion): ChatMessage[] {
 export function fromChatCompletionChunk(
   chunk: ChatCompletionChunk,
 ): ChatMessage | undefined {
-  const delta = chunk.choices?.[0]?.delta as
+  const choice = chunk.choices?.[0];
+  const delta = choice?.delta as
     | (ChatCompletionChunk.Choice.Delta & {
         reasoning?: string;
         reasoning_content?: string;
@@ -356,21 +357,25 @@ export function fromChatCompletionChunk(
         }[];
       })
     | undefined;
+  const finishReason = choice?.finish_reason ?? undefined;
 
   if (delta?.content) {
     return {
       role: "assistant",
       content: delta.content,
+      ...(finishReason
+        ? { metadata: { finishReason } }
+        : {}),
     };
   } else if (delta?.tool_calls) {
-    const toolCalls = delta?.tool_calls
-      .filter((tool_call) => !tool_call.type || tool_call.type === "function")
-      .map((tool_call) => ({
-        id: tool_call.id,
+    const toolCalls = delta.tool_calls
+      .filter((toolCall) => !toolCall.type || toolCall.type === "function")
+      .map((toolCall) => ({
+        id: toolCall.id,
         type: "function" as const,
         function: {
-          name: (tool_call as any).function?.name,
-          arguments: (tool_call as any).function?.arguments,
+          name: (toolCall as any).function?.name,
+          arguments: (toolCall as any).function?.arguments,
         },
       }));
 
@@ -379,6 +384,15 @@ export function fromChatCompletionChunk(
         role: "assistant",
         content: "",
         toolCalls,
+        metadata: {
+          toolCallIndexes: delta.tool_calls
+            .filter(
+              (toolCall) =>
+                !toolCall.type || toolCall.type === "function",
+            )
+            .map((toolCall) => toolCall.index),
+          ...(finishReason ? { finishReason } : {}),
+        },
       };
     }
   } else if (
@@ -391,8 +405,19 @@ export function fromChatCompletionChunk(
       content: delta.reasoning_content || delta.reasoning || "",
       signature: delta?.reasoning_details?.[0]?.signature,
       reasoning_details: delta?.reasoning_details as any[],
+      ...(finishReason
+        ? { metadata: { finishReason } }
+        : {}),
     };
     return message;
+  }
+
+  if (finishReason) {
+    return {
+      role: "assistant",
+      content: "",
+      metadata: { finishReason },
+    };
   }
 
   return undefined;
@@ -496,24 +521,39 @@ function handleOutputItemDone(
   e: ResponseOutputItemDoneEvent,
 ): ChatMessage | undefined {
   const { item } = e;
-  if (item.type === "reasoning" && item.encrypted_content) {
+  const completionMetadata = {
+    responsesOutputItemId: item.id,
+    responsesOutputItemCompleted: item,
+  };
+
+  if (item.type === "reasoning") {
     return {
       role: "thinking",
       content: "",
       reasoning_details: [
         ...(item.id ? [{ type: "reasoning_id", id: item.id }] : []),
-        {
-          type: "encrypted_content",
-          encrypted_content: item.encrypted_content,
-        },
+        ...(item.encrypted_content
+          ? [
+              {
+                type: "encrypted_content",
+                encrypted_content: item.encrypted_content,
+              },
+            ]
+          : []),
       ],
       metadata: {
+        ...completionMetadata,
         reasoningId: item.id,
-        encrypted_content: item.encrypted_content,
+        encrypted_content: item.encrypted_content ?? undefined,
       },
     } satisfies ThinkingChatMessage;
   }
-  return undefined;
+
+  return {
+    role: "assistant",
+    content: "",
+    metadata: completionMetadata,
+  };
 }
 
 function handleReasoningSummaryDelta(
@@ -615,6 +655,28 @@ function handleResponsesStreamEvent(
   }
   if (t === "response.reasoning_text.done") {
     return handleReasoningTextDone(e as ResponseReasoningTextDoneEvent);
+  }
+  if (
+    t === "response.completed" ||
+    t === "response.incomplete" ||
+    t === "response.failed" ||
+    t === "response.cancelled" ||
+    t === "response.canceled"
+  ) {
+    const raw = e as any;
+    const response = raw.response ?? {};
+    return {
+      role: "assistant",
+      content: "",
+      metadata: {
+        responsesTerminalEvent: t,
+        responsesResponseId: response.id,
+        responsesStatus: response.status,
+        responsesIncompleteReason:
+          response.incomplete_details?.reason,
+        responsesError: response.error,
+      },
+    };
   }
   return undefined;
 }
