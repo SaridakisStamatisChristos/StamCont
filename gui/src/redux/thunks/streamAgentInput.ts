@@ -153,7 +153,7 @@ export const streamAgentInput = createAsyncThunk<
   },
 );
 
-function applyAgentSurfaceEvent(
+export function applyAgentSurfaceEvent(
   event: AgentSurfaceEvent,
   activeTools: Tool[],
   dispatch: ThunkApiType["dispatch"],
@@ -271,7 +271,7 @@ function applyAgentSurfaceEvent(
   }
 }
 
-function applyAgentRunResult(
+export function applyAgentRunResult(
   result: AgentSurfaceRunResult,
   dispatch: ThunkApiType["dispatch"],
 ): void {
