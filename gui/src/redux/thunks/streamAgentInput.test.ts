@@ -1,11 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 
+import type { ModelDescription } from "core";
 import { serializeTool } from "core/tools";
 import { grepSearchTool } from "core/tools/definitions";
 
-import { createMockStore } from "../../util/test/mockStore";
+import {
+  createMockStore,
+  getEmptyRootState,
+} from "../../util/test/mockStore";
 import type { RootState } from "../store";
-import { getRootStateWithClaude } from "./streamResponse.test";
 import { streamAgentInput } from "./streamAgentInput";
 
 vi.mock("../util/getBaseSystemMessage", () => ({
@@ -14,7 +17,15 @@ vi.mock("../util/getBaseSystemMessage", () => ({
 
 describe("streamAgentInput", () => {
   it("projects canonical Core events and propagates profile and tool policy configuration", async () => {
-    const initialState = getRootStateWithClaude();
+    const initialState = getEmptyRootState();
+    const mockModel: ModelDescription = {
+      title: "Mock Agent Model",
+      model: "mock-agent",
+      provider: "mock",
+      underlyingProviderName: "mock",
+    };
+    initialState.config.config.selectedModelByRole.chat = mockModel;
+    initialState.config.config.modelsByRole.chat = [mockModel];
     const grepTool = serializeTool(grepSearchTool);
     const grepName = grepTool.function.name;
     initialState.session.mode = "agent";
