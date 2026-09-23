@@ -17,12 +17,13 @@ import {
 function event(
   sequence: number,
   value: any,
+  responseId = "r-1",
 ): AgentRunEvent {
   return {
     ...value,
     eventId: `e-${sequence}`,
     sequence,
-    responseId: "r-1",
+    responseId,
   } as AgentRunEvent;
 }
 
@@ -117,24 +118,36 @@ describe("CLI durable agent runtime", () => {
           });
           return;
         }
-        yield event(5, { type: "response.started" });
-        yield event(6, {
-          type: "output_item.added",
-          item: { id: "m-2", type: "message" },
-        });
-        yield event(7, {
-          type: "output_item.completed",
-          item: {
-            id: "m-2",
-            type: "message",
-            role: "assistant",
-            content: "finished",
+        yield event(5, { type: "response.started" }, "r-2");
+        yield event(
+          6,
+          {
+            type: "output_item.added",
+            item: { id: "m-2", type: "message" },
           },
-        });
-        yield event(8, {
-          type: "response.completed",
-          stopReason: "end_turn",
-        });
+          "r-2",
+        );
+        yield event(
+          7,
+          {
+            type: "output_item.completed",
+            item: {
+              id: "m-2",
+              type: "message",
+              role: "assistant",
+              content: "finished",
+            },
+          },
+          "r-2",
+        );
+        yield event(
+          8,
+          {
+            type: "response.completed",
+            stopReason: "end_turn",
+          },
+          "r-2",
+        );
       },
     };
 
