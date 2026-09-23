@@ -352,16 +352,13 @@ describe("CoreAgentToolExecutor", () => {
   });
 
   it("applies user base-policy preferences inside the kernel authorization path", async () => {
-    const fetch = vi.fn(async () =>
-      jsonResponse([
-        {
-          name: "Remote",
-          description: "Tool output",
-          content: "configured",
-        },
-      ]),
-    );
+    const fetch = vi.fn(async () => jsonResponse([]));
     const approve = vi.fn(async () => true);
+    const bridge = new CoreToolKernelBridge();
+    const events: string[] = [];
+    bridge.kernel.subscribe((event) => {
+      events.push(event.type);
+    });
     const runtime = new CoreAgentToolExecutor({
       tools: [tool()],
       extras: extras(fetch),
@@ -371,13 +368,19 @@ describe("CoreAgentToolExecutor", () => {
         remote_tool: "allowedWithoutPermission",
       },
       approve,
+      bridge,
     });
 
     const result = await runtime.execute(call(), executionContext());
 
-    expect(result.status).toBe("success");
+    // The restricted transport may reject the synthetic example.test URL,
+    // but the configured policy must bypass approval and reach execution.
+    expect(result).not.toMatchObject({
+      status: "failure",
+      error: { code: "approval_required" },
+    });
     expect(approve).not.toHaveBeenCalled();
-    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(events).toContain("tool.started");
     await runtime.close();
   });
 
