@@ -42,7 +42,7 @@ import {
 const DEFAULT_CORE_TOOL_POLICY = "allowedWithPermission" as const;
 const clientOnlyToolNames = new Set<string>(CLIENT_TOOLS_IMPLS);
 
-type CoreToolPolicy =
+export type CoreToolPolicy =
   | "disabled"
   | "allowedWithPermission"
   | "allowedWithoutPermission";
@@ -86,6 +86,7 @@ export interface CoreAgentToolRuntimeOptions {
   readonly sessionId: string;
   readonly profile?: BuiltInExecutionProfileId;
   readonly approve?: CoreAgentToolApprovalHandler;
+  readonly policyOverrides?: Readonly<Record<string, CoreToolPolicy>>;
   readonly executeClientTool?: CoreAgentClientToolExecutionHandler;
   readonly onAuthorized?: (
     request: CoreAgentToolApprovalRequest,
@@ -355,7 +356,11 @@ export class CoreAgentToolExecutor implements AgentToolExecutor {
     input: JsonObject,
   ): AgentToolAuthorizer<unknown> {
     return async (): Promise<AgentToolAuthorizationDecision> => {
-      const policy = resolveToolPolicy(tool, input);
+      const policy = resolveToolPolicy(
+        tool,
+        input,
+        this.options.policyOverrides?.[tool.function.name],
+      );
       if (policy === "disabled") {
         return {
           allowed: false,
@@ -467,8 +472,10 @@ function coreToolToAgentDefinition(
 function resolveToolPolicy(
   tool: Tool,
   input: JsonObject,
+  policyOverride?: CoreToolPolicy,
 ): CoreToolPolicy {
   const basePolicy =
+    policyOverride ??
     (tool.defaultToolPolicy as CoreToolPolicy | undefined) ??
     DEFAULT_CORE_TOOL_POLICY;
   if (!tool.evaluateToolCallPolicy) {
