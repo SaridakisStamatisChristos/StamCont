@@ -359,7 +359,9 @@ export class CoreAgentToolExecutor implements AgentToolExecutor {
       const policy = resolveToolPolicy(
         tool,
         input,
-        this.options.policyOverrides?.[tool.function.name],
+        normalizeCoreToolPolicyOverride(
+          this.options.policyOverrides?.[tool.function.name],
+        ),
       );
       if (policy === "disabled") {
         return {
@@ -467,6 +469,22 @@ function coreToolToAgentDefinition(
       ? { inputSchema: toJsonObject(parameters, "tool input schema") }
       : {}),
   };
+}
+
+function normalizeCoreToolPolicyOverride(
+  value: unknown,
+): CoreToolPolicy | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (
+    value === "disabled" ||
+    value === "allowedWithPermission" ||
+    value === "allowedWithoutPermission"
+  ) {
+    return value;
+  }
+  return "disabled";
 }
 
 function resolveToolPolicy(
