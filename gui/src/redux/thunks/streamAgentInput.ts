@@ -1,5 +1,5 @@
 import { createAsyncThunk } from "@reduxjs/toolkit";
-import type { ChatMessage, ContextItem, Tool } from "core";
+import type { ContextItem, Tool } from "core";
 import type {
   AgentSurfaceEvent,
   AgentSurfaceRunResult,
