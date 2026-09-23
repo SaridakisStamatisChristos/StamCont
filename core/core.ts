@@ -1227,6 +1227,98 @@ export class Core {
     });
   }
 
+  private async *handleAgentSurfaceRun(
+    messageId: string,
+    request: AgentSurfaceRunRequest,
+  ) {
+    const abortController = this.addMessageAbortController(messageId);
+    try {
+      return yield* this.agentSurfaceRuntime.stream(
+        request,
+        abortController.signal,
+      );
+    } finally {
+      this.messageAbortControllers.delete(messageId);
+    }
+  }
+
+  private async createAgentSurfaceResolvedRuntime(
+    request: AgentSurfaceRunRequest,
+    approve: CoreAgentToolApprovalHandler,
+  ): Promise<AgentSurfaceResolvedRuntime> {
+    const { config } = await this.configHandler.loadConfig();
+    if (!config) {
+      throw new Error("Config not loaded");
+    }
+
+    const llm = config.selectedModelByRole.chat;
+    if (!llm) {
+      throw new Error("No chat model selected");
+    }
+
+    const requestedToolNames = new Set(request.toolNames);
+    const tools = config.tools.filter((tool) =>
+      requestedToolNames.has(tool.function.name),
+    );
+    const driver = new ContinueAgentModelDriver(llm);
+    const toolExecutor = new CoreAgentToolExecutor({
+      tools,
+      extras: {
+        config,
+        ide: this.ide,
+        llm,
+        fetch: (url, init) =>
+          fetchwithRequestOptions(url, init, config.requestOptions),
+        onPartialOutput: (params) => {
+          this.messenger.send("toolCallPartialOutput", params);
+        },
+        codeBaseIndexer: this.codeBaseIndexer,
+      },
+      sessionId: request.sessionId,
+      profile: request.profile,
+      approve,
+      executeClientTool: async (clientRequest) =>
+        this.messenger.request("agent/executeClientTool", clientRequest),
+    });
+
+    const contextLimitTokens = driver.capabilities.contextLimitTokens;
+    const reservedOutputTokens =
+      driver.capabilities.outputLimitTokens ??
+      Math.min(
+        64_000,
+        Math.max(
+          1_000,
+          Math.floor(contextLimitTokens * 0.25),
+        ),
+      );
+    const safetyMarginTokens = Math.min(
+      15_000,
+      Math.max(
+        1_000,
+        Math.floor(contextLimitTokens * 0.05),
+      ),
+    );
+
+    return {
+      driver,
+      tools: toolExecutor.description.definitions,
+      toolExecutor,
+      context: {
+        budget: {
+          contextLimitTokens,
+          reservedOutputTokens,
+          safetyMarginTokens,
+        },
+        estimator: driver.capabilities.estimator,
+        compactionSummarizer:
+          createAgentDriverCompactionSummarizer(driver),
+      },
+      close: async () => {
+        await toolExecutor.close();
+      },
+    };
+  }
+
   private async handleToolCall(
     toolCall: ToolCall,
     executionProfile?: ExecutionProfileId,
