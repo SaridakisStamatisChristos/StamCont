@@ -4,6 +4,7 @@ import { serializeTool } from "core/tools";
 import { grepSearchTool } from "core/tools/definitions";
 
 import { createMockStore } from "../../util/test/mockStore";
+import type { RootState } from "../store";
 import { getRootStateWithClaude } from "./streamResponse.test";
 import { streamAgentInput } from "./streamAgentInput";
 
@@ -87,7 +88,7 @@ describe("streamAgentInput", () => {
 
     expect(action.type).toBe("chat/streamAgentInput/fulfilled");
     expect(streamRequest).toHaveBeenCalledTimes(1);
-    const state = store.getState();
+    const state = store.getState() as RootState;
     expect(state.session.agentRuntimeStatus).toBe("completed");
     expect(state.session.isStreaming).toBe(false);
     expect(
