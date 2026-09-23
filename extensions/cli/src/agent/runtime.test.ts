@@ -4,9 +4,9 @@ import path from "node:path";
 
 import type {
   AgentModelDriver,
-  AgentRunEvent,
   AgentToolExecutor,
-} from "core/agent/index.js";
+} from "core/agent/model.js";
+import type { AgentRunEvent } from "core/agent/protocol.js";
 import { describe, expect, it, vi } from "vitest";
 
 import {

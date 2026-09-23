@@ -12,12 +12,12 @@ import type {
   LLMOptions,
   Tool,
 } from "core/index.js";
+import { ContinueAgentModelDriver } from "core/agent/adapters/continueModel.js";
 import {
-  ContinueAgentModelDriver,
   CoreAgentToolExecutor,
-  type BuiltInExecutionProfileId,
   type CoreAgentToolApprovalHandler,
-} from "core/agent/index.js";
+} from "core/agent/adapters/coreToolRuntime.js";
+import type { BuiltInExecutionProfileId } from "core/agent/capabilities.js";
 import { llmFromProviderAndOptions } from "core/llm/llms/index.js";
 import { getBaseToolDefinitions } from "core/tools/index.js";
 
