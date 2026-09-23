@@ -171,6 +171,7 @@ describe("CoreAgentToolExecutor", () => {
       "tool.started",
       "tool.completed",
     ]);
+    expect(fetch).toHaveBeenCalledTimes(1);
     await runtime.close();
   });
 
@@ -262,7 +263,6 @@ describe("CoreAgentToolExecutor", () => {
       input: { value: "hello" },
       policy: "allowedWithPermission",
     });
-    expect(fetch).toHaveBeenCalledTimes(1);
     await runtime.close();
   });
 
