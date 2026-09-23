@@ -12,7 +12,10 @@ import type {
   LLMOptions,
   Tool,
 } from "core/index.js";
-import { ContinueAgentModelDriver } from "core/agent/adapters/continueModel.js";
+import {
+  ContinueAgentModelDriver,
+  type ContinueAgentLlm,
+} from "core/agent/adapters/continueModel.js";
 import {
   CoreAgentToolExecutor,
   type CoreAgentToolApprovalHandler,
@@ -23,8 +26,10 @@ import { getBaseToolDefinitions } from "core/tools/index.js";
 
 const execFileAsync = promisify(execFile);
 
+type CliCoreLlm = ILLM & ContinueAgentLlm;
+
 export interface CliCoreAgentRuntime {
-  readonly llm: ILLM;
+  readonly llm: CliCoreLlm;
   readonly driver: ContinueAgentModelDriver;
   readonly toolExecutor: CoreAgentToolExecutor;
   readonly tools: readonly Tool[];
@@ -65,7 +70,7 @@ export function createCliCoreAgentRuntime(options: {
   };
 }
 
-export function createCliCoreLlm(model: ModelConfig): ILLM {
+export function createCliCoreLlm(model: ModelConfig): CliCoreLlm {
   const capabilities = new Set(model.capabilities ?? []);
   const llmOptions: LLMOptions = {
     ...(model as unknown as LLMOptions),
@@ -83,7 +88,7 @@ export function createCliCoreLlm(model: ModelConfig): ILLM {
     baseChatSystemMessage: model.chatOptions?.baseSystemMessage,
     capabilities:
       model.capabilities === undefined
-        ? undefined
+        ? {}
         : {
             tools: capabilities.has("tool_use"),
             uploadImage: capabilities.has("image_input"),
@@ -94,7 +99,13 @@ export function createCliCoreLlm(model: ModelConfig): ILLM {
       model: model.model,
     },
   };
-  return llmFromProviderAndOptions(model.provider, llmOptions);
+  const llm = llmFromProviderAndOptions(model.provider, llmOptions);
+  if (!llm.capabilities) {
+    throw new Error(
+      "Canonical agent model construction requires a capabilities object",
+    );
+  }
+  return llm as CliCoreLlm;
 }
 
 function createMinimalCliContinueConfig(
