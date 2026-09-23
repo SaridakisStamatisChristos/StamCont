@@ -84,6 +84,7 @@ describe("runTerminalCommand agent semantics", () => {
           executionBackend: backend,
           managedBackgroundJobs: true,
           toolCallId: "background-call",
+          executionProcessId: "agent:session:item:background-call",
         } as any,
       ),
     ).resolves.toMatchObject([
@@ -94,10 +95,15 @@ describe("runTerminalCommand agent semantics", () => {
 
     expect(spawnOptions[0]?.detached).toBe(false);
     expect(child.unref).not.toHaveBeenCalled();
-    expect(getAllBackgroundedProcessIds()).toContain("background-call");
+    expect(getAllBackgroundedProcessIds()).toContain(
+      "agent:session:item:background-call",
+    );
+    expect(getAllBackgroundedProcessIds()).not.toContain("background-call");
 
     child.close(0);
-    expect(getAllBackgroundedProcessIds()).not.toContain("background-call");
+    expect(getAllBackgroundedProcessIds()).not.toContain(
+      "agent:session:item:background-call",
+    );
   });
 });
 
