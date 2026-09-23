@@ -1,6 +1,4 @@
 import path from "path";
-import { fileURLToPath } from "url";
-
 import workerpool from "workerpool";
 
 export interface AsyncEncoder {
@@ -67,8 +65,9 @@ export class GPTAsyncEncoder implements AsyncEncoder {
 }
 
 function workerCodeFilePath(workerFileName: string): string {
-  return path.join(
-    path.dirname(fileURLToPath(import.meta.url)),
-    workerFileName,
-  );
+  if (process.env.NODE_ENV === "test") {
+    // `cross-env` makes __dirname the project root in this test path.
+    return path.join(__dirname, "llm", workerFileName);
+  }
+  return path.join(__dirname, workerFileName);
 }
