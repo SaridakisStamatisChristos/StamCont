@@ -3,15 +3,15 @@ import { createInterface } from "node:readline/promises";
 import { stdin as input, stderr as errorOutput } from "node:process";
 
 import type { ModelConfig } from "@continuedev/config-yaml";
-import {
-  createInitialAgentRunState,
-  type AgentCompactionSummarizer,
-  type AgentModelDriver,
-  type AgentModelInputItem,
-  type AgentRunEvent,
-  type BuiltInExecutionProfileId,
-  type CoreAgentToolApprovalHandler,
-} from "core/agent/index.js";
+import type { CoreAgentToolApprovalHandler } from "core/agent/adapters/coreToolRuntime.js";
+import type { BuiltInExecutionProfileId } from "core/agent/capabilities.js";
+import type { AgentCompactionSummarizer } from "core/agent/compaction.js";
+import type {
+  AgentModelDriver,
+  AgentModelInputItem,
+} from "core/agent/model.js";
+import type { AgentRunEvent } from "core/agent/protocol.js";
+import { createInitialAgentRunState } from "core/agent/reducer.js";
 
 import { permissionModeToExecutionProfile } from "../agent/cliExecution.js";
 import { createCliCoreAgentRuntime } from "../agent/cliCoreRuntime.js";

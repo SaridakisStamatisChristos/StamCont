@@ -2,18 +2,22 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
+import type { AgentContextEstimator } from "core/agent/budget.js";
+import {
+  runAgentLoop,
+  type AgentLoopResult,
+} from "core/agent/loop.js";
+import type {
+  AgentModelDriver,
+  AgentModelInputItem,
+  AgentModelToolDefinition,
+  AgentToolExecutor,
+} from "core/agent/model.js";
 import {
   AgentSessionStore,
-  runAgentLoop,
   validateSessionId,
-  type AgentContextEstimator,
-  type AgentLoopResult,
-  type AgentModelDriver,
-  type AgentModelInputItem,
-  type AgentModelToolDefinition,
-  type AgentRunEvent,
-  type AgentToolExecutor,
-} from "core/agent/index.js";
+} from "core/agent/persistence.js";
+import type { AgentRunEvent } from "core/agent/protocol.js";
 
 export interface CliAgentRuntimeEvent {
   readonly event: AgentRunEvent;
