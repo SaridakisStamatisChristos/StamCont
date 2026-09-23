@@ -297,6 +297,33 @@ describe("CoreAgentToolExecutor", () => {
     await runtime.close();
   });
 
+  it("returns a failing tool as a canonical tool failure", async () => {
+    const fetch = vi.fn(async () => {
+      throw new Error("remote tool failed");
+    });
+    const runtime = new CoreAgentToolExecutor({
+      tools: [
+        tool("remote_tool", {
+          defaultToolPolicy: "allowedWithoutPermission",
+        }),
+      ],
+      extras: extras(fetch as ToolExtras["fetch"]),
+      sessionId: "agent-tool-failure",
+      profile: "full_access",
+    });
+
+    const result = await runtime.execute(call(), executionContext());
+
+    expect(result).toMatchObject({
+      status: "failure",
+      error: {
+        code: "tool_failure",
+        message: "remote tool failed",
+      },
+    });
+    await runtime.close();
+  });
+
   it("propagates cancellation through the kernel-owned tool signal", async () => {
     let started!: () => void;
     const didStart = new Promise<void>((resolve) => {
