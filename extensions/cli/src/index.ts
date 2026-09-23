@@ -5,6 +5,7 @@ import "./init.js";
 
 import { Command } from "commander";
 
+import { agent } from "./commands/agent.js";
 import { chat } from "./commands/chat.js";
 import { checks } from "./commands/checks.js";
 import { listSessionsCommand } from "./commands/ls.js";
@@ -295,6 +296,55 @@ addCommonOptions(program)
     options.print = undefined;
     await chat(prompt, options);
   });
+
+// Canonical durable AgentLoop command
+const agentCommand = addCommonOptions(
+  program
+    .command("agent [prompt]")
+    .description("Run the durable canonical coding-agent runtime")
+    .option(
+      "--resume [sessionId]",
+      "Resume a durable agent session by ID, or the most recent session when omitted",
+    )
+    .option(
+      "--format <format>",
+      "Output format: text or json",
+      "text",
+    )
+    .option(
+      "--max-iterations <count>",
+      "Maximum model/tool loop iterations",
+      (value: string) => {
+        const parsed = Number.parseInt(value, 10);
+        if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+          throw new Error("--max-iterations must be a positive integer");
+        }
+        return parsed;
+      },
+    ),
+);
+
+agentCommand.action(async (prompt, options) => {
+  configureConsoleForHeadless(true);
+  logger.configureHeadlessMode(true);
+
+  const pipedInput = readStdinSync();
+  if (pipedInput) {
+    prompt = prompt
+      ? `<stdin>\n${pipedInput}\n</stdin>\n\n${prompt}`
+      : pipedInput;
+  }
+
+  const mergedOptions = mergeParentOptions(program, options);
+  if (mergedOptions.format !== "text" && mergedOptions.format !== "json") {
+    throw new Error("--format must be either text or json");
+  }
+  if (mergedOptions.verbose) {
+    logger.setLevel("debug");
+    logger.debug("Verbose logging enabled");
+  }
+  await agent(prompt, mergedOptions);
+});
 
 // List sessions subcommand
 program
