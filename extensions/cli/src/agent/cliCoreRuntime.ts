@@ -1,17 +1,10 @@
 import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { promisify } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 
 import type { ModelConfig } from "@continuedev/config-yaml";
-import type {
-  ContinueConfig,
-  IDE,
-  ILLM,
-  LLMOptions,
-  Tool,
-} from "core/index.js";
 import {
   ContinueAgentModelDriver,
   type ContinueAgentLlm,
@@ -21,6 +14,13 @@ import {
   type CoreAgentToolApprovalHandler,
 } from "core/agent/adapters/coreToolRuntime.js";
 import type { BuiltInExecutionProfileId } from "core/agent/capabilities.js";
+import type {
+  ContinueConfig,
+  IDE,
+  ILLM,
+  LLMOptions,
+  Tool,
+} from "core/index.js";
 import { llmFromProviderAndOptions } from "core/llm/llms/index.js";
 import { getBaseToolDefinitions } from "core/tools/index.js";
 

@@ -1,6 +1,6 @@
 import path from "node:path";
-import { createInterface } from "node:readline/promises";
 import { stdin as input, stderr as errorOutput } from "node:process";
+import { createInterface } from "node:readline/promises";
 
 import type { ModelConfig } from "@continuedev/config-yaml";
 import type { CoreAgentToolApprovalHandler } from "core/agent/adapters/coreToolRuntime.js";
@@ -14,17 +14,17 @@ import type {
 import type { AgentRunEvent } from "core/agent/protocol.js";
 import { createInitialAgentRunState } from "core/agent/reducer.js";
 
-import { permissionModeToExecutionProfile } from "../agent/cliExecution.js";
 import { createCliCoreAgentRuntime } from "../agent/cliCoreRuntime.js";
+import { permissionModeToExecutionProfile } from "../agent/cliExecution.js";
+import {
+  formatCliAgentJson,
+  getFinalAssistantMessage,
+} from "../agent/output.js";
 import {
   resolveCliAgentResumeSessionId,
   runCliAgentRuntime,
 } from "../agent/runtime.js";
 import { env } from "../env.js";
-import {
-  formatCliAgentJson,
-  getFinalAssistantMessage,
-} from "../agent/output.js";
 import { processCommandFlags } from "../flags/flagProcessor.js";
 import type { PermissionMode } from "../permissions/types.js";
 import {
