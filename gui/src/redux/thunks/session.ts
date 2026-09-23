@@ -26,7 +26,7 @@ import {
   setIsSessionMetadataLoading,
   updateSessionMetadata,
 } from "../slices/sessionSlice";
-import { ThunkApiType } from "../store";
+import type { AppDispatch, RootState, ThunkApiType } from "../store";
 import { updateSelectedModelByRole } from "../thunks/updateSelectedModelByRole";
 
 const MAX_TITLE_LENGTH = 100;
@@ -227,8 +227,8 @@ export const loadLastSession = createAsyncThunk<void, void, ThunkApiType>(
 
 async function syncCoreAgentSnapshot(
   ideMessenger: IIdeMessenger,
-  dispatch: ThunkApiType["dispatch"],
-  getState: ThunkApiType["getState"],
+  dispatch: AppDispatch,
+  getState: () => RootState,
 ): Promise<void> {
   const state = getState();
   if (
