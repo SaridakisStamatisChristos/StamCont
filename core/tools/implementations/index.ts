@@ -4,6 +4,7 @@ import type { ExecutionBackend } from "../../agent/execution";
 export type ToolExecutionExtras = ToolExtras & {
   executionBackend?: ExecutionBackend;
   executionSignal?: AbortSignal;
+  executionProcessId?: string;
   strictProcessFailures?: boolean;
   managedBackgroundJobs?: boolean;
 };
