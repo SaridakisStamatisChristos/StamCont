@@ -7,8 +7,17 @@ import {
   ToolCall,
   ToolExtras,
 } from "..";
-import { coreToolKernelBridge } from "../agent/adapters/coreToolExecution";
+import {
+  CoreToolKernelBridge,
+  coreToolKernelBridge,
+} from "../agent/adapters/coreToolExecution";
 import { createExecutionBackend } from "../agent/execution";
+import {
+  AgentCapabilityDeniedError,
+  AgentToolAuthorizationDeniedError,
+  AgentToolNotFoundError,
+  type AgentToolAuthorizer,
+} from "../agent/tools";
 import { MCPManagerSingleton } from "../context/mcp/MCPManagerSingleton";
 import { ContinueError, ContinueErrorReason } from "../util/errors";
 import { canParseUrl } from "../util/url";
@@ -48,6 +57,7 @@ async function callHttpTool(
     body: JSON.stringify({
       arguments: args,
     }),
+    signal: extras.executionSignal,
   });
 
   const data = await response.json();
@@ -77,7 +87,7 @@ export function decodeMCPToolUri(uri: string): [string, string] | null {
 async function callToolFromUri(
   uri: string,
   args: any,
-  extras: ToolExtras,
+  extras: ToolExecutionExtras,
 ): Promise<{
   contextItems: ContextItem[];
   mcpUiState?: McpUiState;
@@ -239,9 +249,30 @@ export async function callBuiltInTool(
   }
 }
 
+export type CoreToolFailureCode =
+  | "tool_failure"
+  | "tool_denied"
+  | "approval_required"
+  | "tool_cancelled"
+  | "kernel_rejection"
+  | "process_failure";
+
+export interface CoreToolCallResult {
+  contextItems: ContextItem[];
+  errorMessage: string | undefined;
+  errorReason?: ContinueErrorReason;
+  errorCode?: CoreToolFailureCode;
+  mcpUiState?: McpUiState;
+}
+
 export interface CoreToolExecutionContext {
   profile?: ExecutionProfileId;
   sessionId?: string;
+  signal?: AbortSignal;
+  authorize?: AgentToolAuthorizer<unknown>;
+  bridge?: CoreToolKernelBridge;
+  strictProcessFailures?: boolean;
+  managedBackgroundJobs?: boolean;
 }
 
 // Handles calls for core/non-client tools
@@ -252,29 +283,29 @@ export async function callTool(
   toolCall: ToolCall,
   extras: ToolExtras,
   executionContext: CoreToolExecutionContext = {},
-): Promise<{
-  contextItems: ContextItem[];
-  errorMessage: string | undefined;
-  errorReason?: ContinueErrorReason;
-  mcpUiState?: McpUiState;
-}> {
+): Promise<CoreToolCallResult> {
   try {
     const args = safeParseToolCallArgs(toolCall);
     const profile = executionContext.profile ?? "interactive";
     const executionBackend = createExecutionBackend(profile, extras.ide);
+    const bridge = executionContext.bridge ?? coreToolKernelBridge;
     const { contextItems, mcpUiState } =
-      await coreToolKernelBridge.execute<{
+      await bridge.execute<{
         contextItems: ContextItem[];
         mcpUiState?: McpUiState;
       }>({
         tool,
+        input: args,
         profile,
         sessionId: executionContext.sessionId,
+        signal: executionContext.signal,
+        authorize: executionContext.authorize,
         execute: async (agentContext) =>
           tool.uri
             ? callToolFromUri(tool.uri, args, {
                 ...extras,
                 fetch: executionBackend.wrapFetch(extras.fetch),
+                executionSignal: agentContext.signal,
               })
             : {
                 contextItems: await callBuiltInTool(
@@ -285,6 +316,10 @@ export async function callTool(
                     fetch: executionBackend.wrapFetch(extras.fetch),
                     executionBackend,
                     executionSignal: agentContext.signal,
+                    strictProcessFailures:
+                      executionContext.strictProcessFailures,
+                    managedBackgroundJobs:
+                      executionContext.managedBackgroundJobs,
                   },
                 ),
                 mcpUiState: undefined,
@@ -316,6 +351,36 @@ export async function callTool(
       contextItems: [],
       errorMessage,
       errorReason,
+      errorCode: classifyCoreToolFailure(e, executionContext.signal),
     };
   }
+}
+
+function classifyCoreToolFailure(
+  error: unknown,
+  signal?: AbortSignal,
+): CoreToolFailureCode {
+  if (signal?.aborted) {
+    return "tool_cancelled";
+  }
+  if (error instanceof AgentToolAuthorizationDeniedError) {
+    return error.code === "approval_required"
+      ? "approval_required"
+      : "tool_denied";
+  }
+  if (
+    error instanceof AgentCapabilityDeniedError ||
+    error instanceof AgentToolNotFoundError
+  ) {
+    return "kernel_rejection";
+  }
+  if (error instanceof ContinueError) {
+    if (error.reason === ContinueErrorReason.CommandExecutionFailed) {
+      return "process_failure";
+    }
+    if (error.reason === ContinueErrorReason.FileIsSecurityConcern) {
+      return "kernel_rejection";
+    }
+  }
+  return "tool_failure";
 }
