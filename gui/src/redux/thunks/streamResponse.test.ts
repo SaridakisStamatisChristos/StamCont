@@ -75,9 +75,10 @@ export function getRootStateWithClaude(): RootState {
     ...state,
     session: {
       ...state.session,
-      // This helper backs the legacy streamResponse suites. PR10 routes
-      // Agent/Plan through the canonical Core AgentLoop instead.
-      mode: "chat",
+      // This helper backs legacy streamResponse suites. Background mode
+      // keeps the inherited frontend streaming/tool-loop path available
+      // without routing Agent/Plan away from the canonical Core AgentLoop.
+      mode: "background",
     },
     config: {
       ...state.config,
