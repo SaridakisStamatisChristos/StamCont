@@ -1001,6 +1001,12 @@ export const sessionSlice = createSlice({
     ) => {
       state.agentRuntimeStatus = action.payload;
     },
+    setAgentHydratedHistory: (
+      state,
+      action: PayloadAction<ChatHistoryItemWithMessageId[]>,
+    ) => {
+      state.history = action.payload;
+    },
     setAgentApproval: (
       state,
       action: PayloadAction<AgentSurfaceApproval>,
@@ -1136,6 +1142,7 @@ export const {
   setMode,
   setExecutionProfile,
   setAgentRuntimeStatus,
+  setAgentHydratedHistory,
   setAgentApproval,
   clearAgentApproval,
   clearAgentApprovals,
