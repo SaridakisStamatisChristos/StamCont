@@ -119,6 +119,7 @@ export class ContinueAgentModelDriver implements AgentModelDriver {
     let rawStopReason: string | undefined;
     let responsesTerminalEvent: string | undefined;
     let responsesIncompleteReason: string | undefined;
+    let responsesError: unknown;
 
     const event = (value: AgentRunEventInput): AgentRunEvent => {
       sequence += 1;
@@ -249,6 +250,9 @@ export class ContinueAgentModelDriver implements AgentModelDriver {
         );
         if (incompleteReason) {
           responsesIncompleteReason = incompleteReason;
+        }
+        if (metadata.responsesError !== undefined) {
+          responsesError = metadata.responsesError;
         }
 
         const authoritative = readRecord(
@@ -484,6 +488,30 @@ export class ContinueAgentModelDriver implements AgentModelDriver {
           item: completed.item,
         });
       }
+    }
+
+    if (responsesTerminalEvent === "response.failed") {
+      const details = toJsonValue(responsesError);
+      yield event({
+        type: "response.failed",
+        error: {
+          code: "provider_error",
+          message: providerFailureMessage(responsesError),
+          ...(details !== undefined ? { details } : {}),
+        },
+      });
+      return;
+    }
+
+    if (
+      responsesTerminalEvent === "response.cancelled" ||
+      responsesTerminalEvent === "response.canceled"
+    ) {
+      yield event({
+        type: "response.aborted",
+        reason: "provider cancelled the response",
+      });
+      return;
     }
 
     const stopReason = normalizeProviderStopReason({
@@ -1217,6 +1245,16 @@ function isJsonObject(
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function providerFailureMessage(error: unknown): string {
+  const record = readRecord(error);
+  const nested = readRecord(record?.error);
+  return (
+    readString(record?.message) ??
+    readString(nested?.message) ??
+    "Provider reported a failed response"
+  );
 }
 
 function abortReason(signal: AbortSignal): string {
