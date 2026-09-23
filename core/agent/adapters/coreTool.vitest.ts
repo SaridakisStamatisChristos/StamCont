@@ -36,6 +36,19 @@ describe("Core tool capability adapter", () => {
     ).toEqual({ network: "restricted" });
   });
 
+  it("requires background-job capability for detached terminal work", () => {
+    expect(
+      getCoreToolCapabilityRequirement(
+        tool("run_terminal_command", false),
+        { command: "test", waitForCompletion: false },
+      ),
+    ).toEqual({
+      shell: "workspace",
+      processControl: true,
+      backgroundJobs: true,
+    });
+  });
+
   it("classifies URI-backed MCP and HTTP tools", () => {
     expect(
       getCoreToolCapabilityRequirement(
