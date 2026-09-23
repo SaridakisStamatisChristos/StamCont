@@ -1013,6 +1013,9 @@ export const sessionSlice = createSlice({
     ) => {
       delete state.agentApprovals[action.payload.callId];
     },
+    clearAgentApprovals: (state) => {
+      state.agentApprovals = {};
+    },
     setIsInEdit: (state, action: PayloadAction<boolean>) => {
       state.isInEdit = action.payload;
     },
@@ -1135,6 +1138,7 @@ export const {
   setAgentRuntimeStatus,
   setAgentApproval,
   clearAgentApproval,
+  clearAgentApprovals,
   setIsSessionMetadataLoading,
   setAllSessionMetadata,
   addSessionMetadata,
