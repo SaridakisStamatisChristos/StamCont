@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   createCliExecutionBackend,
+  permissionModeToExecutionProfile,
   prepareCliToolArgs,
 } from "./cliExecution.js";
 
@@ -91,6 +92,12 @@ describe("CLI execution boundary", () => {
       ).rejects.toThrow(/outside workspace/i);
     },
   );
+
+  it("maps CLI permission modes to canonical execution profiles", () => {
+    expect(permissionModeToExecutionProfile("plan")).toBe("plan");
+    expect(permissionModeToExecutionProfile("normal")).toBe("interactive");
+    expect(permissionModeToExecutionProfile("auto")).toBe("full_access");
+  });
 
   it("maps plan and normal to sandbox but auto to host", async () => {
     const workspace = await tempDir("stamcont-cli-workspace-");
