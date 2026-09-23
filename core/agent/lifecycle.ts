@@ -182,7 +182,7 @@ const ALLOWED_LIFECYCLE_TRANSITIONS: Readonly<
   ],
   resumable: ["running", "cancelled", "failed", "interrupted"],
   interrupted: ["resumable", "cancelled", "failed", "closed"],
-  completed: ["closed"],
+  completed: ["resumable", "closed"],
   cancelled: ["closed"],
   failed: ["closed"],
   closed: [],
@@ -479,7 +479,9 @@ export function analyzeDurableAgentSession(
     ambiguousToolAttempts,
   };
 
-  if (lastStateEntry) {
+  const pendingUserTurn = hasPendingUserTurn(records);
+
+  if (lastStateEntry && !pendingUserTurn) {
     const terminal = terminalFromLifecycle(lastStateEntry.payload);
     if (terminal) {
       return {
@@ -515,7 +517,7 @@ export function analyzeDurableAgentSession(
     };
   }
 
-  if (!response) {
+  if (!response || pendingUserTurn) {
     return {
       disposition: "resume",
       ...common,
@@ -621,6 +623,49 @@ export function analyzeDurableAgentSession(
   };
 }
 
+export async function appendDurableAgentUserTurn(
+  store: AgentSessionStore,
+  content: string,
+): Promise<AgentDurableResumeAnalysis> {
+  const userContent = content.trim();
+  if (!userContent) {
+    throw new AgentLifecycleError(
+      "invalid_initial_input",
+      "A durable agent user turn requires non-empty content",
+    );
+  }
+
+  const records = await store.readAllRecords();
+  const analysis = analyzeDurableAgentSession(records, store.sessionId);
+  if (
+    analysis.disposition !== "terminal" ||
+    analysis.terminalKind !== "completed" ||
+    analysis.stopReason !== "end_turn"
+  ) {
+    throw new AgentLifecycleError(
+      "invalid_lifecycle",
+      "A new durable agent user turn can only follow a completed end_turn",
+    );
+  }
+
+  await store.appendModelInput({
+    type: "message",
+    role: "user",
+    content: userContent,
+  });
+  await appendAgentLifecycleState(
+    store,
+    "resumable",
+    analysis.lastIteration,
+    { reason: "new user turn" },
+  );
+
+  return analyzeDurableAgentSession(
+    await store.readAllRecords(),
+    store.sessionId,
+  );
+}
+
 export async function prepareDurableAgentContext(
   store: AgentSessionStore,
   options: AgentDurableContextOptions,
@@ -675,6 +720,54 @@ export async function prepareDurableAgentContext(
   }
 
   return plan;
+}
+
+function hasPendingUserTurn(
+  records: readonly AgentPersistedRecord[],
+): boolean {
+  let latestModelInputSequence = 0;
+  let latestCompletedResponseSequence = 0;
+
+  for (const record of records) {
+    if (record.kind === "model_input") {
+      latestModelInputSequence = record.sequence;
+      continue;
+    }
+    if (
+      record.kind === "model_event" &&
+      isRecord(record.payload) &&
+      record.payload.type === "response.completed"
+    ) {
+      latestCompletedResponseSequence = record.sequence;
+    }
+  }
+
+  if (
+    latestCompletedResponseSequence === 0 ||
+    latestModelInputSequence <= latestCompletedResponseSequence
+  ) {
+    return false;
+  }
+
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const record = records[index];
+    if (
+      record.sequence >= latestModelInputSequence ||
+      record.kind !== "lifecycle" ||
+      !isRecord(record.payload)
+    ) {
+      continue;
+    }
+    if (record.payload.type !== "state") {
+      continue;
+    }
+    return (
+      record.payload.state === "completed" &&
+      record.payload.stopReason === "end_turn"
+    );
+  }
+
+  return false;
 }
 
 function terminalFromLifecycle(
