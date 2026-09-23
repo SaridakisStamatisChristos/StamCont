@@ -6,6 +6,7 @@ import type { ModelConfig } from "@continuedev/config-yaml";
 import type { CoreAgentToolApprovalHandler } from "core/agent/adapters/coreToolRuntime.js";
 import type { BuiltInExecutionProfileId } from "core/agent/capabilities.js";
 import type { AgentCompactionSummarizer } from "core/agent/compaction.js";
+import type { AgentLoopResult } from "core/agent/loop.js";
 import type {
   AgentModelDriver,
   AgentModelInputItem,
@@ -233,7 +234,7 @@ function installAgentSigint(
   return () => {
     process.removeListener("SIGINT", handler);
     for (const listener of existing) {
-      process.on("SIGINT", listener as any);
+      process.on("SIGINT", listener as NodeJS.SignalsListener);
     }
   };
 }
@@ -326,13 +327,7 @@ class CliAgentRenderer {
 
   finish(
     sessionId: string,
-    result: {
-      status: string;
-      stopReason?: string;
-      error?: unknown;
-      input: readonly AgentModelInputItem[];
-      iterations: number;
-    },
+    result: AgentLoopResult,
   ): void {
     const canonicalFinal =
       getFinalAssistantMessage(result.input) || this.finalMessage;
