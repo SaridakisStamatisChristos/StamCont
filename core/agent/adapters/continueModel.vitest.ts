@@ -430,6 +430,55 @@ describe("Continue AgentModelDriver bridge", () => {
     });
   });
 
+  it("maps explicit Responses failure and cancellation terminals canonically", async () => {
+    const failedLlm = createScriptedLlm([
+      [
+        {
+          role: "assistant",
+          content: "",
+          metadata: {
+            responsesTerminalEvent: "response.failed",
+            responsesError: {
+              message: "quota exhausted",
+              code: "quota",
+            },
+          },
+        },
+      ],
+    ]);
+    const failedEvents = await collect(
+      new ContinueAgentModelDriver(failedLlm),
+    );
+
+    expect(finalEvent(failedEvents)).toMatchObject({
+      type: "response.failed",
+      error: {
+        code: "provider_error",
+        message: "quota exhausted",
+      },
+    });
+
+    const cancelledLlm = createScriptedLlm([
+      [
+        {
+          role: "assistant",
+          content: "",
+          metadata: {
+            responsesTerminalEvent: "response.cancelled",
+          },
+        },
+      ],
+    ]);
+    const cancelledEvents = await collect(
+      new ContinueAgentModelDriver(cancelledLlm),
+    );
+
+    expect(finalEvent(cancelledEvents)).toMatchObject({
+      type: "response.aborted",
+      reason: "provider cancelled the response",
+    });
+  });
+
   it("maps provider exceptions to response.failed", async () => {
     const llm = createScriptedLlm([
       new Error("upstream unavailable"),
