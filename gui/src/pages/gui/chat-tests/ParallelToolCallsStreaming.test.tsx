@@ -4,10 +4,13 @@ import { renderWithProviders } from "../../../util/test/render";
 import { sendInputWithMockedResponse } from "../../../util/test/utils";
 import { Chat } from "../Chat";
 import { updateConfig } from "../../../redux/slices/configSlice";
+import { setMode } from "../../../redux/slices/sessionSlice";
 
 describe("Parallel Tool Calls - Streaming", () => {
   test("should handle streaming deltas for multiple tool calls", async () => {
     const { ideMessenger, store } = await renderWithProviders(<Chat />);
+
+    store.dispatch(setMode("background"));
 
     // Mock required responses
     ideMessenger.responses["tools/evaluatePolicy"] = {
