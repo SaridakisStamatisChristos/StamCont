@@ -12,10 +12,18 @@ export type AgentSurfaceRunStatus =
   | "resume_blocked"
   | AgentLoopStatus;
 
+export type AgentSurfaceToolPolicy =
+  | "disabled"
+  | "allowedWithPermission"
+  | "allowedWithoutPermission";
+
 export interface AgentSurfaceRunRequest {
   readonly sessionId: string;
   readonly profile: BuiltInExecutionProfileId;
   readonly toolNames: readonly string[];
+  readonly toolPolicies?: Readonly<
+    Record<string, AgentSurfaceToolPolicy>
+  >;
   readonly systemPrompt?: string;
   readonly userPrompt?: string;
   readonly maxIterations?: number;
