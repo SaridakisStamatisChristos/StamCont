@@ -271,6 +271,7 @@ export interface CoreToolExecutionContext {
   signal?: AbortSignal;
   authorize?: AgentToolAuthorizer<unknown>;
   bridge?: CoreToolKernelBridge;
+  processId?: string;
   strictProcessFailures?: boolean;
   managedBackgroundJobs?: boolean;
 }
@@ -316,6 +317,7 @@ export async function callTool(
                     fetch: executionBackend.wrapFetch(extras.fetch),
                     executionBackend,
                     executionSignal: agentContext.signal,
+                    executionProcessId: executionContext.processId,
                     strictProcessFailures:
                       executionContext.strictProcessFailures,
                     managedBackgroundJobs:
