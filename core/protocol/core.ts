@@ -10,6 +10,13 @@ import {
   AutocompleteInput,
   RecentlyEditedRange,
 } from "../autocomplete/util/types";
+import type {
+  AgentSurfaceEvent,
+  AgentSurfaceRunRequest,
+  AgentSurfaceRunResult,
+  AgentSurfaceSessionMetadata,
+  AgentSurfaceSessionSnapshot,
+} from "../agent/surface";
 import { ProfileDescription } from "../config/ProfileLifecycleManager";
 import { SharedConfigSchema } from "../config/sharedConfig";
 import { GlobalContextModelSelections } from "../util/GlobalContext";
@@ -304,6 +311,26 @@ export type ToCoreFromIdeOrWebviewProtocol = {
   "agent/closeSession": [
     { sessionId: string },
     { closed: boolean },
+  ];
+  "agent/run": [
+    AgentSurfaceRunRequest,
+    AsyncGenerator<AgentSurfaceEvent, AgentSurfaceRunResult>
+  ];
+  "agent/approve": [
+    { sessionId: string; approvalId: string; approved: boolean },
+    { resolved: boolean },
+  ];
+  "agent/cancel": [
+    { sessionId: string; reason?: string },
+    { cancelled: boolean },
+  ];
+  "agent/session": [
+    { sessionId: string },
+    AgentSurfaceSessionSnapshot | undefined,
+  ];
+  "agent/listSessions": [
+    undefined,
+    readonly AgentSurfaceSessionMetadata[],
   ];
   "tools/call": [
     {
