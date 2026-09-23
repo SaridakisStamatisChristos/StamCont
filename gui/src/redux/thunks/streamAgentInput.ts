@@ -24,7 +24,7 @@ import {
   streamUpdate,
   updateToolCallOutput,
 } from "../slices/sessionSlice";
-import type { ThunkApiType } from "../store";
+import type { AppDispatch, ThunkApiType } from "../store";
 import { constructMessages } from "../util/constructMessages";
 import { getBaseSystemMessage } from "../util/getBaseSystemMessage";
 
@@ -156,7 +156,7 @@ export const streamAgentInput = createAsyncThunk<
 export function applyAgentSurfaceEvent(
   event: AgentSurfaceEvent,
   activeTools: Tool[],
-  dispatch: ThunkApiType["dispatch"],
+  dispatch: AppDispatch,
 ): void {
   switch (event.type) {
     case "run_state":
@@ -273,7 +273,7 @@ export function applyAgentSurfaceEvent(
 
 export function applyAgentRunResult(
   result: AgentSurfaceRunResult,
-  dispatch: ThunkApiType["dispatch"],
+  dispatch: AppDispatch,
 ): void {
   dispatch(setAgentRuntimeStatus(result.status));
   dispatch(setInactive());
