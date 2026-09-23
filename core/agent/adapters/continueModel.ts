@@ -107,100 +107,15 @@ export class ContinueAgentModelDriver implements AgentModelDriver {
     request: AgentModelRequest,
     signal: AbortSignal,
   ): AsyncIterable<AgentRunEvent> {
-    let sequence = request.runState.lastSequence;
-    const responseId = `continue-response-${sequence + 1}`;
-    const items = new Map<string, BufferedItem>();
-    const order: string[] = [];
-    const toolByCallId = new Map<string, string>();
-    const toolByProviderIndex = new Map<number, string>();
-    let activeMessageId: string | undefined;
-    let activeReasoningId: string | undefined;
-    let localItemSequence = 0;
-    let rawStopReason: string | undefined;
-    let responsesTerminalEvent: string | undefined;
-    let responsesIncompleteReason: string | undefined;
-    let responsesError: unknown;
+    const translator = new ContinueAgentStreamTranslator(
+      request,
+      this.llm,
+    );
 
-    const event = (value: AgentRunEventInput): AgentRunEvent => {
-      sequence += 1;
-      return {
-        ...value,
-        eventId: `${responseId}:event:${sequence}`,
-        sequence,
-        responseId,
-      } as AgentRunEvent;
-    };
-
-    const createLocalId = (type: BufferedItem["type"]): string => {
-      localItemSequence += 1;
-      return `continue-${type}-${sequence + 1}-${localItemSequence}`;
-    };
-
-    const ensureItem = (
-      type: BufferedItem["type"],
-      preferredId?: string,
-    ): { item: BufferedItem; added?: AgentRunEvent } => {
-      let id = preferredId?.trim() || createLocalId(type);
-      const existing = items.get(id);
-      if (existing) {
-        if (existing.type === type) {
-          return { item: existing };
-        }
-        id = createLocalId(type);
-      }
-
-      let item: BufferedItem;
-      if (type === "message") {
-        item = {
-          id,
-          type,
-          text: "",
-          metadata: {},
-        };
-      } else if (type === "reasoning") {
-        item = {
-          id,
-          type,
-          text: "",
-          signature: "",
-          reasoningDetails: [],
-          metadata: {},
-        };
-      } else {
-        item = {
-          id,
-          type,
-          callId: "",
-          name: "",
-          argumentsText: "",
-          metadata: {},
-        };
-      }
-
-      items.set(id, item);
-      order.push(id);
-      return {
-        item,
-        added: event({
-          type: "output_item.added",
-          item: { id, type },
-        }),
-      };
-    };
-
-    yield event({
-      type: "response.started",
-      providerMetadata: {
-        provider: effectiveProviderName(this.llm),
-        model: this.llm.completionOptions.model,
-      },
-    });
+    yield translator.started();
 
     if (signal.aborted) {
-      yield event({
-        type: "response.aborted",
-        reason: abortReason(signal),
-      });
+      yield translator.aborted(signal);
       return;
     }
 
@@ -222,312 +137,575 @@ export class ContinueAgentModelDriver implements AgentModelDriver {
 
       for await (const chunk of stream) {
         if (signal.aborted) {
-          yield event({
-            type: "response.aborted",
-            reason: abortReason(signal),
-          });
+          yield translator.aborted(signal);
           return;
         }
-
-        const metadata = chunk.metadata ?? {};
-        const finishReason = readString(metadata.finishReason);
-        const anthropicStopReason = readString(metadata.anthropicStopReason);
-        const genericStopReason = readString(metadata.agentStopReason);
-        if (genericStopReason) {
-          rawStopReason = genericStopReason;
-        } else if (anthropicStopReason) {
-          rawStopReason = anthropicStopReason;
-        } else if (finishReason) {
-          rawStopReason = finishReason;
-        }
-
-        const terminalEvent = readString(metadata.responsesTerminalEvent);
-        if (terminalEvent) {
-          responsesTerminalEvent = terminalEvent;
-        }
-        const incompleteReason = readString(
-          metadata.responsesIncompleteReason,
-        );
-        if (incompleteReason) {
-          responsesIncompleteReason = incompleteReason;
-        }
-        if (metadata.responsesError !== undefined) {
-          responsesError = metadata.responsesError;
-        }
-
-        const authoritative = readRecord(
-          metadata.responsesOutputItemCompleted,
-        );
-        if (authoritative) {
-          const authoritativeType = readString(authoritative.type);
-          const authoritativeId = readString(authoritative.id);
-          if (
-            authoritativeType === "message" ||
-            authoritativeType === "reasoning" ||
-            authoritativeType === "function_call"
-          ) {
-            const canonicalType =
-              authoritativeType === "function_call"
-                ? "tool_call"
-                : authoritativeType;
-            const ensured = ensureItem(canonicalType, authoritativeId);
-            if (ensured.added) {
-              yield ensured.added;
-            }
-            ensured.item.authoritative = authoritative;
-            mergeMetadata(ensured.item.metadata, metadata);
-            if (ensured.item.type === "message") {
-              activeMessageId = ensured.item.id;
-            } else if (ensured.item.type === "reasoning") {
-              activeReasoningId = ensured.item.id;
-            } else {
-              const callId = readString(authoritative.call_id);
-              if (callId) {
-                ensured.item.callId = callId;
-                toolByCallId.set(callId, ensured.item.id);
-              }
-              const name = readString(authoritative.name);
-              if (name) {
-                ensured.item.name = name;
-              }
-            }
-          }
-        }
-
-        if (chunk.role === "assistant") {
-          const responseOutputItemId = readString(
-            metadata.responsesOutputItemId,
-          );
-          const messagePreferredId =
-            responseOutputItemId?.startsWith("msg_")
-              ? responseOutputItemId
-              : undefined;
-          const text = messageText(chunk);
-
-          if (messagePreferredId || text) {
-            const ensured = ensureItem(
-              "message",
-              messagePreferredId ?? activeMessageId,
-            );
-            if (ensured.added) {
-              yield ensured.added;
-            }
-            const item = ensured.item as BufferedMessage;
-            activeMessageId = item.id;
-            mergeMetadata(item.metadata, metadata);
-            if (text) {
-              const delta = appendDelta(item.text, text);
-              if (delta) {
-                item.text += delta;
-                yield event({
-                  type: "content.delta",
-                  itemId: item.id,
-                  delta,
-                });
-              }
-            }
-          }
-
-          const indexes = readNumberArray(metadata.toolCallIndexes);
-          const toolCalls = chunk.toolCalls ?? [];
-          for (let index = 0; index < toolCalls.length; index += 1) {
-            const toolCall = toolCalls[index];
-            const incomingCallId = toolCall.id?.trim() ?? "";
-            const providerIndex = indexes[index];
-            const existingId =
-              (providerIndex !== undefined
-                ? toolByProviderIndex.get(providerIndex)
-                : undefined) ??
-              (incomingCallId
-                ? toolByCallId.get(incomingCallId)
-                : undefined);
-
-            const toolPreferredId =
-              responseOutputItemId?.startsWith("fc_")
-                ? responseOutputItemId
-                : existingId;
-            const ensured = ensureItem("tool_call", toolPreferredId);
-            if (ensured.added) {
-              yield ensured.added;
-            }
-            const item = ensured.item as BufferedToolCall;
-            mergeMetadata(item.metadata, metadata);
-
-            if (providerIndex !== undefined) {
-              item.providerIndex = providerIndex;
-              toolByProviderIndex.set(providerIndex, item.id);
-            }
-
-            const callIdDelta = appendDelta(
-              item.callId,
-              incomingCallId,
-            );
-            if (callIdDelta) {
-              item.callId += callIdDelta;
-              toolByCallId.set(item.callId, item.id);
-            }
-
-            const incomingName = toolCall.function?.name?.trim() ?? "";
-            const nameDelta = appendDelta(item.name, incomingName);
-            if (nameDelta) {
-              item.name += nameDelta;
-            }
-
-            const argumentsDelta =
-              toolCall.function?.arguments ?? "";
-            if (argumentsDelta) {
-              item.argumentsText += argumentsDelta;
-            }
-
-            if (callIdDelta || nameDelta || argumentsDelta) {
-              yield event({
-                type: "tool_call.delta",
-                itemId: item.id,
-                ...(callIdDelta ? { callIdDelta } : {}),
-                ...(nameDelta ? { nameDelta } : {}),
-                ...(argumentsDelta ? { argumentsDelta } : {}),
-              });
-            }
-          }
-        } else if (chunk.role === "thinking") {
-          const reasoningId =
-            readString(metadata.reasoningId) ??
-            reasoningIdFromDetails(chunk.reasoning_details);
-          const hasOpaque =
-            Boolean(chunk.signature) ||
-            Boolean(chunk.redactedThinking) ||
-            Boolean(chunk.reasoning_details?.length) ||
-            Object.keys(metadata).length > 0;
-          const text = messageText(chunk);
-
-          if (reasoningId || text || hasOpaque) {
-            const ensured = ensureItem(
-              "reasoning",
-              reasoningId ?? activeReasoningId,
-            );
-            if (ensured.added) {
-              yield ensured.added;
-            }
-            const item = ensured.item as BufferedReasoning;
-            activeReasoningId = item.id;
-            mergeMetadata(item.metadata, metadata);
-
-            if (text) {
-              const delta = appendDelta(item.text, text);
-              if (delta) {
-                item.text += delta;
-                yield event({
-                  type: "reasoning.delta",
-                  itemId: item.id,
-                  delta,
-                });
-              }
-            }
-
-            if (chunk.signature) {
-              item.signature += appendDelta(
-                item.signature,
-                chunk.signature,
-              );
-            }
-            if (chunk.redactedThinking) {
-              item.redactedThinking = chunk.redactedThinking;
-            }
-            mergeReasoningDetails(
-              item.reasoningDetails,
-              chunk.reasoning_details,
-            );
-          }
+        for (const translated of translator.observe(chunk)) {
+          yield translated;
         }
       }
     } catch (error) {
       if (signal.aborted) {
-        yield event({
-          type: "response.aborted",
-          reason: abortReason(signal),
-        });
+        yield translator.aborted(signal);
         return;
       }
-      yield event({
-        type: "response.failed",
-        error: {
-          code: "provider_error",
-          message: errorMessage(error),
-        },
-      });
+      yield translator.failed(error);
       return;
     }
 
     if (signal.aborted) {
-      yield event({
-        type: "response.aborted",
-        reason: abortReason(signal),
-      });
+      yield translator.aborted(signal);
       return;
     }
 
-    for (const id of order) {
-      const buffered = items.get(id);
+    const completed = translator.completeItems();
+    for (const completedEvent of completed.events) {
+      yield completedEvent;
+    }
+    if (completed.error) {
+      yield translator.failedCanonical(completed.error);
+      return;
+    }
+
+    yield translator.terminal();
+  }
+}
+
+interface CompletedItemEvents {
+  readonly events: AgentRunEvent[];
+  readonly error?: {
+    readonly code: string;
+    readonly message: string;
+  };
+}
+
+type ContinueAssistantMessage = Extract<
+  ChatMessage,
+  { role: "assistant" }
+>;
+type ContinueThinkingMessage = Extract<
+  ChatMessage,
+  { role: "thinking" }
+>;
+type ContinueToolCallDelta = NonNullable<
+  ContinueAssistantMessage["toolCalls"]
+>[number];
+
+class ContinueAgentStreamTranslator {
+  readonly responseId: string;
+
+  private sequence: number;
+  private readonly items = new Map<string, BufferedItem>();
+  private readonly order: string[] = [];
+  private readonly toolByCallId = new Map<string, string>();
+  private readonly toolByProviderIndex = new Map<number, string>();
+  private activeMessageId: string | undefined;
+  private activeReasoningId: string | undefined;
+  private localItemSequence = 0;
+  private rawStopReason: string | undefined;
+  private responsesTerminalEvent: string | undefined;
+  private responsesIncompleteReason: string | undefined;
+  private responsesError: unknown;
+
+  constructor(
+    request: AgentModelRequest,
+    private readonly llm: ContinueAgentLlm,
+  ) {
+    this.sequence = request.runState.lastSequence;
+    this.responseId = `continue-response-${this.sequence + 1}`;
+  }
+
+  started(): AgentRunEvent {
+    return this.event({
+      type: "response.started",
+      providerMetadata: {
+        provider: effectiveProviderName(this.llm),
+        model: this.llm.completionOptions.model,
+      },
+    });
+  }
+
+  aborted(signal: AbortSignal): AgentRunEvent {
+    return this.event({
+      type: "response.aborted",
+      reason: abortReason(signal),
+    });
+  }
+
+  failed(error: unknown): AgentRunEvent {
+    return this.event({
+      type: "response.failed",
+      error: {
+        code: "provider_error",
+        message: errorMessage(error),
+      },
+    });
+  }
+
+  failedCanonical(error: {
+    readonly code: string;
+    readonly message: string;
+  }): AgentRunEvent {
+    return this.event({
+      type: "response.failed",
+      error,
+    });
+  }
+
+  observe(chunk: ChatMessage): AgentRunEvent[] {
+    const events: AgentRunEvent[] = [];
+    const metadata = chunk.metadata ?? {};
+
+    this.captureTerminalMetadata(metadata);
+    events.push(...this.observeAuthoritative(metadata));
+
+    if (chunk.role === "assistant") {
+      events.push(...this.observeAssistant(chunk, metadata));
+    } else if (chunk.role === "thinking") {
+      events.push(...this.observeThinking(chunk, metadata));
+    }
+
+    return events;
+  }
+
+  completeItems(): CompletedItemEvents {
+    const events: AgentRunEvent[] = [];
+
+    for (const id of this.order) {
+      const buffered = this.items.get(id);
       if (!buffered) {
         continue;
       }
-      const completed = completeBufferedItem(
-        buffered,
-        this.llm,
-      );
+      const completed = completeBufferedItem(buffered, this.llm);
       if (completed.error) {
-        yield event({
-          type: "response.failed",
+        return {
+          events,
           error: completed.error,
-        });
-        return;
+        };
       }
       if (completed.item) {
-        yield event({
-          type: "output_item.completed",
-          item: completed.item,
-        });
+        events.push(
+          this.event({
+            type: "output_item.completed",
+            item: completed.item,
+          }),
+        );
       }
     }
 
-    if (responsesTerminalEvent === "response.failed") {
-      const details = toJsonValue(responsesError);
-      yield event({
+    return { events };
+  }
+
+  terminal(): AgentRunEvent {
+    if (this.responsesTerminalEvent === "response.failed") {
+      const details = toJsonValue(this.responsesError);
+      return this.event({
         type: "response.failed",
         error: {
           code: "provider_error",
-          message: providerFailureMessage(responsesError),
+          message: providerFailureMessage(this.responsesError),
           ...(details !== undefined ? { details } : {}),
         },
       });
-      return;
     }
 
     if (
-      responsesTerminalEvent === "response.cancelled" ||
-      responsesTerminalEvent === "response.canceled"
+      this.responsesTerminalEvent === "response.cancelled" ||
+      this.responsesTerminalEvent === "response.canceled"
     ) {
-      yield event({
+      return this.event({
         type: "response.aborted",
         reason: "provider cancelled the response",
       });
+    }
+
+    return this.event({
+      type: "response.completed",
+      stopReason: normalizeProviderStopReason({
+        rawStopReason: this.rawStopReason,
+        responsesTerminalEvent: this.responsesTerminalEvent,
+        responsesIncompleteReason:
+          this.responsesIncompleteReason,
+        hasToolCalls: this.order.some(
+          (id) => this.items.get(id)?.type === "tool_call",
+        ),
+      }),
+    });
+  }
+
+  private event(value: AgentRunEventInput): AgentRunEvent {
+    this.sequence += 1;
+    return {
+      ...value,
+      eventId: `${this.responseId}:event:${this.sequence}`,
+      sequence: this.sequence,
+      responseId: this.responseId,
+    } as AgentRunEvent;
+  }
+
+  private captureTerminalMetadata(
+    metadata: Record<string, unknown>,
+  ): void {
+    const genericStopReason = readString(metadata.agentStopReason);
+    const anthropicStopReason = readString(
+      metadata.anthropicStopReason,
+    );
+    const finishReason = readString(metadata.finishReason);
+
+    if (genericStopReason) {
+      this.rawStopReason = genericStopReason;
+    } else if (anthropicStopReason) {
+      this.rawStopReason = anthropicStopReason;
+    } else if (finishReason) {
+      this.rawStopReason = finishReason;
+    }
+
+    const terminalEvent = readString(
+      metadata.responsesTerminalEvent,
+    );
+    if (terminalEvent) {
+      this.responsesTerminalEvent = terminalEvent;
+    }
+    const incompleteReason = readString(
+      metadata.responsesIncompleteReason,
+    );
+    if (incompleteReason) {
+      this.responsesIncompleteReason = incompleteReason;
+    }
+    if (metadata.responsesError !== undefined) {
+      this.responsesError = metadata.responsesError;
+    }
+  }
+
+  private observeAuthoritative(
+    metadata: Record<string, unknown>,
+  ): AgentRunEvent[] {
+    const authoritative = readRecord(
+      metadata.responsesOutputItemCompleted,
+    );
+    if (!authoritative) {
+      return [];
+    }
+
+    const authoritativeType = readString(authoritative.type);
+    const canonicalType =
+      authoritativeType === "function_call"
+        ? "tool_call"
+        : authoritativeType;
+    if (
+      canonicalType !== "message" &&
+      canonicalType !== "reasoning" &&
+      canonicalType !== "tool_call"
+    ) {
+      return [];
+    }
+
+    const ensured = this.ensureItem(
+      canonicalType,
+      readString(authoritative.id),
+    );
+    ensured.item.authoritative = authoritative;
+    mergeMetadata(ensured.item.metadata, metadata);
+    this.updateAuthoritativeIdentity(
+      ensured.item,
+      authoritative,
+    );
+
+    return ensured.added ? [ensured.added] : [];
+  }
+
+  private updateAuthoritativeIdentity(
+    item: BufferedItem,
+    authoritative: Record<string, unknown>,
+  ): void {
+    if (item.type === "message") {
+      this.activeMessageId = item.id;
+      return;
+    }
+    if (item.type === "reasoning") {
+      this.activeReasoningId = item.id;
       return;
     }
 
-    const stopReason = normalizeProviderStopReason({
-      rawStopReason,
-      responsesTerminalEvent,
-      responsesIncompleteReason,
-      hasToolCalls: order.some(
-        (id) => items.get(id)?.type === "tool_call",
-      ),
-    });
-
-    yield event({
-      type: "response.completed",
-      stopReason,
-    });
+    const callId = readString(authoritative.call_id);
+    if (callId) {
+      item.callId = callId;
+      this.toolByCallId.set(callId, item.id);
+    }
+    const name = readString(authoritative.name);
+    if (name) {
+      item.name = name;
+    }
   }
+
+  private observeAssistant(
+    chunk: ContinueAssistantMessage,
+    metadata: Record<string, unknown>,
+  ): AgentRunEvent[] {
+    const events = this.observeAssistantText(chunk, metadata);
+    const indexes = readNumberArray(metadata.toolCallIndexes);
+    const responseOutputItemId = readString(
+      metadata.responsesOutputItemId,
+    );
+
+    for (
+      let index = 0;
+      index < (chunk.toolCalls?.length ?? 0);
+      index += 1
+    ) {
+      const toolCall = chunk.toolCalls![index];
+      events.push(
+        ...this.observeToolCall(
+          toolCall,
+          indexes[index],
+          responseOutputItemId,
+          metadata,
+        ),
+      );
+    }
+
+    return events;
+  }
+
+  private observeAssistantText(
+    chunk: ContinueAssistantMessage,
+    metadata: Record<string, unknown>,
+  ): AgentRunEvent[] {
+    const responseOutputItemId = readString(
+      metadata.responsesOutputItemId,
+    );
+    const preferredId = responseOutputItemId?.startsWith("msg_")
+      ? responseOutputItemId
+      : this.activeMessageId;
+    const text = messageText(chunk);
+
+    if (!preferredId && !text) {
+      return [];
+    }
+
+    const ensured = this.ensureItem("message", preferredId);
+    const item = ensured.item as BufferedMessage;
+    this.activeMessageId = item.id;
+    mergeMetadata(item.metadata, metadata);
+
+    const events = ensured.added ? [ensured.added] : [];
+    const delta = appendDelta(item.text, text);
+    if (delta) {
+      item.text += delta;
+      events.push(
+        this.event({
+          type: "content.delta",
+          itemId: item.id,
+          delta,
+        }),
+      );
+    }
+    return events;
+  }
+
+  private observeToolCall(
+    toolCall: ContinueToolCallDelta,
+    providerIndex: number | undefined,
+    responseOutputItemId: string | undefined,
+    metadata: Record<string, unknown>,
+  ): AgentRunEvent[] {
+    const incomingCallId = toolCall.id?.trim() ?? "";
+    const existingId =
+      this.toolItemId(providerIndex, incomingCallId);
+    const preferredId =
+      responseOutputItemId?.startsWith("fc_")
+        ? responseOutputItemId
+        : existingId;
+    const ensured = this.ensureItem("tool_call", preferredId);
+    const item = ensured.item as BufferedToolCall;
+    mergeMetadata(item.metadata, metadata);
+    this.rememberToolProviderIndex(item, providerIndex);
+
+    const callIdDelta = appendDelta(
+      item.callId,
+      incomingCallId,
+    );
+    if (callIdDelta) {
+      item.callId += callIdDelta;
+      this.toolByCallId.set(item.callId, item.id);
+    }
+
+    const incomingName = toolCall.function?.name?.trim() ?? "";
+    const nameDelta = appendDelta(item.name, incomingName);
+    if (nameDelta) {
+      item.name += nameDelta;
+    }
+
+    const argumentsDelta =
+      toolCall.function?.arguments ?? "";
+    if (argumentsDelta) {
+      item.argumentsText += argumentsDelta;
+    }
+
+    const events = ensured.added ? [ensured.added] : [];
+    if (callIdDelta || nameDelta || argumentsDelta) {
+      events.push(
+        this.event({
+          type: "tool_call.delta",
+          itemId: item.id,
+          ...(callIdDelta ? { callIdDelta } : {}),
+          ...(nameDelta ? { nameDelta } : {}),
+          ...(argumentsDelta ? { argumentsDelta } : {}),
+        }),
+      );
+    }
+    return events;
+  }
+
+  private toolItemId(
+    providerIndex: number | undefined,
+    incomingCallId: string,
+  ): string | undefined {
+    if (providerIndex !== undefined) {
+      const byIndex = this.toolByProviderIndex.get(providerIndex);
+      if (byIndex) {
+        return byIndex;
+      }
+    }
+    return incomingCallId
+      ? this.toolByCallId.get(incomingCallId)
+      : undefined;
+  }
+
+  private rememberToolProviderIndex(
+    item: BufferedToolCall,
+    providerIndex: number | undefined,
+  ): void {
+    if (providerIndex === undefined) {
+      return;
+    }
+    item.providerIndex = providerIndex;
+    this.toolByProviderIndex.set(providerIndex, item.id);
+  }
+
+  private observeThinking(
+    chunk: ContinueThinkingMessage,
+    metadata: Record<string, unknown>,
+  ): AgentRunEvent[] {
+    const reasoningId =
+      readString(metadata.reasoningId) ??
+      reasoningIdFromDetails(chunk.reasoning_details);
+    const text = messageText(chunk);
+    const hasOpaque =
+      Boolean(chunk.signature) ||
+      Boolean(chunk.redactedThinking) ||
+      Boolean(chunk.reasoning_details?.length) ||
+      Object.keys(metadata).length > 0;
+
+    if (!reasoningId && !text && !hasOpaque) {
+      return [];
+    }
+
+    const ensured = this.ensureItem(
+      "reasoning",
+      reasoningId ?? this.activeReasoningId,
+    );
+    const item = ensured.item as BufferedReasoning;
+    this.activeReasoningId = item.id;
+    mergeMetadata(item.metadata, metadata);
+
+    const events = ensured.added ? [ensured.added] : [];
+    const delta = appendDelta(item.text, text);
+    if (delta) {
+      item.text += delta;
+      events.push(
+        this.event({
+          type: "reasoning.delta",
+          itemId: item.id,
+          delta,
+        }),
+      );
+    }
+
+    this.mergeThinkingContinuation(item, chunk);
+    return events;
+  }
+
+  private mergeThinkingContinuation(
+    item: BufferedReasoning,
+    chunk: ContinueThinkingMessage,
+  ): void {
+    if (chunk.signature) {
+      item.signature += appendDelta(
+        item.signature,
+        chunk.signature,
+      );
+    }
+    if (chunk.redactedThinking) {
+      item.redactedThinking = chunk.redactedThinking;
+    }
+    mergeReasoningDetails(
+      item.reasoningDetails,
+      chunk.reasoning_details,
+    );
+  }
+
+  private ensureItem(
+    type: BufferedItem["type"],
+    preferredId?: string,
+  ): { item: BufferedItem; added?: AgentRunEvent } {
+    let id = preferredId?.trim() || this.createLocalId(type);
+    const existing = this.items.get(id);
+    if (existing?.type === type) {
+      return { item: existing };
+    }
+    if (existing) {
+      id = this.createLocalId(type);
+    }
+
+    const item = createBufferedItem(type, id);
+    this.items.set(id, item);
+    this.order.push(id);
+    return {
+      item,
+      added: this.event({
+        type: "output_item.added",
+        item: { id, type },
+      }),
+    };
+  }
+
+  private createLocalId(type: BufferedItem["type"]): string {
+    this.localItemSequence += 1;
+    return `continue-${type}-${this.sequence + 1}-${this.localItemSequence}`;
+  }
+}
+
+function createBufferedItem(
+  type: BufferedItem["type"],
+  id: string,
+): BufferedItem {
+  if (type === "message") {
+    return {
+      id,
+      type,
+      text: "",
+      metadata: {},
+    };
+  }
+  if (type === "reasoning") {
+    return {
+      id,
+      type,
+      text: "",
+      signature: "",
+      reasoningDetails: [],
+      metadata: {},
+    };
+  }
+  return {
+    id,
+    type,
+    callId: "",
+    name: "",
+    argumentsText: "",
+    metadata: {},
+  };
 }
 
 export function describeContinueAgentModel(
