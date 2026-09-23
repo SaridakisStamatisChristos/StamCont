@@ -153,7 +153,7 @@ function fakeChild(): {
     process: emitter as ChildProcess,
     unref,
     close(code: number) {
-      emitter.exitCode = code;
+      (emitter as { exitCode: number | null }).exitCode = code;
       emitter.emit("close", code, null);
     },
   };
