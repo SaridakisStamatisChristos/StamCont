@@ -3,15 +3,22 @@ import type { Tool } from "../..";
 import type { BuiltInExecutionProfileId } from "../capabilities";
 import { AgentKernel } from "../kernel";
 import type { AgentSession } from "../session";
-import type { AgentTool, AgentToolContext } from "../tools";
+import type {
+  AgentTool,
+  AgentToolAuthorizer,
+  AgentToolContext,
+} from "../tools";
 
 import { getCoreToolCapabilityRequirement } from "./coreTool";
 
 export interface CoreToolExecutionOptions<Output> {
   tool: Tool;
+  input?: unknown;
+  authorize?: AgentToolAuthorizer<unknown>;
   execute: (context: AgentToolContext) => Output | Promise<Output>;
   profile?: BuiltInExecutionProfileId;
   sessionId?: string;
+  signal?: AbortSignal;
 }
 
 export class CoreToolKernelBridge {
@@ -32,26 +39,72 @@ export class CoreToolKernelBridge {
   ): Promise<Output> {
     const profile = options.profile ?? "interactive";
     const sessionId = options.sessionId?.trim() || "ide";
+    if (options.signal?.aborted) {
+      throw new Error(
+        `Tool execution cancelled before start: ${abortReason(options.signal)}`,
+      );
+    }
+
     const session = await this.getSession(sessionId, profile);
     const toolName = options.tool.function.name;
 
-    const adapted: AgentTool<void, Output> = {
+    const adapted: AgentTool<unknown, Output> = {
       name: toolName,
       description:
         options.tool.function.description ??
         options.tool.displayTitle ??
         toolName,
-      requiredCapabilities:
-        getCoreToolCapabilityRequirement(options.tool),
+      requiredCapabilities: (input) =>
+        getCoreToolCapabilityRequirement(options.tool, input),
+      authorize: options.authorize,
       execute: (_input, context) => options.execute(context),
     };
 
     this.kernel.tools.replace(adapted);
-    return this.kernel.executeTool<void, Output>(
-      session,
-      toolName,
-      undefined,
-    );
+
+    const cancel = () => {
+      void this.cancelSession(
+        sessionId,
+        profile,
+        abortReason(options.signal!),
+      );
+    };
+    options.signal?.addEventListener("abort", cancel, { once: true });
+    try {
+      return await this.kernel.executeTool<unknown, Output>(
+        session,
+        toolName,
+        options.input,
+      );
+    } finally {
+      options.signal?.removeEventListener("abort", cancel);
+    }
+  }
+
+  async cancelSession(
+    sessionId = "ide",
+    profile?: BuiltInExecutionProfileId,
+    reason = "cancelled",
+  ): Promise<boolean> {
+    const resolvedProfile = profile ?? this.activeProfiles.get(sessionId);
+    if (!resolvedProfile) {
+      return false;
+    }
+
+    const key = this.sessionKey(sessionId, resolvedProfile);
+    const pending = this.sessions.get(key);
+    if (!pending) {
+      if (this.activeProfiles.get(sessionId) === resolvedProfile) {
+        this.activeProfiles.delete(sessionId);
+      }
+      return false;
+    }
+
+    this.sessions.delete(key);
+    if (this.activeProfiles.get(sessionId) === resolvedProfile) {
+      this.activeProfiles.delete(sessionId);
+    }
+    return this.kernel.cancelSession(await pending, reason);
   }
 
   async closeAllSessions(): Promise<number> {
@@ -121,6 +174,16 @@ export class CoreToolKernelBridge {
   ): string {
     return `${sessionId}:${profile}`;
   }
+}
+
+function abortReason(signal: AbortSignal): string {
+  if (typeof signal.reason === "string" && signal.reason.trim()) {
+    return signal.reason;
+  }
+  if (signal.reason instanceof Error && signal.reason.message) {
+    return signal.reason.message;
+  }
+  return "cancelled";
 }
 
 export const coreToolKernelBridge = new CoreToolKernelBridge();
