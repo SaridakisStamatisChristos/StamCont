@@ -1,5 +1,6 @@
 export * from "./adapters/continueModel";
 export * from "./adapters/coreTool";
+export * from "./adapters/coreToolRuntime";
 export * from "./capabilities";
 export * from "./budget";
 export * from "./compaction";

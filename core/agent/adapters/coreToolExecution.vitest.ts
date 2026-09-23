@@ -183,6 +183,41 @@ describe("CoreToolKernelBridge", () => {
     await expect(execution).rejects.toThrow("execution aborted");
   });
 
+  it("cancels the kernel session when the owning AgentLoop signal aborts", async () => {
+    const bridge = new CoreToolKernelBridge();
+    const controller = new AbortController();
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+
+    const execution = bridge.execute({
+      tool: tool("run_terminal_command", false),
+      sessionId: "agent-signal",
+      profile: "full_access",
+      signal: controller.signal,
+      execute: async (context) => {
+        markStarted();
+        await new Promise<void>((_resolve, reject) => {
+          context.signal.addEventListener(
+            "abort",
+            () => reject(new Error("kernel signal aborted")),
+            { once: true },
+          );
+        });
+        return "unreachable";
+      },
+    });
+
+    await started;
+    controller.abort("user cancelled");
+
+    await expect(execution).rejects.toThrow("kernel signal aborted");
+    await expect(
+      bridge.closeSession("agent-signal", "full_access"),
+    ).resolves.toBe(false);
+  });
+
   it("closes every active IDE chat session during host shutdown", async () => {
     const closed: string[] = [];
     const bridge = new CoreToolKernelBridge();
