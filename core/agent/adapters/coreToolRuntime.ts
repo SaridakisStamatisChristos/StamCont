@@ -160,6 +160,11 @@ export class CoreAgentToolExecutor implements AgentToolExecutor {
         signal: context.signal,
         authorize: this.createKernelAuthorizer(tool, toolCall, input),
         bridge: this.bridge,
+        processId: createCoreAgentProcessId(
+          this.sessionId,
+          toolCall.id,
+          toolCall.callId,
+        ),
         strictProcessFailures: true,
         managedBackgroundJobs: true,
       },
@@ -253,6 +258,19 @@ export class CoreAgentToolExecutor implements AgentToolExecutor {
           };
     };
   }
+}
+
+export function createCoreAgentProcessId(
+  sessionId: string,
+  itemId: string,
+  callId: string,
+): string {
+  return [
+    "agent",
+    encodeURIComponent(requireSessionId(sessionId)),
+    encodeURIComponent(itemId),
+    encodeURIComponent(callId),
+  ].join(":");
 }
 
 export function describeCoreAgentTools(
