@@ -32,6 +32,26 @@ const optionalDevtoolsPlugin = {
   },
 };
 
+// Core BaseLLM records optional local developer token metrics in sqlite.
+// The standalone CLI agent runtime needs BaseLLM/provider behavior, but must
+// not bundle or require the native sqlite3 addon just to start the CLI.
+// Production model execution is unaffected; only local dev-token telemetry is
+// disabled inside this self-contained bundle.
+const coreDevDataSqliteStubPlugin = {
+  name: "core-devdata-sqlite-stub",
+  setup(build) {
+    build.onResolve({ filter: /devdataSqlite(?:\.js)?$/ }, (args) => {
+      const importer = args.importer.replaceAll("\\", "/");
+      if (!importer.includes("/core/")) {
+        return undefined;
+      }
+      return {
+        path: resolve(__dirname, "stubs/core-devdata-sqlite.js"),
+      };
+    });
+  },
+};
+
 try {
   const result = await esbuild.build({
     entryPoints: ["src/index.ts"],
@@ -44,7 +64,7 @@ try {
     sourcemap: true,
     minify: !noMinify, // Use --no-minify flag to control minification
     metafile: true,
-    plugins: [optionalDevtoolsPlugin],
+    plugins: [optionalDevtoolsPlugin, coreDevDataSqliteStubPlugin],
 
     // Handle .js extensions in imports
     resolveExtensions: [".ts", ".tsx", ".js", ".jsx", ".json"],
