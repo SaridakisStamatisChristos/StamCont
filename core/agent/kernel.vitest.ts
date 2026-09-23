@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   AgentCapabilityDeniedError,
   AgentEvent,
+  AgentToolAuthorizationDeniedError,
   AgentEventBus,
   AgentKernel,
   AgentTool,
@@ -54,6 +55,42 @@ describe("StamCont Agent Kernel", () => {
     await expect(
       kernel.executeTool(fullAccess, "desktop.control", undefined),
     ).resolves.toBe("controlled");
+  });
+
+  it("enforces per-tool authorization inside the shared kernel boundary", async () => {
+    let executed = false;
+    const kernel = new AgentKernel({
+      tools: [
+        {
+          name: "write",
+          description: "Write data",
+          authorize: async () => ({
+            allowed: false,
+            code: "approval_required",
+            reason: "User approval is required",
+          }),
+          execute: () => {
+            executed = true;
+            return "written";
+          },
+        },
+      ],
+      idFactory: () => "session-authorization",
+    });
+    const session = await kernel.createSession({
+      profile: "interactive",
+    });
+
+    await expect(
+      kernel.executeTool(session, "write", undefined),
+    ).rejects.toMatchObject({
+      name: "AgentToolAuthorizationDeniedError",
+      code: "approval_required",
+    });
+    await expect(
+      kernel.executeTool(session, "write", undefined),
+    ).rejects.toBeInstanceOf(AgentToolAuthorizationDeniedError);
+    expect(executed).toBe(false);
   });
 
   it("keeps child session state isolated and propagates parent cancellation", async () => {
