@@ -26,10 +26,7 @@ import {
   ToolCallDelta,
   ToolCallState,
 } from "core";
-import type {
-  AgentSurfaceApproval,
-  AgentSurfaceRunStatus,
-} from "core/agent/surface";
+import type { AgentSurfaceRunStatus } from "core/agent/surface";
 import { mergeReasoningDetails } from "core/llm/openaiTypeConverters";
 import { NEW_SESSION_TITLE } from "core/util/constants";
 import {
@@ -205,6 +202,16 @@ export type ChatHistoryItemWithMessageId = ChatHistoryItem & {
   message: ChatMessage & { id: string };
 };
 
+export type AgentApprovalPresentation = {
+  approvalId: string;
+  sessionId: string;
+  profile: ExecutionProfileId;
+  itemId: string;
+  callId: string;
+  toolName: string;
+  input: unknown;
+};
+
 type SessionState = {
   lastSessionId?: string;
   isSessionMetadataLoading: boolean;
@@ -219,7 +226,7 @@ type SessionState = {
   mode: MessageModes;
   executionProfile: ExecutionProfileId;
   agentRuntimeStatus?: AgentSurfaceRunStatus;
-  agentApprovals: Record<string, AgentSurfaceApproval>;
+  agentApprovals: Record<string, AgentApprovalPresentation>;
   isInEdit: boolean;
   codeBlockApplyStates: {
     states: ApplyState[];
@@ -1009,7 +1016,7 @@ export const sessionSlice = createSlice({
     },
     setAgentApproval: (
       state,
-      action: PayloadAction<AgentSurfaceApproval>,
+      action: PayloadAction<AgentApprovalPresentation>,
     ) => {
       state.agentApprovals[action.payload.callId] = action.payload;
     },
