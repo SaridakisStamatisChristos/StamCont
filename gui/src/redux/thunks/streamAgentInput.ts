@@ -25,6 +25,7 @@ import {
   updateToolCallOutput,
 } from "../slices/sessionSlice";
 import type { AppDispatch, ThunkApiType } from "../store";
+import { getAgentSurfaceToolPolicies } from "../util/agentToolPolicies";
 import { constructMessages } from "../util/constructMessages";
 import { getBaseSystemMessage } from "../util/getBaseSystemMessage";
 
@@ -106,6 +107,7 @@ export const streamAgentInput = createAsyncThunk<
         sessionId: state.session.id,
         profile: state.session.executionProfile,
         toolNames: activeTools.map((tool) => tool.function.name),
+        toolPolicies: getAgentSurfaceToolPolicies(state, activeTools),
         systemPrompt: systemPrompt
           ? renderChatMessage(systemPrompt)
           : undefined,
