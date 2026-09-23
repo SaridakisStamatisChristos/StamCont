@@ -122,7 +122,7 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
           // Track this process for foreground cancellation
           if (toolCallId && waitForCompletion) {
             markProcessAsRunning(
-              toolCallId,
+              processId,
               childProc,
               extras.onPartialOutput,
               terminalOutput,
@@ -367,7 +367,7 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
 
               // Track this process for foreground cancellation
               if (toolCallId) {
-                markProcessAsRunning(toolCallId, childProc, undefined, "");
+                markProcessAsRunning(processId, childProc, undefined, "");
               }
 
               let stdout = "";
