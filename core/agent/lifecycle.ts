@@ -648,17 +648,20 @@ export async function appendDurableAgentUserTurn(
     );
   }
 
-  await store.appendModelInput({
-    type: "message",
-    role: "user",
-    content: userContent,
-  });
+  // Reopen the completed turn before persisting new execution input.
+  // This preserves the invariant that no execution record may appear after
+  // a terminal lifecycle state until an explicit legal transition reopens it.
   await appendAgentLifecycleState(
     store,
     "resumable",
     analysis.lastIteration,
     { reason: "new user turn" },
   );
+  await store.appendModelInput({
+    type: "message",
+    role: "user",
+    content: userContent,
+  });
 
   return analyzeDurableAgentSession(
     await store.readAllRecords(),
@@ -749,22 +752,28 @@ function hasPendingUserTurn(
     return false;
   }
 
+  let sawResumable = false;
   for (let index = records.length - 1; index >= 0; index -= 1) {
     const record = records[index];
     if (
       record.sequence >= latestModelInputSequence ||
+      record.sequence <= latestCompletedResponseSequence ||
       record.kind !== "lifecycle" ||
-      !isRecord(record.payload)
+      !isRecord(record.payload) ||
+      record.payload.type !== "state"
     ) {
       continue;
     }
-    if (record.payload.type !== "state") {
+    if (record.payload.state === "resumable") {
+      sawResumable = true;
       continue;
     }
-    return (
+    if (
       record.payload.state === "completed" &&
       record.payload.stopReason === "end_turn"
-    );
+    ) {
+      return sawResumable;
+    }
   }
 
   return false;
@@ -1072,15 +1081,27 @@ function validateLifecycleHistory(
       continue;
     }
 
-    assertAgentLifecycleTransition(previousState, entry.payload.state);
+    const priorState = previousState;
+    assertAgentLifecycleTransition(priorState, entry.payload.state);
     previousState = entry.payload.state;
+
+    if (
+      priorState === "completed" &&
+      entry.payload.state === "resumable"
+    ) {
+      // A completed end_turn may be explicitly reopened for the next user
+      // turn. Other terminal states remain terminal and cannot be reopened.
+      terminalSequence = undefined;
+      continue;
+    }
+
     if (
       entry.payload.state === "completed" ||
       entry.payload.state === "cancelled" ||
       entry.payload.state === "failed" ||
       entry.payload.state === "closed"
     ) {
-      terminalSequence ??= entry.sequence;
+      terminalSequence = entry.sequence;
     }
   }
 
