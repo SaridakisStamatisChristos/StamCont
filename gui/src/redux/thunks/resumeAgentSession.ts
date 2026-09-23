@@ -9,6 +9,7 @@ import {
   setInlineErrorMessage,
 } from "../slices/sessionSlice";
 import type { ThunkApiType } from "../store";
+import { getAgentSurfaceToolPolicies } from "../util/agentToolPolicies";
 import { saveCurrentSession } from "./session";
 import {
   applyAgentRunResult,
@@ -51,6 +52,7 @@ export const resumeAgentSession = createAsyncThunk<
         sessionId: state.session.id,
         profile: state.session.executionProfile,
         toolNames: activeTools.map((tool) => tool.function.name),
+        toolPolicies: getAgentSurfaceToolPolicies(state, activeTools),
       },
       state.session.streamAborter.signal,
     );
