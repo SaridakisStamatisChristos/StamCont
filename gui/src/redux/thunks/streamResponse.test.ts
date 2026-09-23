@@ -73,6 +73,12 @@ export function getRootStateWithClaude(): RootState {
   const state = getEmptyRootState();
   return {
     ...state,
+    session: {
+      ...state.session,
+      // This helper backs the legacy streamResponse suites. PR10 routes
+      // Agent/Plan through the canonical Core AgentLoop instead.
+      mode: "chat",
+    },
     config: {
       ...state.config,
       config: {
