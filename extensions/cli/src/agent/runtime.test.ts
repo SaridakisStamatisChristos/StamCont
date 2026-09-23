@@ -144,6 +144,38 @@ describe("CLI durable agent runtime", () => {
     }
   });
 
+  it("reports structured model failure", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "stamcont-cli-agent-"));
+    try {
+      const result = await runCliAgentRuntime({
+        rootDirectory: root,
+        driver: scriptedDriver(() => [
+          event(1, { type: "response.started" }),
+          event(2, {
+            type: "response.failed",
+            error: {
+              code: "provider_error",
+              message: "provider unavailable",
+              retryable: true,
+            },
+          }),
+        ]),
+        userPrompt: "fail",
+        contextLimitTokens: 100_000,
+        reservedOutputTokens: 1_000,
+      });
+
+      expect(result.result.status).toBe("failed");
+      expect(result.result.error).toMatchObject({
+        code: "provider_error",
+        message: "provider unavailable",
+        retryable: true,
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("does not rerun a terminal durable session on resume", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "stamcont-cli-agent-"));
     const stream = vi.fn();
@@ -237,6 +269,9 @@ describe("CLI durable agent runtime", () => {
       await expect(
         resolveCliAgentResumeSessionId(root, "older"),
       ).resolves.toBe("older");
+      await expect(
+        resolveCliAgentResumeSessionId(root, "missing"),
+      ).rejects.toThrow('Durable agent session "missing" does not exist');
     } finally {
       await rm(root, { recursive: true, force: true });
     }
