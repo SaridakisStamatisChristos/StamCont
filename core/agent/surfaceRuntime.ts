@@ -57,6 +57,11 @@ export interface AgentSurfaceResolvedRuntime {
 export interface AgentSurfaceRuntimeFactoryRequest {
   readonly request: AgentSurfaceRunRequest;
   readonly approve: CoreAgentToolApprovalHandler;
+  readonly onToolRunning: (request: {
+    readonly itemId: string;
+    readonly callId: string;
+    readonly toolName: string;
+  }) => void;
 }
 
 export type AgentSurfaceRuntimeFactory = (
@@ -318,7 +323,18 @@ export class AgentSurfaceRuntime {
 
       const approve: CoreAgentToolApprovalHandler = (approvalRequest) =>
         this.waitForApproval(run, approvalRequest, emit);
-      runtime = await this.createRuntime({ request, approve });
+      runtime = await this.createRuntime({
+        request,
+        approve,
+        onToolRunning: (toolRequest) => {
+          emit({
+            type: "tool_running",
+            itemId: toolRequest.itemId,
+            callId: toolRequest.callId,
+            name: toolRequest.toolName,
+          });
+        },
+      });
       run.toolExecutor = runtime.toolExecutor;
 
       emit({ type: "run_state", status: "running" });
@@ -484,12 +500,6 @@ function createObservableToolExecutor(
       toolCall: AgentToolCallItem,
       context: AgentToolExecutionContext,
     ): Promise<AgentToolExecutionOutcome> {
-      emit({
-        type: "tool_running",
-        itemId: toolCall.id,
-        callId: toolCall.callId,
-        name: toolCall.name,
-      });
       try {
         const outcome = await executor.execute(toolCall, context);
         emit({
