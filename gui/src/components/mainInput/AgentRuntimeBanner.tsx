@@ -1,6 +1,6 @@
-import { useAppDispatch, useAppSelector } from "../../../redux/hooks";
-import { resumeAgentSession } from "../../../redux/thunks/resumeAgentSession";
-import { Button } from "../../ui";
+import { useAppDispatch, useAppSelector } from "../../redux/hooks";
+import { resumeAgentSession } from "../../redux/thunks/resumeAgentSession";
+import { Button } from "../ui";
 
 export function AgentRuntimeBanner() {
   const dispatch = useAppDispatch();
