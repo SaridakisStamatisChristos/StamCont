@@ -1,4 +1,5 @@
 import { fetchwithRequestOptions } from "@continuedev/fetch";
+import * as path from "path";
 import * as URI from "uri-js";
 import { v4 as uuidv4 } from "uuid";
 
@@ -20,13 +21,28 @@ import Ollama from "./llm/llms/Ollama";
 import { EditAggregator } from "./nextEdit/context/aggregateEdits";
 import { createNewPromptFileV2 } from "./promptFiles/createNewPromptFile";
 import { coreToolKernelBridge } from "./agent/adapters/coreToolExecution";
+import {
+  CoreAgentToolExecutor,
+  type CoreAgentToolApprovalHandler,
+} from "./agent/adapters/coreToolRuntime";
+import { ContinueAgentModelDriver } from "./agent/adapters/continueModel";
+import {
+  AgentSurfaceRuntime,
+  createAgentDriverCompactionSummarizer,
+  type AgentSurfaceResolvedRuntime,
+} from "./agent/surfaceRuntime";
+import type { AgentSurfaceRunRequest } from "./agent/surface";
 import { createExecutionBackend } from "./agent/execution";
 import { callTool } from "./tools/callTool";
 import { ChatDescriber } from "./util/chatDescriber";
 import { compactConversation } from "./util/conversationCompaction";
 import { GlobalContext } from "./util/GlobalContext";
 import historyManager from "./util/history";
-import { editConfigFile, migrateV1DevDataFiles } from "./util/paths";
+import {
+  editConfigFile,
+  getContinueGlobalPath,
+  migrateV1DevDataFiles,
+} from "./util/paths";
 
 import {
   isProcessBackgrounded,
@@ -98,6 +114,8 @@ export class Core {
   private globalContext = new GlobalContext();
   llmLogger = new LLMLogger();
 
+  private readonly agentSurfaceRuntime: AgentSurfaceRuntime;
+
   private messageAbortControllers = new Map<string, AbortController>();
   private addMessageAbortController(id: string): AbortController {
     const controller = new AbortController();
@@ -112,6 +130,7 @@ export class Core {
   }
 
   async dispose(): Promise<void> {
+    await this.agentSurfaceRuntime.closeAllSessions();
     await coreToolKernelBridge.closeAllSessions();
   }
 
@@ -143,6 +162,12 @@ export class Core {
       const ideInfoPromise = messenger.request("getIdeInfo", undefined);
       const ideSettingsPromise = messenger.request("getIdeSettings", undefined);
       this.configHandler = new ConfigHandler(this.ide, this.llmLogger);
+
+      this.agentSurfaceRuntime = new AgentSurfaceRuntime(
+        path.join(getContinueGlobalPath(), "agent-sessions"),
+        ({ request, approve }) =>
+          this.createAgentSurfaceResolvedRuntime(request, approve),
+      );
 
       this.docsService = DocsService.createSingleton(
         this.configHandler,
