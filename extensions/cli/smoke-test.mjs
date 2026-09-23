@@ -122,10 +122,14 @@ runTest("Bundle size is reasonable", () => {
 
   console.log(`(${sizeInMB.toFixed(1)}M)`);
 
-  // This is arbitrary. We might go over at some point,
-  // in which case you can just increase this.
-  if (sizeInMB > 20) {
-    throw new Error(`Bundle too large: ${sizeInMB.toFixed(1)}M`);
+  // PR9 adds the canonical Core AgentLoop model/tool runtime and its
+  // provider-neutral model registry to the self-contained CLI. Keep a hard
+  // ceiling so accidental dependency explosions are still caught.
+  const MAX_BUNDLE_SIZE_MB = 28;
+  if (sizeInMB > MAX_BUNDLE_SIZE_MB) {
+    throw new Error(
+      `Bundle too large: ${sizeInMB.toFixed(1)}M (max ${MAX_BUNDLE_SIZE_MB}M)`,
+    );
   }
 });
 

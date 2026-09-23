@@ -32,6 +32,37 @@ const optionalDevtoolsPlugin = {
   },
 };
 
+// Core BaseLLM records optional local developer token metrics in sqlite.
+// The standalone CLI agent runtime needs BaseLLM/provider behavior, but must
+// not bundle or require the native sqlite3 addon just to start the CLI.
+// Production model execution is unaffected; only local dev-token telemetry is
+// disabled inside this self-contained bundle.
+const coreDevDataSqliteStubPlugin = {
+  name: "core-devdata-sqlite-stub",
+  setup(build) {
+    build.onResolve({ filter: /devdataSqlite(?:\.js)?$/ }, (args) => {
+      const importer = args.importer.replaceAll("\\", "/");
+      if (!importer.includes("/core/")) {
+        return undefined;
+      }
+      return {
+        path: resolve(__dirname, "stubs/core-devdata-sqlite.js"),
+      };
+    });
+
+    // PR9 pulls Core provider classes into the standalone CLI bundle.
+    // Some Core modules import sqlite eagerly even though CLI agent execution
+    // does not use indexing or the local dev-data DB. Replace those native
+    // packages at the bundle boundary so startup stays self-contained.
+    build.onResolve({ filter: /^sqlite$/ }, () => ({
+      path: resolve(__dirname, "stubs/sqlite.js"),
+    }));
+    build.onResolve({ filter: /^sqlite3$/ }, () => ({
+      path: resolve(__dirname, "stubs/sqlite3.js"),
+    }));
+  },
+};
+
 try {
   const result = await esbuild.build({
     entryPoints: ["src/index.ts"],
@@ -44,7 +75,7 @@ try {
     sourcemap: true,
     minify: !noMinify, // Use --no-minify flag to control minification
     metafile: true,
-    plugins: [optionalDevtoolsPlugin],
+    plugins: [optionalDevtoolsPlugin, coreDevDataSqliteStubPlugin],
 
     // Handle .js extensions in imports
     resolveExtensions: [".ts", ".tsx", ".js", ".jsx", ".json"],
@@ -81,7 +112,11 @@ try {
     // Add banner to create require for CommonJS packages
     banner: {
       js: `import { createRequire as __createRequire } from 'module';
-const require = __createRequire(import.meta.url);`,
+import { fileURLToPath as __fileURLToPath } from 'url';
+import { dirname as __pathDirname } from 'path';
+const require = __createRequire(import.meta.url);
+const __filename = __fileURLToPath(import.meta.url);
+const __dirname = __pathDirname(__filename);`,
     },
   });
 

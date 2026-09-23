@@ -1,5 +1,4 @@
 import path from "path";
-
 import workerpool from "workerpool";
 
 export interface AsyncEncoder {
@@ -9,55 +8,65 @@ export interface AsyncEncoder {
 }
 
 export class LlamaAsyncEncoder implements AsyncEncoder {
-  private workerPool: workerpool.Pool;
+  private workerPool?: workerpool.Pool;
 
-  constructor() {
-    this.workerPool = workerpool.pool(
+  private getWorkerPool(): workerpool.Pool {
+    this.workerPool ??= workerpool.pool(
       workerCodeFilePath("llamaTokenizerWorkerPool.mjs"),
     );
+    return this.workerPool;
   }
 
   async encode(text: string): Promise<number[]> {
-    return this.workerPool.exec("encode", [text]);
+    return this.getWorkerPool().exec("encode", [text]);
   }
 
   async decode(tokens: number[]): Promise<string> {
-    return this.workerPool.exec("decode", [tokens]);
+    return this.getWorkerPool().exec("decode", [tokens]);
   }
 
   // TODO: this should be called somewhere before exit or potentially with a shutdown hook
   public async close(): Promise<void> {
+    if (!this.workerPool) {
+      return;
+    }
     await this.workerPool.terminate();
+    this.workerPool = undefined;
   }
 }
 
 // this class does not yet do anything asynchronous
 export class GPTAsyncEncoder implements AsyncEncoder {
-  private workerPool: workerpool.Pool;
+  private workerPool?: workerpool.Pool;
 
-  constructor() {
-    this.workerPool = workerpool.pool(
+  private getWorkerPool(): workerpool.Pool {
+    this.workerPool ??= workerpool.pool(
       workerCodeFilePath("tiktokenWorkerPool.mjs"),
     );
+    return this.workerPool;
   }
 
   async encode(text: string): Promise<number[]> {
-    return this.workerPool.exec("encode", [text]);
+    return this.getWorkerPool().exec("encode", [text]);
   }
 
   async decode(tokens: number[]): Promise<string> {
-    return this.workerPool.exec("decode", [tokens]);
+    return this.getWorkerPool().exec("decode", [tokens]);
   }
 
   // TODO: this should be called somewhere before exit or potentially with a shutdown hook
   public async close(): Promise<void> {
+    if (!this.workerPool) {
+      return;
+    }
     await this.workerPool.terminate();
+    this.workerPool = undefined;
   }
 }
 
 function workerCodeFilePath(workerFileName: string): string {
   if (process.env.NODE_ENV === "test") {
-    // `cross-env` seems to make it so __dirname is the root of the project and not the directory containing this file
+    // `cross-env` makes __dirname the project root in this test path.
     return path.join(__dirname, "llm", workerFileName);
   }
   return path.join(__dirname, workerFileName);
