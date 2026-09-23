@@ -14,10 +14,8 @@ import type {
 import {
   isAgentStopReason,
   type AgentOutputItem,
-  type AgentReasoningItem,
   type AgentRunEvent,
   type AgentStopReason,
-  type AgentToolCallItem,
   type JsonObject,
   type JsonValue,
 } from "../protocol";
@@ -82,6 +80,11 @@ type BufferedItem =
   | BufferedReasoning
   | BufferedToolCall;
 
+type EventWithoutEnvelope<T> = T extends AgentRunEvent
+  ? Omit<T, "eventId" | "sequence" | "responseId">
+  : never;
+type AgentRunEventInput = EventWithoutEnvelope<AgentRunEvent>;
+
 interface CanonicalCompletionResult {
   readonly item?: AgentOutputItem;
   readonly error?: {
@@ -117,9 +120,7 @@ export class ContinueAgentModelDriver implements AgentModelDriver {
     let responsesTerminalEvent: string | undefined;
     let responsesIncompleteReason: string | undefined;
 
-    const event = <T extends Omit<AgentRunEvent, "eventId" | "sequence" | "responseId">>(
-      value: T,
-    ): AgentRunEvent => {
+    const event = (value: AgentRunEventInput): AgentRunEvent => {
       sequence += 1;
       return {
         ...value,
@@ -609,10 +610,33 @@ export function agentInputToContinueMessage(
   const redactedThinking = readString(
     continuation?.redactedThinking,
   );
-  const reasoningDetails = readRecordArray(
+  let reasoningDetails = readRecordArray(
     continuation?.reasoningDetails,
   );
   const opaqueMetadata = readRecord(continuation?.metadata);
+  const authoritative =
+    authoritativeItemFromProviderMetadata(item.providerMetadata) ??
+    (readString(opaque?.type) === "reasoning" ? opaque : undefined);
+
+  if (reasoningDetails.length === 0 && authoritative) {
+    reasoningDetails =
+      reasoningDetailsFromAuthoritative(authoritative);
+  }
+
+  const authoritativeMetadata = authoritative
+    ? {
+        ...(readString(authoritative.id)
+          ? { reasoningId: readString(authoritative.id) }
+          : {}),
+        ...(readString(authoritative.encrypted_content)
+          ? {
+              encrypted_content: readString(
+                authoritative.encrypted_content,
+              ),
+            }
+          : {}),
+      }
+    : undefined;
 
   return {
     role: "thinking",
@@ -622,11 +646,12 @@ export function agentInputToContinueMessage(
     ...(reasoningDetails.length > 0
       ? { reasoning_details: reasoningDetails }
       : {}),
-    ...(opaqueMetadata || metadata
+    ...(opaqueMetadata || metadata || authoritativeMetadata
       ? {
           metadata: {
             ...(metadata ?? {}),
             ...(opaqueMetadata ?? {}),
+            ...(authoritativeMetadata ?? {}),
           },
         }
       : {}),
@@ -917,6 +942,51 @@ function continueMetadataFromProviderMetadata(
     ? readRecord(metadata[CONTINUE_METADATA_KEY])
     : undefined;
   return readRecord(bridge?.metadata);
+}
+
+function authoritativeItemFromProviderMetadata(
+  metadata: JsonObject | undefined,
+): Record<string, unknown> | undefined {
+  const bridge = metadata
+    ? readRecord(metadata[CONTINUE_METADATA_KEY])
+    : undefined;
+  return readRecord(bridge?.authoritativeItem);
+}
+
+function reasoningDetailsFromAuthoritative(
+  item: Record<string, unknown>,
+): Record<string, unknown>[] {
+  const details: Record<string, unknown>[] = [];
+  const id = readString(item.id);
+  if (id) {
+    details.push({ type: "reasoning_id", id });
+  }
+  const encrypted = readString(item.encrypted_content);
+  if (encrypted) {
+    details.push({
+      type: "encrypted_content",
+      encrypted_content: encrypted,
+    });
+  }
+  if (Array.isArray(item.summary)) {
+    for (const part of item.summary) {
+      const record = readRecord(part);
+      const text = readString(record?.text);
+      if (record?.type === "summary_text" && text) {
+        details.push({ type: "summary_text", text });
+      }
+    }
+  }
+  if (Array.isArray(item.content)) {
+    for (const part of item.content) {
+      const record = readRecord(part);
+      const text = readString(record?.text);
+      if (record?.type === "reasoning_text" && text) {
+        details.push({ type: "reasoning_text", text });
+      }
+    }
+  }
+  return details;
 }
 
 function effectiveProviderName(
