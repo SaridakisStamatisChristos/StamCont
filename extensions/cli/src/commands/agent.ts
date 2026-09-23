@@ -20,6 +20,10 @@ import {
   runCliAgentRuntime,
 } from "../agent/runtime.js";
 import { env } from "../env.js";
+import {
+  formatCliAgentJson,
+  getFinalAssistantMessage,
+} from "../agent/output.js";
 import { processCommandFlags } from "../flags/flagProcessor.js";
 import type { PermissionMode } from "../permissions/types.js";
 import {
@@ -53,6 +57,8 @@ export async function agent(
   prompt: string | undefined,
   options: AgentCommandOptions,
 ): Promise<void> {
+  assertCanonicalAgentOptionSupport(options);
+
   if (options.resume && prompt?.trim()) {
     throw new Error(
       "Do not provide a new prompt when resuming a durable agent session",
@@ -155,7 +161,31 @@ export async function agent(
     process.exitCode = exitCodeForStatus(result.result.status);
   } finally {
     restoreSigint();
-    await runtime.toolExecutor.close();
+    try {
+      await runtime.toolExecutor.close();
+    } finally {
+      await services.mcp.shutdownConnections();
+    }
+  }
+}
+
+function assertCanonicalAgentOptionSupport(
+  options: AgentCommandOptions,
+): void {
+  const unsupported: string[] = [];
+  if (options.allow?.length) unsupported.push("--allow");
+  if (options.ask?.length) unsupported.push("--ask");
+  if (options.exclude?.length) unsupported.push("--exclude");
+  if (options.mcp?.length) unsupported.push("--mcp");
+  if (options.agent) unsupported.push("--agent");
+  if (options.prompt?.length) unsupported.push("--prompt");
+
+  if (unsupported.length) {
+    throw new Error(
+      `cn agent does not yet route ${unsupported.join(
+        ", ",
+      )} through the canonical AgentKernel tool runtime. Use --readonly/--auto for execution profiles, or use the legacy cn command for those options.`,
+    );
   }
 }
 
@@ -305,19 +335,16 @@ class CliAgentRenderer {
     },
   ): void {
     const canonicalFinal =
-      finalAssistantMessage(result.input) || this.finalMessage;
+      getFinalAssistantMessage(result.input) || this.finalMessage;
 
     if (this.format === "json") {
       process.stdout.write(
-        JSON.stringify({
+        formatCliAgentJson(
           sessionId,
-          status: result.status,
-          stopReason: result.stopReason,
-          error: result.error,
-          iterations: result.iterations,
-          output: canonicalFinal,
-          toolCalls: this.toolCalls,
-        }) + "\n",
+          result,
+          this.toolCalls,
+          this.finalMessage,
+        ),
       );
       return;
     }
@@ -339,21 +366,6 @@ class CliAgentRenderer {
       );
     }
   }
-}
-
-function finalAssistantMessage(
-  items: readonly AgentModelInputItem[],
-): string {
-  for (let index = items.length - 1; index >= 0; index -= 1) {
-    const item = items[index];
-    if (
-      item.type === "model_output" &&
-      item.item.type === "message"
-    ) {
-      return item.item.content;
-    }
-  }
-  return "";
 }
 
 function exitCodeForStatus(status: string): number {
