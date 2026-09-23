@@ -295,6 +295,28 @@ describe("CoreAgentToolExecutor", () => {
     await runtime.close();
   });
 
+  it("fails closed on malformed surface policy input", async () => {
+    const fetch = vi.fn(async () => jsonResponse([]));
+    const runtime = new CoreAgentToolExecutor({
+      tools: [tool()],
+      extras: extras(fetch),
+      sessionId: "agent-malformed-policy",
+      profile: "full_access",
+      policyOverrides: {
+        remote_tool: "unexpected-policy" as any,
+      },
+    });
+
+    const result = await runtime.execute(call(), executionContext());
+
+    expect(result).toMatchObject({
+      status: "failure",
+      error: { code: "tool_denied" },
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    await runtime.close();
+  });
+
   it("uses the surface only to collect a required approval decision", async () => {
     const fetch = vi.fn(async () =>
       jsonResponse([
