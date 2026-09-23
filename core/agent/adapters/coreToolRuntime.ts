@@ -400,7 +400,7 @@ function asInputObject(value: JsonValue): JsonObject | undefined {
   ) {
     return undefined;
   }
-  return value;
+  return value as JsonObject;
 }
 
 function toJsonObject(
@@ -415,7 +415,7 @@ function toJsonObject(
   ) {
     throw new Error(`${label} must serialize to a JSON object`);
   }
-  return converted;
+  return converted as JsonObject;
 }
 
 function toJsonValue(value: unknown): JsonValue {
