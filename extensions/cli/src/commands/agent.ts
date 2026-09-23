@@ -104,7 +104,8 @@ export async function agent(
     resumeSessionId ??
     cryptoSessionId();
 
-  const approve = createApprovalHandler(profile);
+  const controller = new AbortController();
+  const approve = createApprovalHandler(profile, controller.signal);
   const runtime = createCliCoreAgentRuntime({
     model: modelState.model as ModelConfig,
     sessionId,
@@ -115,7 +116,6 @@ export async function agent(
     ? undefined
     : await services.systemMessage.getSystemMessage(mode);
 
-  const controller = new AbortController();
   const restoreSigint = installAgentSigint(controller);
   const renderer = new CliAgentRenderer(options.format ?? "text");
 
@@ -197,6 +197,7 @@ function cryptoSessionId(): string {
 
 function createApprovalHandler(
   profile: BuiltInExecutionProfileId,
+  signal: AbortSignal,
 ): CoreAgentToolApprovalHandler | undefined {
   if (profile === "full_access") {
     return undefined;
@@ -210,8 +211,14 @@ function createApprovalHandler(
     try {
       const answer = await rl.question(
         `Allow ${request.toolName} ${JSON.stringify(request.input)}? [y/N] `,
+        { signal },
       );
       return /^y(?:es)?$/i.test(answer.trim());
+    } catch (error) {
+      if (signal.aborted) {
+        return false;
+      }
+      throw error;
     } finally {
       rl.close();
     }
