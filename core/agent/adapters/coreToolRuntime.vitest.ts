@@ -266,6 +266,36 @@ describe("CoreAgentToolExecutor", () => {
     await runtime.close();
   });
 
+  it("applies user base-policy preferences inside the kernel authorization path", async () => {
+    const fetch = vi.fn(async () =>
+      jsonResponse([
+        {
+          name: "Remote",
+          description: "Tool output",
+          content: "configured",
+        },
+      ]),
+    );
+    const approve = vi.fn(async () => true);
+    const runtime = new CoreAgentToolExecutor({
+      tools: [tool()],
+      extras: extras(fetch),
+      sessionId: "agent-policy-override",
+      profile: "interactive",
+      policyOverrides: {
+        remote_tool: "allowedWithoutPermission",
+      },
+      approve,
+    });
+
+    const result = await runtime.execute(call(), executionContext());
+
+    expect(result.status).toBe("success");
+    expect(approve).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await runtime.close();
+  });
+
   it("applies the same approval boundary to MCP tools before dispatch", async () => {
     const fetch = vi.fn(async () => jsonResponse([]));
     const runtime = new CoreAgentToolExecutor({
