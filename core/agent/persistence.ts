@@ -332,7 +332,7 @@ export class AgentSessionStore {
 
     const handle = await open(this.paths.log, "r");
     try {
-      const buffer = Buffer.alloc(entry.length);
+      const buffer = new Uint8Array(entry.length);
       const result = await handle.read(
         buffer,
         0,
@@ -348,7 +348,7 @@ export class AgentSessionStore {
         );
       }
       return parsePersistedRecord(
-        buffer.subarray(0, -1).toString("utf8"),
+        new TextDecoder().decode(buffer.subarray(0, -1)),
         this.sessionId,
         sequence,
       );
