@@ -45,6 +45,10 @@ describe("CLI durable agent runtime", () => {
       const driver = scriptedDriver(() => [
         event(1, { type: "response.started" }),
         event(2, {
+          type: "output_item.added",
+          item: { id: "m-1", type: "message" },
+        }),
+        event(3, {
           type: "output_item.completed",
           item: {
             id: "m-1",
@@ -53,7 +57,7 @@ describe("CLI durable agent runtime", () => {
             content: "done",
           },
         }),
-        event(3, {
+        event(4, {
           type: "response.completed",
           stopReason: "end_turn",
         }),
@@ -94,6 +98,10 @@ describe("CLI durable agent runtime", () => {
         if (call === 1) {
           yield event(1, { type: "response.started" });
           yield event(2, {
+            type: "output_item.added",
+            item: { id: "t-1", type: "tool_call" },
+          });
+          yield event(3, {
             type: "output_item.completed",
             item: {
               id: "t-1",
@@ -103,14 +111,18 @@ describe("CLI durable agent runtime", () => {
               input: { filepath: "README.md" },
             },
           });
-          yield event(3, {
+          yield event(4, {
             type: "response.completed",
             stopReason: "tool_use",
           });
           return;
         }
-        yield event(4, { type: "response.started" });
-        yield event(5, {
+        yield event(5, { type: "response.started" });
+        yield event(6, {
+          type: "output_item.added",
+          item: { id: "m-2", type: "message" },
+        });
+        yield event(7, {
           type: "output_item.completed",
           item: {
             id: "m-2",
@@ -119,7 +131,7 @@ describe("CLI durable agent runtime", () => {
             content: "finished",
           },
         });
-        yield event(6, {
+        yield event(8, {
           type: "response.completed",
           stopReason: "end_turn",
         });
@@ -185,6 +197,10 @@ describe("CLI durable agent runtime", () => {
         driver: scriptedDriver(() => [
           event(1, { type: "response.started" }),
           event(2, {
+            type: "output_item.added",
+            item: { id: "m-1", type: "message" },
+          }),
+          event(3, {
             type: "output_item.completed",
             item: {
               id: "m-1",
@@ -193,7 +209,7 @@ describe("CLI durable agent runtime", () => {
               content: "done",
             },
           }),
-          event(3, {
+          event(4, {
             type: "response.completed",
             stopReason: "end_turn",
           }),
