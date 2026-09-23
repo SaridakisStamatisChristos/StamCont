@@ -125,6 +125,69 @@ describe("CoreAgentToolExecutor", () => {
     ]);
   });
 
+  it("authorizes client-only edit tools before delegating to the webview adapter", async () => {
+    const fetch = vi.fn(async () => jsonResponse([]));
+    const executeClientTool = vi.fn(async () => ({
+      contextItems: [
+        {
+          name: "Edit",
+          description: "Applied",
+          content: "done",
+        },
+      ],
+    }));
+    const editTool = {
+      ...tool(BuiltInToolNames.EditExistingFile),
+      uri: undefined,
+      readonly: false,
+    };
+    const deniedRuntime = new CoreAgentToolExecutor({
+      tools: [editTool],
+      extras: extras(fetch),
+      sessionId: "client-edit-denied",
+      profile: "interactive",
+      executeClientTool,
+    });
+
+    const denied = await deniedRuntime.execute(
+      call({
+        name: BuiltInToolNames.EditExistingFile,
+        input: { filepath: "a.ts", changes: "change" },
+      }),
+      executionContext(),
+    );
+
+    expect(denied).toMatchObject({
+      status: "failure",
+      error: { code: "approval_required" },
+    });
+    expect(executeClientTool).not.toHaveBeenCalled();
+    await deniedRuntime.close();
+
+    const approve = vi.fn(async () => true);
+    const allowedRuntime = new CoreAgentToolExecutor({
+      tools: [editTool],
+      extras: extras(fetch),
+      sessionId: "client-edit-approved",
+      profile: "interactive",
+      approve,
+      executeClientTool,
+    });
+
+    const allowed = await allowedRuntime.execute(
+      call({
+        name: BuiltInToolNames.EditExistingFile,
+        input: { filepath: "a.ts", changes: "change" },
+      }),
+      executionContext(),
+    );
+
+    expect(allowed.status).toBe("success");
+    expect(approve).toHaveBeenCalledTimes(1);
+    expect(executeClientTool).toHaveBeenCalledTimes(1);
+    await allowedRuntime.close();
+  });
+
   it("executes through AgentKernel and preserves canonical input", async () => {
     const fetch = vi.fn(async (_url: string, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body));
