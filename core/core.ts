@@ -165,8 +165,12 @@ export class Core {
 
       this.agentSurfaceRuntime = new AgentSurfaceRuntime(
         path.join(getContinueGlobalPath(), "agent-sessions"),
-        ({ request, approve }) =>
-          this.createAgentSurfaceResolvedRuntime(request, approve),
+        ({ request, approve, onToolRunning }) =>
+          this.createAgentSurfaceResolvedRuntime(
+            request,
+            approve,
+            onToolRunning,
+          ),
       );
 
       this.docsService = DocsService.createSingleton(
@@ -1245,6 +1249,11 @@ export class Core {
   private async createAgentSurfaceResolvedRuntime(
     request: AgentSurfaceRunRequest,
     approve: CoreAgentToolApprovalHandler,
+    onToolRunning: (request: {
+      readonly itemId: string;
+      readonly callId: string;
+      readonly toolName: string;
+    }) => void,
   ): Promise<AgentSurfaceResolvedRuntime> {
     const { config } = await this.configHandler.loadConfig();
     if (!config) {
@@ -1277,6 +1286,12 @@ export class Core {
       sessionId: request.sessionId,
       profile: request.profile,
       approve,
+      onAuthorized: (authorization) =>
+        onToolRunning({
+          itemId: authorization.itemId,
+          callId: authorization.callId,
+          toolName: authorization.toolName,
+        }),
       executeClientTool: async (clientRequest) =>
         this.messenger.request("agent/executeClientTool", clientRequest),
     });
