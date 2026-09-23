@@ -1,0 +1,1158 @@
+import type {
+  ChatMessage,
+  ILLM,
+  Tool,
+} from "../..";
+
+import type { AgentContextEstimator } from "../budget";
+import type {
+  AgentModelDriver,
+  AgentModelInputItem,
+  AgentModelRequest,
+  AgentModelToolDefinition,
+} from "../model";
+import {
+  isAgentStopReason,
+  type AgentOutputItem,
+  type AgentReasoningItem,
+  type AgentRunEvent,
+  type AgentStopReason,
+  type AgentToolCallItem,
+  type JsonObject,
+  type JsonValue,
+} from "../protocol";
+
+export type ContinueAgentLlm = Pick<
+  ILLM,
+  | "providerName"
+  | "underlyingProviderName"
+  | "contextLength"
+  | "completionOptions"
+  | "capabilities"
+  | "lastRequestId"
+  | "countTokens"
+  | "streamChat"
+>;
+
+export type ContinueReasoningContinuation =
+  | "provider_native"
+  | "unknown";
+
+export interface ContinueAgentModelCapabilities {
+  readonly providerName: string;
+  readonly model: string;
+  readonly contextLimitTokens: number;
+  readonly outputLimitTokens?: number;
+  readonly supportsTools: boolean;
+  readonly supportsStreaming: true;
+  readonly reasoningContinuation: ContinueReasoningContinuation;
+  readonly estimator: AgentContextEstimator;
+}
+
+interface BufferedBase {
+  readonly id: string;
+  readonly type: "message" | "reasoning" | "tool_call";
+  metadata: Record<string, unknown>;
+  authoritative?: Record<string, unknown>;
+}
+
+interface BufferedMessage extends BufferedBase {
+  readonly type: "message";
+  text: string;
+}
+
+interface BufferedReasoning extends BufferedBase {
+  readonly type: "reasoning";
+  text: string;
+  signature: string;
+  redactedThinking?: string;
+  reasoningDetails: Record<string, unknown>[];
+}
+
+interface BufferedToolCall extends BufferedBase {
+  readonly type: "tool_call";
+  callId: string;
+  name: string;
+  argumentsText: string;
+  providerIndex?: number;
+}
+
+type BufferedItem =
+  | BufferedMessage
+  | BufferedReasoning
+  | BufferedToolCall;
+
+interface CanonicalCompletionResult {
+  readonly item?: AgentOutputItem;
+  readonly error?: {
+    readonly code: string;
+    readonly message: string;
+  };
+}
+
+const CONTINUE_METADATA_KEY = "continue";
+const CONTINUE_ESTIMATOR_VERSION = 1 as const;
+
+export class ContinueAgentModelDriver implements AgentModelDriver {
+  readonly capabilities: ContinueAgentModelCapabilities;
+
+  constructor(private readonly llm: ContinueAgentLlm) {
+    this.capabilities = describeContinueAgentModel(llm);
+  }
+
+  async *stream(
+    request: AgentModelRequest,
+    signal: AbortSignal,
+  ): AsyncIterable<AgentRunEvent> {
+    let sequence = request.runState.lastSequence;
+    const responseId = `continue-response-${sequence + 1}`;
+    const items = new Map<string, BufferedItem>();
+    const order: string[] = [];
+    const toolByCallId = new Map<string, string>();
+    const toolByProviderIndex = new Map<number, string>();
+    let activeMessageId: string | undefined;
+    let activeReasoningId: string | undefined;
+    let localItemSequence = 0;
+    let rawStopReason: string | undefined;
+    let responsesTerminalEvent: string | undefined;
+    let responsesIncompleteReason: string | undefined;
+
+    const event = <T extends Omit<AgentRunEvent, "eventId" | "sequence" | "responseId">>(
+      value: T,
+    ): AgentRunEvent => {
+      sequence += 1;
+      return {
+        ...value,
+        eventId: `${responseId}:event:${sequence}`,
+        sequence,
+        responseId,
+      } as AgentRunEvent;
+    };
+
+    const createLocalId = (type: BufferedItem["type"]): string => {
+      localItemSequence += 1;
+      return `continue-${type}-${sequence + 1}-${localItemSequence}`;
+    };
+
+    const ensureItem = (
+      type: BufferedItem["type"],
+      preferredId?: string,
+    ): { item: BufferedItem; added?: AgentRunEvent } => {
+      let id = preferredId?.trim() || createLocalId(type);
+      const existing = items.get(id);
+      if (existing) {
+        if (existing.type === type) {
+          return { item: existing };
+        }
+        id = createLocalId(type);
+      }
+
+      let item: BufferedItem;
+      if (type === "message") {
+        item = {
+          id,
+          type,
+          text: "",
+          metadata: {},
+        };
+      } else if (type === "reasoning") {
+        item = {
+          id,
+          type,
+          text: "",
+          signature: "",
+          reasoningDetails: [],
+          metadata: {},
+        };
+      } else {
+        item = {
+          id,
+          type,
+          callId: "",
+          name: "",
+          argumentsText: "",
+          metadata: {},
+        };
+      }
+
+      items.set(id, item);
+      order.push(id);
+      return {
+        item,
+        added: event({
+          type: "output_item.added",
+          item: { id, type },
+        }),
+      };
+    };
+
+    yield event({
+      type: "response.started",
+      providerMetadata: {
+        provider: effectiveProviderName(this.llm),
+        model: this.llm.completionOptions.model,
+      },
+    });
+
+    if (signal.aborted) {
+      yield event({
+        type: "response.aborted",
+        reason: abortReason(signal),
+      });
+      return;
+    }
+
+    const messages = request.input.map(agentInputToContinueMessage);
+    const tools = (request.tools ?? []).map(agentToolToContinueTool);
+
+    try {
+      const stream = this.llm.streamChat(
+        messages,
+        signal,
+        {
+          tools,
+          stream: true,
+        },
+        {
+          precompiled: true,
+        },
+      );
+
+      for await (const chunk of stream) {
+        if (signal.aborted) {
+          yield event({
+            type: "response.aborted",
+            reason: abortReason(signal),
+          });
+          return;
+        }
+
+        const metadata = chunk.metadata ?? {};
+        const finishReason = readString(metadata.finishReason);
+        const anthropicStopReason = readString(metadata.anthropicStopReason);
+        const genericStopReason = readString(metadata.agentStopReason);
+        if (genericStopReason) {
+          rawStopReason = genericStopReason;
+        } else if (anthropicStopReason) {
+          rawStopReason = anthropicStopReason;
+        } else if (finishReason) {
+          rawStopReason = finishReason;
+        }
+
+        const terminalEvent = readString(metadata.responsesTerminalEvent);
+        if (terminalEvent) {
+          responsesTerminalEvent = terminalEvent;
+        }
+        const incompleteReason = readString(
+          metadata.responsesIncompleteReason,
+        );
+        if (incompleteReason) {
+          responsesIncompleteReason = incompleteReason;
+        }
+
+        const authoritative = readRecord(
+          metadata.responsesOutputItemCompleted,
+        );
+        if (authoritative) {
+          const authoritativeType = readString(authoritative.type);
+          const authoritativeId = readString(authoritative.id);
+          if (
+            authoritativeType === "message" ||
+            authoritativeType === "reasoning" ||
+            authoritativeType === "function_call"
+          ) {
+            const canonicalType =
+              authoritativeType === "function_call"
+                ? "tool_call"
+                : authoritativeType;
+            const ensured = ensureItem(canonicalType, authoritativeId);
+            if (ensured.added) {
+              yield ensured.added;
+            }
+            ensured.item.authoritative = authoritative;
+            mergeMetadata(ensured.item.metadata, metadata);
+            if (ensured.item.type === "message") {
+              activeMessageId = ensured.item.id;
+            } else if (ensured.item.type === "reasoning") {
+              activeReasoningId = ensured.item.id;
+            } else {
+              const callId = readString(authoritative.call_id);
+              if (callId) {
+                ensured.item.callId = callId;
+                toolByCallId.set(callId, ensured.item.id);
+              }
+              const name = readString(authoritative.name);
+              if (name) {
+                ensured.item.name = name;
+              }
+            }
+          }
+        }
+
+        if (chunk.role === "assistant") {
+          const responseOutputItemId = readString(
+            metadata.responsesOutputItemId,
+          );
+          const messagePreferredId =
+            responseOutputItemId?.startsWith("msg_")
+              ? responseOutputItemId
+              : undefined;
+          const text = messageText(chunk);
+
+          if (messagePreferredId || text) {
+            const ensured = ensureItem(
+              "message",
+              messagePreferredId ?? activeMessageId,
+            );
+            if (ensured.added) {
+              yield ensured.added;
+            }
+            const item = ensured.item as BufferedMessage;
+            activeMessageId = item.id;
+            mergeMetadata(item.metadata, metadata);
+            if (text) {
+              const delta = appendDelta(item.text, text);
+              if (delta) {
+                item.text += delta;
+                yield event({
+                  type: "content.delta",
+                  itemId: item.id,
+                  delta,
+                });
+              }
+            }
+          }
+
+          const indexes = readNumberArray(metadata.toolCallIndexes);
+          const toolCalls = chunk.toolCalls ?? [];
+          for (let index = 0; index < toolCalls.length; index += 1) {
+            const toolCall = toolCalls[index];
+            const incomingCallId = toolCall.id?.trim() ?? "";
+            const providerIndex = indexes[index];
+            const existingId =
+              (providerIndex !== undefined
+                ? toolByProviderIndex.get(providerIndex)
+                : undefined) ??
+              (incomingCallId
+                ? toolByCallId.get(incomingCallId)
+                : undefined);
+
+            const toolPreferredId =
+              responseOutputItemId?.startsWith("fc_")
+                ? responseOutputItemId
+                : existingId;
+            const ensured = ensureItem("tool_call", toolPreferredId);
+            if (ensured.added) {
+              yield ensured.added;
+            }
+            const item = ensured.item as BufferedToolCall;
+            mergeMetadata(item.metadata, metadata);
+
+            if (providerIndex !== undefined) {
+              item.providerIndex = providerIndex;
+              toolByProviderIndex.set(providerIndex, item.id);
+            }
+
+            const callIdDelta = appendDelta(
+              item.callId,
+              incomingCallId,
+            );
+            if (callIdDelta) {
+              item.callId += callIdDelta;
+              toolByCallId.set(item.callId, item.id);
+            }
+
+            const incomingName = toolCall.function?.name?.trim() ?? "";
+            const nameDelta = appendDelta(item.name, incomingName);
+            if (nameDelta) {
+              item.name += nameDelta;
+            }
+
+            const argumentsDelta =
+              toolCall.function?.arguments ?? "";
+            if (argumentsDelta) {
+              item.argumentsText += argumentsDelta;
+            }
+
+            if (callIdDelta || nameDelta || argumentsDelta) {
+              yield event({
+                type: "tool_call.delta",
+                itemId: item.id,
+                ...(callIdDelta ? { callIdDelta } : {}),
+                ...(nameDelta ? { nameDelta } : {}),
+                ...(argumentsDelta ? { argumentsDelta } : {}),
+              });
+            }
+          }
+        } else if (chunk.role === "thinking") {
+          const reasoningId =
+            readString(metadata.reasoningId) ??
+            reasoningIdFromDetails(chunk.reasoning_details);
+          const hasOpaque =
+            Boolean(chunk.signature) ||
+            Boolean(chunk.redactedThinking) ||
+            Boolean(chunk.reasoning_details?.length) ||
+            Object.keys(metadata).length > 0;
+          const text = messageText(chunk);
+
+          if (reasoningId || text || hasOpaque) {
+            const ensured = ensureItem(
+              "reasoning",
+              reasoningId ?? activeReasoningId,
+            );
+            if (ensured.added) {
+              yield ensured.added;
+            }
+            const item = ensured.item as BufferedReasoning;
+            activeReasoningId = item.id;
+            mergeMetadata(item.metadata, metadata);
+
+            if (text) {
+              const delta = appendDelta(item.text, text);
+              if (delta) {
+                item.text += delta;
+                yield event({
+                  type: "reasoning.delta",
+                  itemId: item.id,
+                  delta,
+                });
+              }
+            }
+
+            if (chunk.signature) {
+              item.signature += appendDelta(
+                item.signature,
+                chunk.signature,
+              );
+            }
+            if (chunk.redactedThinking) {
+              item.redactedThinking = chunk.redactedThinking;
+            }
+            mergeReasoningDetails(
+              item.reasoningDetails,
+              chunk.reasoning_details,
+            );
+          }
+        }
+      }
+    } catch (error) {
+      if (signal.aborted) {
+        yield event({
+          type: "response.aborted",
+          reason: abortReason(signal),
+        });
+        return;
+      }
+      yield event({
+        type: "response.failed",
+        error: {
+          code: "provider_error",
+          message: errorMessage(error),
+        },
+      });
+      return;
+    }
+
+    if (signal.aborted) {
+      yield event({
+        type: "response.aborted",
+        reason: abortReason(signal),
+      });
+      return;
+    }
+
+    for (const id of order) {
+      const buffered = items.get(id);
+      if (!buffered) {
+        continue;
+      }
+      const completed = completeBufferedItem(
+        buffered,
+        this.llm,
+      );
+      if (completed.error) {
+        yield event({
+          type: "response.failed",
+          error: completed.error,
+        });
+        return;
+      }
+      if (completed.item) {
+        yield event({
+          type: "output_item.completed",
+          item: completed.item,
+        });
+      }
+    }
+
+    const stopReason = normalizeProviderStopReason({
+      rawStopReason,
+      responsesTerminalEvent,
+      responsesIncompleteReason,
+      hasToolCalls: order.some(
+        (id) => items.get(id)?.type === "tool_call",
+      ),
+    });
+
+    yield event({
+      type: "response.completed",
+      stopReason,
+    });
+  }
+}
+
+export function describeContinueAgentModel(
+  llm: ContinueAgentLlm,
+): ContinueAgentModelCapabilities {
+  const providerName = effectiveProviderName(llm);
+  const normalizedProvider = providerName.toLowerCase();
+  return {
+    providerName,
+    model: llm.completionOptions.model,
+    contextLimitTokens: llm.contextLength,
+    outputLimitTokens: llm.completionOptions.maxTokens,
+    supportsTools: llm.capabilities?.tools !== false,
+    supportsStreaming: true,
+    reasoningContinuation:
+      normalizedProvider === "openai" ||
+      normalizedProvider === "azure" ||
+      normalizedProvider === "anthropic"
+        ? "provider_native"
+        : "unknown",
+    estimator: createContinueAgentContextEstimator(llm),
+  };
+}
+
+export function createContinueAgentContextEstimator(
+  llm: ContinueAgentLlm,
+): AgentContextEstimator {
+  return {
+    id: `continue:${effectiveProviderName(llm)}:${llm.completionOptions.model}`,
+    version: CONTINUE_ESTIMATOR_VERSION,
+    accuracy: "estimated",
+    estimateInputTokens(input) {
+      return llm.countTokens(JSON.stringify(input));
+    },
+    estimateToolDefinitionTokens(tools) {
+      return tools.length === 0
+        ? 0
+        : llm.countTokens(JSON.stringify(tools));
+    },
+    estimateContinuationOverheadTokens() {
+      return 0;
+    },
+  };
+}
+
+export function agentInputToContinueMessage(
+  input: AgentModelInputItem,
+): ChatMessage {
+  if (input.type === "message") {
+    return {
+      role: input.role,
+      content: input.content,
+    };
+  }
+
+  if (input.type === "tool_result") {
+    return {
+      role: "tool",
+      toolCallId: input.callId,
+      content:
+        input.status === "success"
+          ? JSON.stringify(input.output)
+          : JSON.stringify({ error: input.error }),
+      metadata: {
+        agentToolCallItemId: input.toolCallItemId,
+        agentToolName: input.name,
+        agentToolResultStatus: input.status,
+      },
+    };
+  }
+
+  const item = input.item;
+  const metadata = continueMetadataFromProviderMetadata(
+    item.providerMetadata,
+  );
+
+  if (item.type === "message") {
+    return {
+      role: "assistant",
+      content: item.content,
+      ...(metadata ? { metadata } : {}),
+    };
+  }
+
+  if (item.type === "tool_call") {
+    return {
+      role: "assistant",
+      content: "",
+      toolCalls: [
+        {
+          id: item.callId,
+          type: "function",
+          function: {
+            name: item.name,
+            arguments: JSON.stringify(item.input),
+          },
+        },
+      ],
+      ...(metadata ? { metadata } : {}),
+    };
+  }
+
+  const opaque = readRecord(item.opaque);
+  const continuation = opaque
+    ? readRecord(opaque[CONTINUE_METADATA_KEY])
+    : undefined;
+  const signature = readString(continuation?.signature);
+  const redactedThinking = readString(
+    continuation?.redactedThinking,
+  );
+  const reasoningDetails = readRecordArray(
+    continuation?.reasoningDetails,
+  );
+  const opaqueMetadata = readRecord(continuation?.metadata);
+
+  return {
+    role: "thinking",
+    content: item.text ?? "",
+    ...(signature ? { signature } : {}),
+    ...(redactedThinking ? { redactedThinking } : {}),
+    ...(reasoningDetails.length > 0
+      ? { reasoning_details: reasoningDetails }
+      : {}),
+    ...(opaqueMetadata || metadata
+      ? {
+          metadata: {
+            ...(metadata ?? {}),
+            ...(opaqueMetadata ?? {}),
+          },
+        }
+      : {}),
+  };
+}
+
+export function agentToolToContinueTool(
+  tool: AgentModelToolDefinition,
+): Tool {
+  return {
+    type: "function",
+    function: {
+      name: tool.name,
+      description: tool.description,
+      parameters:
+        cloneRecord(tool.inputSchema) ?? {
+          type: "object",
+          properties: {},
+        },
+    },
+    displayTitle: tool.name,
+    readonly: false,
+    group: "agent",
+  };
+}
+
+interface NormalizeStopReasonOptions {
+  readonly rawStopReason?: string;
+  readonly responsesTerminalEvent?: string;
+  readonly responsesIncompleteReason?: string;
+  readonly hasToolCalls: boolean;
+}
+
+export function normalizeProviderStopReason(
+  options: NormalizeStopReasonOptions,
+): AgentStopReason {
+  if (options.responsesTerminalEvent === "response.failed") {
+    return "error";
+  }
+  if (
+    options.responsesTerminalEvent === "response.cancelled" ||
+    options.responsesTerminalEvent === "response.canceled"
+  ) {
+    return "cancelled";
+  }
+  if (options.responsesTerminalEvent === "response.incomplete") {
+    return options.responsesIncompleteReason === "max_output_tokens"
+      ? "max_tokens"
+      : "unknown";
+  }
+
+  const raw = options.rawStopReason?.trim();
+  if (raw && isAgentStopReason(raw)) {
+    return raw;
+  }
+
+  switch (raw) {
+    case "stop":
+    case "end_turn":
+    case "stop_sequence":
+      return "end_turn";
+    case "tool_calls":
+    case "function_call":
+    case "tool_use":
+      return "tool_use";
+    case "length":
+    case "max_tokens":
+    case "max_output_tokens":
+      return "max_tokens";
+    case "cancelled":
+    case "canceled":
+      return "cancelled";
+    case "error":
+      return "error";
+    case "completed":
+      return options.hasToolCalls ? "tool_use" : "end_turn";
+    default:
+      if (
+        options.responsesTerminalEvent === "response.completed"
+      ) {
+        return options.hasToolCalls ? "tool_use" : "end_turn";
+      }
+      return "unknown";
+  }
+}
+
+function completeBufferedItem(
+  buffered: BufferedItem,
+  llm: ContinueAgentLlm,
+): CanonicalCompletionResult {
+  if (buffered.authoritative) {
+    return completeAuthoritativeItem(buffered, llm);
+  }
+
+  const providerMetadata = buildProviderMetadata(
+    llm,
+    buffered.metadata,
+  );
+
+  if (buffered.type === "message") {
+    return {
+      item: {
+        id: buffered.id,
+        type: "message",
+        role: "assistant",
+        content: buffered.text,
+        ...(providerMetadata ? { providerMetadata } : {}),
+      },
+    };
+  }
+
+  if (buffered.type === "reasoning") {
+    const opaquePayload: Record<string, unknown> = {};
+    if (buffered.signature) {
+      opaquePayload.signature = buffered.signature;
+    }
+    if (buffered.redactedThinking) {
+      opaquePayload.redactedThinking =
+        buffered.redactedThinking;
+    }
+    if (buffered.reasoningDetails.length > 0) {
+      opaquePayload.reasoningDetails =
+        buffered.reasoningDetails;
+    }
+    if (Object.keys(buffered.metadata).length > 0) {
+      opaquePayload.metadata = buffered.metadata;
+    }
+    const opaque = toJsonValue({
+      [CONTINUE_METADATA_KEY]: opaquePayload,
+    });
+
+    return {
+      item: {
+        id: buffered.id,
+        type: "reasoning",
+        ...(buffered.text ? { text: buffered.text } : {}),
+        ...(opaque !== undefined ? { opaque } : {}),
+        ...(providerMetadata ? { providerMetadata } : {}),
+      },
+    };
+  }
+
+  const parsed = parseToolArguments(buffered.argumentsText);
+  if (parsed.error) {
+    return { error: parsed.error };
+  }
+
+  return {
+    item: {
+      id: buffered.id,
+      type: "tool_call",
+      callId: buffered.callId,
+      name: buffered.name,
+      input: parsed.value ?? {},
+      ...(providerMetadata ? { providerMetadata } : {}),
+    },
+  };
+}
+
+function completeAuthoritativeItem(
+  buffered: BufferedItem,
+  llm: ContinueAgentLlm,
+): CanonicalCompletionResult {
+  const raw = buffered.authoritative!;
+  const rawType = readString(raw.type);
+  const id = readString(raw.id) ?? buffered.id;
+  const providerMetadata = buildProviderMetadata(
+    llm,
+    buffered.metadata,
+    raw,
+  );
+
+  if (rawType === "message") {
+    return {
+      item: {
+        id,
+        type: "message",
+        role: "assistant",
+        content: textFromResponseMessage(raw),
+        ...(providerMetadata ? { providerMetadata } : {}),
+      },
+    };
+  }
+
+  if (rawType === "reasoning") {
+    const text = textFromResponseReasoning(raw);
+    const opaque = toJsonValue(raw);
+    return {
+      item: {
+        id,
+        type: "reasoning",
+        ...(text ? { text } : {}),
+        ...(opaque !== undefined ? { opaque } : {}),
+        ...(providerMetadata ? { providerMetadata } : {}),
+      },
+    };
+  }
+
+  if (rawType === "function_call") {
+    const callId =
+      readString(raw.call_id) ??
+      (buffered.type === "tool_call"
+        ? buffered.callId
+        : "");
+    const name =
+      readString(raw.name) ??
+      (buffered.type === "tool_call" ? buffered.name : "");
+    const rawArguments = raw.arguments;
+    const argumentsText =
+      typeof rawArguments === "string"
+        ? rawArguments
+        : JSON.stringify(rawArguments ?? {});
+    const parsed = parseToolArguments(argumentsText);
+    if (parsed.error) {
+      return { error: parsed.error };
+    }
+    return {
+      item: {
+        id,
+        type: "tool_call",
+        callId,
+        name,
+        input: parsed.value ?? {},
+        ...(providerMetadata ? { providerMetadata } : {}),
+      },
+    };
+  }
+
+  return {
+    error: {
+      code: "unsupported_provider_output_item",
+      message: `Unsupported completed provider output item type: ${rawType ?? "unknown"}`,
+    },
+  };
+}
+
+function parseToolArguments(
+  argumentsText: string,
+): {
+  value?: JsonValue;
+  error?: { code: string; message: string };
+} {
+  if (!argumentsText.trim()) {
+    return { value: {} };
+  }
+  try {
+    return {
+      value: JSON.parse(argumentsText) as JsonValue,
+    };
+  } catch {
+    return {
+      error: {
+        code: "invalid_tool_arguments",
+        message:
+          "Provider completed a tool call with invalid JSON arguments",
+      },
+    };
+  }
+}
+
+function buildProviderMetadata(
+  llm: ContinueAgentLlm,
+  metadata: Record<string, unknown>,
+  authoritative?: Record<string, unknown>,
+): JsonObject | undefined {
+  const payload: Record<string, unknown> = {
+    provider: effectiveProviderName(llm),
+  };
+  if (llm.lastRequestId) {
+    payload.responseId = llm.lastRequestId;
+  }
+  if (Object.keys(metadata).length > 0) {
+    payload.metadata = metadata;
+  }
+  if (authoritative) {
+    payload.authoritativeItem = authoritative;
+  }
+  const safe = toJsonValue({
+    [CONTINUE_METADATA_KEY]: payload,
+  });
+  return isJsonObject(safe) ? safe : undefined;
+}
+
+function continueMetadataFromProviderMetadata(
+  metadata: JsonObject | undefined,
+): Record<string, unknown> | undefined {
+  const bridge = metadata
+    ? readRecord(metadata[CONTINUE_METADATA_KEY])
+    : undefined;
+  return readRecord(bridge?.metadata);
+}
+
+function effectiveProviderName(
+  llm: ContinueAgentLlm,
+): string {
+  return (
+    llm.underlyingProviderName?.trim() ||
+    llm.providerName.trim() ||
+    "unknown"
+  );
+}
+
+function messageText(message: ChatMessage): string {
+  if (typeof message.content === "string") {
+    return message.content;
+  }
+  return message.content
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("");
+}
+
+function textFromResponseMessage(
+  item: Record<string, unknown>,
+): string {
+  const content = item.content;
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  return content
+    .map((part) => {
+      const record = readRecord(part);
+      return readString(record?.text) ?? "";
+    })
+    .join("");
+}
+
+function textFromResponseReasoning(
+  item: Record<string, unknown>,
+): string {
+  const contentText = textFromResponseMessage(item);
+  if (contentText) {
+    return contentText;
+  }
+  const summary = item.summary;
+  if (!Array.isArray(summary)) {
+    return "";
+  }
+  return summary
+    .map((part) => {
+      const record = readRecord(part);
+      return readString(record?.text) ?? "";
+    })
+    .join("");
+}
+
+function appendDelta(existing: string, incoming: string): string {
+  if (!incoming) {
+    return "";
+  }
+  if (!existing) {
+    return incoming;
+  }
+  if (incoming === existing || existing.endsWith(incoming)) {
+    return "";
+  }
+  if (incoming.startsWith(existing)) {
+    return incoming.slice(existing.length);
+  }
+  return incoming;
+}
+
+function mergeReasoningDetails(
+  target: Record<string, unknown>[],
+  incoming:
+    | {
+        signature?: string;
+        [key: string]: unknown;
+      }[]
+    | undefined,
+): void {
+  if (!incoming) {
+    return;
+  }
+
+  for (const detail of incoming) {
+    const type = readString(detail.type);
+    if (!type) {
+      target.push({ ...detail });
+      continue;
+    }
+    const existing = target.find(
+      (candidate) => readString(candidate.type) === type,
+    );
+    if (!existing) {
+      target.push({ ...detail });
+      continue;
+    }
+
+    for (const [key, value] of Object.entries(detail)) {
+      if (value === undefined || value === null || key === "type") {
+        continue;
+      }
+      if (
+        typeof value === "string" &&
+        (key === "text" ||
+          key === "signature" ||
+          key === "summary")
+      ) {
+        const current =
+          typeof existing[key] === "string"
+            ? (existing[key] as string)
+            : "";
+        existing[key] = current + appendDelta(current, value);
+      } else {
+        existing[key] = value;
+      }
+    }
+  }
+}
+
+function reasoningIdFromDetails(
+  details:
+    | {
+        signature?: string;
+        [key: string]: unknown;
+      }[]
+    | undefined,
+): string | undefined {
+  for (const detail of details ?? []) {
+    if (detail.type === "reasoning_id") {
+      const id = readString(detail.id);
+      if (id) {
+        return id;
+      }
+    }
+  }
+  return undefined;
+}
+
+function mergeMetadata(
+  target: Record<string, unknown>,
+  metadata: Record<string, unknown>,
+): void {
+  for (const [key, value] of Object.entries(metadata)) {
+    if (value !== undefined) {
+      target[key] = value;
+    }
+  }
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0
+    ? value
+    : undefined;
+}
+
+function readRecord(
+  value: unknown,
+): Record<string, unknown> | undefined {
+  return value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function readRecordArray(
+  value: unknown,
+): Record<string, unknown>[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map(readRecord)
+    .filter(
+      (
+        record,
+      ): record is Record<string, unknown> => record !== undefined,
+    );
+}
+
+function readNumberArray(value: unknown): (number | undefined)[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map((item) =>
+    Number.isSafeInteger(item) ? (item as number) : undefined,
+  );
+}
+
+function cloneRecord(
+  value: JsonObject | undefined,
+): Record<string, unknown> | undefined {
+  const cloned = toJsonValue(value);
+  return isJsonObject(cloned)
+    ? ({ ...cloned } as Record<string, unknown>)
+    : undefined;
+}
+
+function toJsonValue(value: unknown): JsonValue | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  try {
+    const serialized = JSON.stringify(value);
+    return serialized === undefined
+      ? undefined
+      : (JSON.parse(serialized) as JsonValue);
+  } catch {
+    return undefined;
+  }
+}
+
+function isJsonObject(
+  value: JsonValue | undefined,
+): value is JsonObject {
+  return (
+    value !== undefined &&
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value)
+  );
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function abortReason(signal: AbortSignal): string {
+  return signal.reason instanceof Error
+    ? signal.reason.message
+    : signal.reason !== undefined
+      ? String(signal.reason)
+      : "cancelled";
+}
