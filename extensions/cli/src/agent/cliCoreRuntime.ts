@@ -66,12 +66,28 @@ export function createCliCoreAgentRuntime(options: {
 }
 
 export function createCliCoreLlm(model: ModelConfig): ILLM {
+  const capabilities = new Set(model.capabilities ?? []);
   const llmOptions: LLMOptions = {
     ...(model as unknown as LLMOptions),
     model: model.model,
     title: model.name ?? model.model,
+    contextLength: model.contextLength,
+    apiKey: model.apiKey,
+    apiBase: model.apiBase,
+    requestOptions: model.requestOptions,
+    cacheBehavior: model.cacheBehavior,
+    useLegacyCompletionsEndpoint: model.useLegacyCompletionsEndpoint,
+    useResponsesApi: model.useResponsesApi,
+    baseAgentSystemMessage: model.chatOptions?.baseAgentSystemMessage,
+    basePlanSystemMessage: model.chatOptions?.basePlanSystemMessage,
+    baseChatSystemMessage: model.chatOptions?.baseSystemMessage,
+    capabilities: {
+      tools: capabilities.has("tool_use"),
+      uploadImage: capabilities.has("image_input"),
+      nextEdit: capabilities.has("next_edit"),
+    },
     completionOptions: {
-      ...(model.completionOptions ?? {}),
+      ...(model.defaultCompletionOptions ?? {}),
       model: model.model,
     },
   };
