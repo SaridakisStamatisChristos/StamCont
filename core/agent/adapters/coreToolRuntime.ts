@@ -87,6 +87,9 @@ export interface CoreAgentToolRuntimeOptions {
   readonly profile?: BuiltInExecutionProfileId;
   readonly approve?: CoreAgentToolApprovalHandler;
   readonly executeClientTool?: CoreAgentClientToolExecutionHandler;
+  readonly onAuthorized?: (
+    request: CoreAgentToolApprovalRequest,
+  ) => void | Promise<void>;
   readonly bridge?: CoreToolKernelBridge;
 }
 
@@ -368,7 +371,18 @@ export class CoreAgentToolExecutor implements AgentToolExecutor {
         (approvalMode === "policy" &&
           policy === "allowedWithPermission");
 
+      const authorizationRequest: CoreAgentToolApprovalRequest = {
+        sessionId: this.sessionId,
+        profile: this.profile,
+        itemId: toolCall.id,
+        callId: toolCall.callId,
+        toolName: toolCall.name,
+        input,
+        policy,
+      };
+
       if (!requiresApproval) {
+        await this.options.onAuthorized?.(authorizationRequest);
         return { allowed: true };
       }
       if (!this.options.approve) {
@@ -380,18 +394,14 @@ export class CoreAgentToolExecutor implements AgentToolExecutor {
         };
       }
 
-      const approved = await this.options.approve({
-        sessionId: this.sessionId,
-        profile: this.profile,
-        itemId: toolCall.id,
-        callId: toolCall.callId,
-        toolName: toolCall.name,
-        input,
-        policy,
-      });
-      return approved
-        ? { allowed: true }
-        : {
+      const approved = await this.options.approve(
+        authorizationRequest,
+      );
+      if (approved) {
+        await this.options.onAuthorized?.(authorizationRequest);
+        return { allowed: true };
+      }
+      return {
             allowed: false,
             code: "tool_denied",
             reason: "User denied tool execution",
