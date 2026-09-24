@@ -738,11 +738,12 @@ class AsyncResultQueue<T, R> {
     readonly reject: (error: unknown) => void;
   }> = [];
   private done = false;
+  private failed = false;
   private result: R | undefined;
   private error: unknown;
 
   push(value: T): void {
-    if (this.done || this.error !== undefined) {
+    if (this.done || this.failed) {
       return;
     }
     const waiter = this.waiters.shift();
@@ -754,7 +755,7 @@ class AsyncResultQueue<T, R> {
   }
 
   finish(result: R): void {
-    if (this.done || this.error !== undefined) {
+    if (this.done || this.failed) {
       return;
     }
     this.done = true;
@@ -763,9 +764,10 @@ class AsyncResultQueue<T, R> {
   }
 
   fail(error: unknown): void {
-    if (this.done || this.error !== undefined) {
+    if (this.done || this.failed) {
       return;
     }
+    this.failed = true;
     this.error = error;
     this.flush();
   }
@@ -775,7 +777,7 @@ class AsyncResultQueue<T, R> {
     if (value !== undefined) {
       return Promise.resolve({ done: false, value });
     }
-    if (this.error !== undefined) {
+    if (this.failed) {
       return Promise.reject(this.error);
     }
     if (this.done) {
@@ -795,7 +797,7 @@ class AsyncResultQueue<T, R> {
     }
     while (this.waiters.length > 0) {
       const waiter = this.waiters.shift()!;
-      if (this.error !== undefined) {
+      if (this.failed) {
         waiter.reject(this.error);
       } else {
         waiter.resolve({

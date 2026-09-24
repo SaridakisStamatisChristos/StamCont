@@ -5,14 +5,9 @@ import { createInterface } from "node:readline/promises";
 import type { ModelConfig } from "@continuedev/config-yaml";
 import type { CoreAgentToolApprovalHandler } from "core/agent/adapters/coreToolRuntime.js";
 import type { BuiltInExecutionProfileId } from "core/agent/capabilities.js";
-import type { AgentCompactionSummarizer } from "core/agent/compaction.js";
 import type { AgentLoopResult } from "core/agent/loop.js";
-import type {
-  AgentModelDriver,
-  AgentModelInputItem,
-} from "core/agent/model.js";
 import type { AgentRunEvent } from "core/agent/protocol.js";
-import { createInitialAgentRunState } from "core/agent/reducer.js";
+import { createAgentDriverCompactionSummarizer } from "core/agent/surfaceRuntime.js";
 
 import { createCliCoreAgentRuntime } from "../agent/cliCoreRuntime.js";
 import { permissionModeToExecutionProfile } from "../agent/cliExecution.js";
@@ -154,7 +149,7 @@ export async function agent(
           ),
         ),
       ),
-      compactionSummarizer: createCompactionSummarizer(runtime.driver),
+      compactionSummarizer: createAgentDriverCompactionSummarizer(runtime.driver),
       onEvent: (event) => renderer.onEvent(event),
     });
 
@@ -243,51 +238,6 @@ function installAgentSigint(
     for (const listener of existing) {
       process.on("SIGINT", listener as NodeJS.SignalsListener);
     }
-  };
-}
-
-function createCompactionSummarizer(
-  driver: AgentModelDriver,
-): AgentCompactionSummarizer {
-  return {
-    async summarize(request, signal) {
-      const inputItems: AgentModelInputItem[] = [
-        {
-          type: "message",
-          role: "system",
-          content:
-            "Summarize the supplied agent history for future continuation. Preserve decisions, constraints, file paths, commands, tool outcomes, unresolved work, and user intent. Do not invent provider-native opaque data.",
-        },
-        {
-          type: "message",
-          role: "user",
-          content: JSON.stringify({
-            previousSummary: request.previousSummary?.summary,
-            input: request.input,
-          }),
-        },
-      ];
-      let summary = "";
-      for await (const event of driver.stream(
-        {
-          runState: createInitialAgentRunState(),
-          input: inputItems,
-          tools: [],
-        },
-        signal,
-      )) {
-        if (
-          event.type === "output_item.completed" &&
-          event.item.type === "message"
-        ) {
-          summary = event.item.content;
-        }
-      }
-      if (!summary.trim()) {
-        throw new Error("Compaction model returned an empty summary");
-      }
-      return summary;
-    },
   };
 }
 
