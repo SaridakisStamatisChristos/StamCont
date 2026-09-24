@@ -71,6 +71,7 @@ export interface AgentLoopResult {
 export interface AgentLoopDurabilityOptions {
   readonly store: AgentSessionStore;
   readonly context: AgentDurableContextOptions;
+  readonly initialMetadata?: readonly JsonObject[];
 }
 
 export interface AgentLoopOptions {
@@ -174,6 +175,7 @@ async function prepareLoopRuntime(
     analysis = await initializeDurableAgentSession(
       options.durability.store,
       options.input,
+      options.durability.initialMetadata,
     );
   } catch (error) {
     const state = createInitialAgentRunState();

@@ -4,6 +4,7 @@ import {
   BuiltInExecutionProfileId,
   ExecutionProfile,
   getExecutionProfile,
+  intersectExecutionProfiles,
 } from "./capabilities";
 import { AgentEventBus, AgentEventSink } from "./events";
 import { AgentSession } from "./session";
@@ -25,6 +26,15 @@ export interface CreateAgentSessionOptions {
   profile?: BuiltInExecutionProfileId | Readonly<ExecutionProfile>;
   parent?: AgentSession;
   metadata?: Readonly<Record<string, unknown>>;
+}
+
+export class AgentSubagentDeniedError extends Error {
+  constructor(readonly parentSessionId: string) {
+    super(
+      `Agent session "${parentSessionId}" is not authorized to create subagents`,
+    );
+    this.name = "AgentSubagentDeniedError";
+  }
 }
 
 export class AgentKernel {
@@ -54,7 +64,10 @@ export class AgentKernel {
   async createSession(
     options: CreateAgentSessionOptions = {},
   ): Promise<AgentSession> {
-    const profile = this.resolveProfile(options.profile);
+    const requestedProfile = this.resolveProfile(options.profile);
+    const profile = options.parent
+      ? this.resolveNestedProfile(options.parent, requestedProfile)
+      : requestedProfile;
     const session = new AgentSession({
       id: options.id ?? this.idFactory(),
       profile,
@@ -139,5 +152,19 @@ export class AgentKernel {
       return getExecutionProfile("interactive");
     }
     return typeof profile === "string" ? getExecutionProfile(profile) : profile;
+  }
+
+  private resolveNestedProfile(
+    parent: AgentSession,
+    requestedProfile: Readonly<ExecutionProfile>,
+  ): Readonly<ExecutionProfile> {
+    parent.assertActive();
+    if (!parent.capabilities.subagents) {
+      throw new AgentSubagentDeniedError(parent.id);
+    }
+    return intersectExecutionProfiles(
+      parent.profile,
+      requestedProfile,
+    );
   }
 }

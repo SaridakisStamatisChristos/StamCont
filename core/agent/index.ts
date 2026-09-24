@@ -14,6 +14,7 @@ export * from "./persistence";
 export * from "./protocol";
 export * from "./reducer";
 export * from "./session";
+export * from "./subagents";
 export * from "./tools";
 
 export * from "./surface";
