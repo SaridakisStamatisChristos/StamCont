@@ -115,6 +115,9 @@ function createMinimalCliContinueConfig(
   tools: readonly Tool[],
 ): ContinueConfig {
   const config: ContinueConfig = {
+    slashCommands: [],
+    contextProviders: [],
+    mcpServerStatuses: [],
     modelsByRole: {
       chat: [llm],
       edit: [],
