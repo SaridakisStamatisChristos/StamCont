@@ -108,4 +108,67 @@ describe("streamAgentInput", () => {
         .map((item) => item.message.content),
     ).toContain("visible answer");
   });
+
+
+  it("surfaces canonical Core failure and leaves the GUI inactive", async () => {
+    const initialState = getEmptyRootState();
+    const mockModel: ModelDescription = {
+      title: "Mock Agent Model",
+      model: "mock-agent",
+      provider: "mock",
+      underlyingProviderName: "mock",
+    };
+    initialState.config.config.selectedModelByRole.chat = mockModel;
+    initialState.config.config.modelsByRole.chat = [mockModel];
+    initialState.session.mode = "agent";
+    initialState.session.executionProfile = "interactive";
+    initialState.session.id = "agent-ui-failure";
+    initialState.session.history = [
+      {
+        message: {
+          id: "user-failure",
+          role: "user",
+          content: "fail safely",
+        },
+        contextItems: [],
+      },
+    ];
+
+    const store = createMockStore(initialState);
+    (store.mockIdeMessenger as any).streamRequest = vi.fn(
+      async function* () {
+        yield [
+          {
+            type: "run_state",
+            status: "running",
+          },
+          {
+            type: "run_state",
+            status: "failed",
+            error: {
+              code: "provider_error",
+              message: "provider unavailable",
+            },
+          },
+        ];
+        return {
+          sessionId: "agent-ui-failure",
+          resumed: false,
+          status: "failed",
+          error: {
+            code: "provider_error",
+            message: "provider unavailable",
+          },
+        };
+      },
+    );
+
+    const action = await store.dispatch(streamAgentInput() as any);
+
+    expect(action.type).toBe("chat/streamAgentInput/rejected");
+    expect(action.error.message).toContain("provider unavailable");
+    const state = store.getState() as RootState;
+    expect(state.session.agentRuntimeStatus).toBe("failed");
+    expect(state.session.isStreaming).toBe(false);
+  });
 });
