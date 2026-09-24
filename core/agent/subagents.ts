@@ -385,11 +385,30 @@ function relationToMetadata(
       id: relation.effectiveProfile.id,
       label: relation.effectiveProfile.label,
       description: relation.effectiveProfile.description,
-      capabilities: cloneCapabilities(
+      capabilities: capabilitiesToJson(
         relation.effectiveProfile.capabilities,
       ),
     },
     createdAt: relation.createdAt,
+  };
+}
+
+function capabilitiesToJson(
+  capabilities: Readonly<ExecutionCapabilities>,
+): JsonObject {
+  return {
+    filesystem: {
+      read: capabilities.filesystem.read,
+      write: capabilities.filesystem.write,
+    },
+    shell: capabilities.shell,
+    network: capabilities.network,
+    processControl: capabilities.processControl,
+    backgroundJobs: capabilities.backgroundJobs,
+    mcp: capabilities.mcp,
+    subagents: capabilities.subagents,
+    computerControl: capabilities.computerControl,
+    approvalMode: capabilities.approvalMode,
   };
 }
 
