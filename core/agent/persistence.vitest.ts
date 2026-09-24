@@ -1,4 +1,5 @@
 import {
+  mkdir,
   mkdtemp,
   readFile,
   rm,
@@ -712,4 +713,35 @@ describe("StamCont durable agent persistence", () => {
         ),
     ).toThrow(AgentPersistenceError);
   });
+
+  it("rejects unsupported authoritative log schema with actionable migration guidance", async () => {
+    const root = await makeRoot();
+    const sessionId = "unsupported-schema";
+    const directory = path.join(root, sessionId);
+    await mkdir(directory, { recursive: true });
+    await writeFile(
+      path.join(directory, "session.jsonl"),
+      JSON.stringify({
+        schemaVersion: 999,
+        sessionId,
+        sequence: 1,
+        kind: "metadata",
+        payload: {},
+      }) + "\n",
+      "utf8",
+    );
+
+    await expect(
+      AgentSessionStore.open({
+        rootDirectory: root,
+        sessionId,
+      }),
+    ).rejects.toMatchObject({
+      code: "unsupported_schema",
+      message: expect.stringContaining(
+        "migrate this durable session before resuming it",
+      ),
+    });
+  });
+
 });

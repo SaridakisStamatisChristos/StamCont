@@ -762,14 +762,21 @@ export function agentInputToContinueMessage(
   }
 
   if (input.type === "tool_result") {
+    const compatibility = readRecord(
+      input.providerMetadata?.[CONTINUE_METADATA_KEY],
+    );
+    const compatibilityMetadata = readRecord(compatibility?.metadata);
+    const rawToolContent = readString(compatibility?.rawToolContent);
     return {
       role: "tool",
       toolCallId: input.callId,
       content:
-        input.status === "success"
+        rawToolContent ??
+        (input.status === "success"
           ? JSON.stringify(input.output)
-          : JSON.stringify({ error: input.error }),
+          : JSON.stringify({ error: input.error })),
       metadata: {
+        ...(compatibilityMetadata ?? {}),
         agentToolCallItemId: input.toolCallItemId,
         agentToolName: input.name,
         agentToolResultStatus: input.status,

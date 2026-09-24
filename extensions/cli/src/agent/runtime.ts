@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 import type { AgentContextEstimator } from "core/agent/budget.js";
+import { emitAgentCompatibilityFailureDiagnostic } from "core/agent/compatibility.js";
 import {
   AgentDiagnosticsBuffer,
   type AgentDebugBundle,
@@ -83,10 +84,23 @@ export async function runCliAgentRuntime(
   const diagnostics =
     options.diagnostics ?? new AgentDiagnosticsBuffer();
 
-  const store = await AgentSessionStore.open({
-    rootDirectory: options.rootDirectory,
-    sessionId,
-  });
+  let store: AgentSessionStore;
+  try {
+    store = await AgentSessionStore.open({
+      rootDirectory: options.rootDirectory,
+      sessionId,
+    });
+  } catch (error) {
+    await emitAgentCompatibilityFailureDiagnostic(
+      diagnostics.sink,
+      {
+        sessionId,
+        executionProfile: options.executionProfile ?? "interactive",
+      },
+      error,
+    );
+    throw error;
+  }
 
   try {
     const result = await runAgentLoop({

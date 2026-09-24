@@ -24,6 +24,7 @@ interface AgentToolResultBase {
   toolCallItemId: string;
   callId: string;
   name: string;
+  providerMetadata?: JsonObject;
 }
 
 export interface AgentToolSuccessResult extends AgentToolResultBase {

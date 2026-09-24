@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile, mkdir, utimes } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { AgentDiagnosticsBuffer } from "core/agent/diagnostics.js";
 import {
   appendAgentLifecycleState,
   initializeDurableAgentSession,
@@ -407,4 +408,53 @@ describe("CLI durable agent runtime", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("records content-free compatibility diagnostics for unsupported durable schema", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "stamcont-cli-agent-"));
+    const sessionId = "old-schema";
+    const directory = path.join(root, sessionId);
+    await mkdir(directory, { recursive: true });
+    await writeFile(
+      path.join(directory, "session.jsonl"),
+      JSON.stringify({
+        schemaVersion: 999,
+        sessionId,
+        sequence: 1,
+        kind: "metadata",
+        payload: { prompt: "must-not-leak" },
+      }) + "\n",
+      "utf8",
+    );
+    const diagnostics = new AgentDiagnosticsBuffer();
+
+    try {
+      await expect(
+        runCliAgentRuntime({
+          rootDirectory: root,
+          driver: scriptedDriver(() => []),
+          resumeSessionId: sessionId,
+          contextLimitTokens: 100_000,
+          reservedOutputTokens: 1_000,
+          diagnostics,
+        }),
+      ).rejects.toMatchObject({
+        code: "unsupported_schema",
+      });
+      expect(diagnostics.list(sessionId)).toEqual([
+        expect.objectContaining({
+          type: "failure",
+          details: {
+            category: "compatibility",
+            code: "unsupported_persistence_schema",
+          },
+        }),
+      ]);
+      expect(JSON.stringify(diagnostics.list(sessionId))).not.toContain(
+        "must-not-leak",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
 });
