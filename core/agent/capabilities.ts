@@ -55,6 +55,12 @@ const networkRank: Record<NetworkScope, number> = {
   full: 2,
 };
 
+const approvalPrivilegeRank: Record<ApprovalMode, number> = {
+  always: 0,
+  policy: 1,
+  never: 2,
+};
+
 export function freezeCapabilities(
   value: ExecutionCapabilities,
 ): Readonly<ExecutionCapabilities> {
@@ -71,6 +77,117 @@ export function cloneCapabilities(
     ...value,
     filesystem: { ...value.filesystem },
   };
+}
+
+export function intersectExecutionCapabilities(
+  parent: Readonly<ExecutionCapabilities>,
+  requested: Readonly<ExecutionCapabilities>,
+): Readonly<ExecutionCapabilities> {
+  const filesystemRead =
+    filesystemRank[parent.filesystem.read] <=
+    filesystemRank[requested.filesystem.read]
+      ? parent.filesystem.read
+      : requested.filesystem.read;
+  const filesystemWrite =
+    filesystemRank[parent.filesystem.write] <=
+    filesystemRank[requested.filesystem.write]
+      ? parent.filesystem.write
+      : requested.filesystem.write;
+  const shell =
+    shellRank[parent.shell] <= shellRank[requested.shell]
+      ? parent.shell
+      : requested.shell;
+  const network =
+    networkRank[parent.network] <= networkRank[requested.network]
+      ? parent.network
+      : requested.network;
+  const approvalMode =
+    approvalPrivilegeRank[parent.approvalMode] <=
+    approvalPrivilegeRank[requested.approvalMode]
+      ? parent.approvalMode
+      : requested.approvalMode;
+
+  return freezeCapabilities({
+    filesystem: {
+      read: filesystemRead,
+      write: filesystemWrite,
+    },
+    shell,
+    network,
+    processControl:
+      parent.processControl && requested.processControl,
+    backgroundJobs:
+      parent.backgroundJobs && requested.backgroundJobs,
+    mcp: parent.mcp && requested.mcp,
+    subagents: parent.subagents && requested.subagents,
+    computerControl:
+      parent.computerControl && requested.computerControl,
+    approvalMode,
+  });
+}
+
+export function isExecutionCapabilitySubset(
+  candidate: Readonly<ExecutionCapabilities>,
+  ceiling: Readonly<ExecutionCapabilities>,
+): boolean {
+  return (
+    filesystemRank[candidate.filesystem.read] <=
+      filesystemRank[ceiling.filesystem.read] &&
+    filesystemRank[candidate.filesystem.write] <=
+      filesystemRank[ceiling.filesystem.write] &&
+    shellRank[candidate.shell] <= shellRank[ceiling.shell] &&
+    networkRank[candidate.network] <= networkRank[ceiling.network] &&
+    (!candidate.processControl || ceiling.processControl) &&
+    (!candidate.backgroundJobs || ceiling.backgroundJobs) &&
+    (!candidate.mcp || ceiling.mcp) &&
+    (!candidate.subagents || ceiling.subagents) &&
+    (!candidate.computerControl || ceiling.computerControl) &&
+    approvalPrivilegeRank[candidate.approvalMode] <=
+      approvalPrivilegeRank[ceiling.approvalMode]
+  );
+}
+
+export function intersectExecutionProfiles(
+  parent: Readonly<ExecutionProfile>,
+  requested: Readonly<ExecutionProfile>,
+): Readonly<ExecutionProfile> {
+  const capabilities = intersectExecutionCapabilities(
+    parent.capabilities,
+    requested.capabilities,
+  );
+
+  if (capabilitiesEqual(capabilities, requested.capabilities)) {
+    return requested;
+  }
+  if (capabilitiesEqual(capabilities, parent.capabilities)) {
+    return parent;
+  }
+
+  return defineProfile({
+    id: `nested:${parent.id}&${requested.id}`,
+    label: `${requested.label} (nested)`,
+    description:
+      `Nested execution bounded by parent profile "${parent.id}" and requested profile "${requested.id}".`,
+    capabilities: cloneCapabilities(capabilities),
+  });
+}
+
+function capabilitiesEqual(
+  left: Readonly<ExecutionCapabilities>,
+  right: Readonly<ExecutionCapabilities>,
+): boolean {
+  return (
+    left.filesystem.read === right.filesystem.read &&
+    left.filesystem.write === right.filesystem.write &&
+    left.shell === right.shell &&
+    left.network === right.network &&
+    left.processControl === right.processControl &&
+    left.backgroundJobs === right.backgroundJobs &&
+    left.mcp === right.mcp &&
+    left.subagents === right.subagents &&
+    left.computerControl === right.computerControl &&
+    left.approvalMode === right.approvalMode
+  );
 }
 
 function defineProfile(
