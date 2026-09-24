@@ -455,8 +455,13 @@ describe("AgentSurfaceRuntime tool lifecycle", () => {
         requests.push(request);
         let sequence = request.runState.lastSequence;
         const responseId = `compat-r-${sequence + 1}`;
-        const event = (
-          value: Omit<AgentRunEvent, "eventId" | "sequence" | "responseId">,
+        const event = <
+          T extends Omit<
+            AgentRunEvent,
+            "eventId" | "sequence" | "responseId"
+          >,
+        >(
+          value: T,
         ) =>
           ({
             ...value,
