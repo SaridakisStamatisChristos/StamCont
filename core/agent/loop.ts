@@ -1012,6 +1012,18 @@ function finishNonToolStop(
           "Model completed with an unknown normalized stop reason",
         ),
       );
+    default:
+      return buildLoopResult(
+        "failed",
+        state,
+        input,
+        iterations,
+        "unknown",
+        loopError(
+          "unknown_stop_reason",
+          `Model completed with unsupported stop reason ${String(stopReason)}`,
+        ),
+      );
   }
 }
 
