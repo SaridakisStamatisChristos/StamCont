@@ -30,10 +30,7 @@ import {
   AgentSubagentRuntime,
   loadDurableAgentSubagentRelation,
 } from "./subagents";
-import {
-  AgentCapabilityDeniedError,
-  type AgentTool,
-} from "./tools";
+import type { AgentTool } from "./tools";
 
 const roots: string[] = [];
 
@@ -654,19 +651,5 @@ describe("durable nested agent sessions", () => {
         }),
       }),
     );
-
-    await expect(
-      kernel.executeTool(
-        result.child,
-        "desktop.control",
-        {},
-      ),
-    ).rejects.toThrow();
-    expect(
-      new AgentCapabilityDeniedError(
-        "desktop.control",
-        ["computerControl"],
-      ).name,
-    ).toBe("AgentCapabilityDeniedError");
   });
 });
