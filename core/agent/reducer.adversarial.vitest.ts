@@ -9,9 +9,13 @@ import {
   reduceAgentRunEvents,
 } from "./reducer";
 
+type EventBody<T> = T extends AgentRunEvent
+  ? Omit<T, "eventId" | "sequence">
+  : never;
+
 function event(
   sequence: number,
-  value: Omit<AgentRunEvent, "eventId" | "sequence">,
+  value: EventBody<AgentRunEvent>,
   eventId = `event-${sequence}`,
 ): AgentRunEvent {
   return {
