@@ -6,10 +6,11 @@ import { performance } from "node:perf_hooks";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
-  planAgentContextBudget,
+  planAgentContextBudgetForStore,
 } from "./budget";
 import {
   compactAgentHistory,
+  writeAgentCompactionArtifact,
   type AgentCompactionSummarizer,
 } from "./compaction";
 import type { AgentToolResult } from "./model";
@@ -44,6 +45,7 @@ interface PerformanceMetrics {
   indexRebuildMs?: number;
   compactionMs?: number;
   contextAssemblyMs?: number;
+  contextRecordReads?: number;
   largeToolResultBytes?: number;
   largeToolResultRoundTripMs?: number;
 }
@@ -363,32 +365,39 @@ describe("PR15 deterministic performance fixtures", () => {
       expect(artifact.sourceSequenceEnd).toBeGreaterThan(0);
       expect(artifact.protectedSourceSequences.length).toBeGreaterThan(0);
 
+      await writeAgentCompactionArtifact(longStore, artifact);
+      const originalReadAllRecords = longStore.readAllRecords.bind(longStore);
+      let contextRecordReads = 0;
+      longStore.readAllRecords = async () => {
+        contextRecordReads += 1;
+        return originalReadAllRecords();
+      };
+
       startedAt = performance.now();
-      const contextPlan = planAgentContextBudget(
-        records,
-        longStore.sessionId,
-        {
-          budget: {
-            contextLimitTokens: 10_000_000,
-            reservedOutputTokens: 2_000,
-            safetyMarginTokens: 1_000,
-          },
-          tools: [
-            {
-              name: "synthetic_tool",
-              description: "Synthetic PR15 fixture",
-              inputSchema: {
-                type: "object",
-                properties: {
-                  value: { type: "string" },
-                },
+      const contextPlan = await planAgentContextBudgetForStore(longStore, {
+        budget: {
+          contextLimitTokens: 10_000_000,
+          reservedOutputTokens: 2_000,
+          safetyMarginTokens: 1_000,
+        },
+        tools: [
+          {
+            name: "synthetic_tool",
+            description: "Synthetic PR15 fixture",
+            inputSchema: {
+              type: "object",
+              properties: {
+                value: { type: "string" },
               },
             },
-          ],
-          phase: "pre_request",
-        },
-      );
+          },
+        ],
+        phase: "pre_request",
+      });
       metrics.contextAssemblyMs = elapsed(startedAt);
+      metrics.contextRecordReads = contextRecordReads;
+      longStore.readAllRecords = originalReadAllRecords;
+      expect(contextRecordReads).toBe(1);
       expect(contextPlan.decision).toBe("fits_raw");
       expect(contextPlan.input).toHaveLength(replay.input.length);
 
