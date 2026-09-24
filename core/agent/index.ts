@@ -4,6 +4,7 @@ export * from "./adapters/coreToolRuntime";
 export * from "./capabilities";
 export * from "./budget";
 export * from "./compaction";
+export * from "./diagnostics";
 export * from "./events";
 export * from "./execution";
 export * from "./kernel";
