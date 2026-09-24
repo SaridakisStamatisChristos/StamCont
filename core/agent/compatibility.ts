@@ -4,11 +4,13 @@ import {
   type AgentDiagnosticsSink,
 } from "./diagnostics";
 import { AgentLifecycleError } from "./lifecycle";
+import { AgentLegacyHistoryMigrationError } from "./migration";
 import { AgentPersistenceError } from "./persistence";
 
 export type AgentCompatibilityFailureCode =
   | "unsupported_persistence_schema"
-  | "unsupported_lifecycle_schema";
+  | "unsupported_lifecycle_schema"
+  | "legacy_history_incompatible";
 
 export function getAgentCompatibilityFailureCode(
   error: unknown,
@@ -24,6 +26,9 @@ export function getAgentCompatibilityFailureCode(
     error.code === "unsupported_lifecycle_schema"
   ) {
     return "unsupported_lifecycle_schema";
+  }
+  if (error instanceof AgentLegacyHistoryMigrationError) {
+    return "legacy_history_incompatible";
   }
   return undefined;
 }
