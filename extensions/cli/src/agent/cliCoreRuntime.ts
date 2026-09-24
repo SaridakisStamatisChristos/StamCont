@@ -16,6 +16,7 @@ import {
 import type { BuiltInExecutionProfileId } from "core/agent/capabilities.js";
 import type {
   ContinueConfig,
+  FetchFunction,
   IDE,
   ILLM,
   LLMOptions,
@@ -47,6 +48,7 @@ export function createCliCoreAgentRuntime(options: {
   const ide = createCliCoreIde(workspaceRoot);
   const tools = getBaseToolDefinitions();
   const config = createMinimalCliContinueConfig(llm, tools);
+  const fetch: FetchFunction = (url, init) => globalThis.fetch(url, init);
 
   const driver = new ContinueAgentModelDriver(llm);
   const toolExecutor = new CoreAgentToolExecutor({
@@ -54,7 +56,7 @@ export function createCliCoreAgentRuntime(options: {
     extras: {
       ide,
       llm,
-      fetch: globalThis.fetch as any,
+      fetch,
       config,
     },
     sessionId: options.sessionId,
@@ -73,7 +75,7 @@ export function createCliCoreAgentRuntime(options: {
 export function createCliCoreLlm(model: ModelConfig): CliCoreLlm {
   const capabilities = new Set(model.capabilities ?? []);
   const llmOptions: LLMOptions = {
-    ...(model as unknown as LLMOptions),
+    ...model,
     model: model.model,
     title: model.name ?? model.model,
     contextLength: model.contextLength,
@@ -112,7 +114,10 @@ function createMinimalCliContinueConfig(
   llm: ILLM,
   tools: readonly Tool[],
 ): ContinueConfig {
-  return {
+  const config: ContinueConfig = {
+    slashCommands: [],
+    contextProviders: [],
+    mcpServerStatuses: [],
     modelsByRole: {
       chat: [llm],
       edit: [],
@@ -135,7 +140,8 @@ function createMinimalCliContinueConfig(
     },
     tools: [...tools],
     rules: [],
-  } as unknown as ContinueConfig;
+  };
+  return config;
 }
 
 function createCliCoreIde(workspaceRoot: string): IDE {
@@ -145,9 +151,13 @@ function createCliCoreIde(workspaceRoot: string): IDE {
       : path.resolve(workspaceRoot, value);
 
   const readText = (value: string) => fs.readFile(toPath(value), "utf8");
+  const unsupported = (method: string): never => {
+    throw new Error(
+      `CLI agent IDE adapter does not support "${method}"`,
+    );
+  };
 
-  return {
-    getWorkspaceDirs: async () => [pathToFileURL(workspaceRoot).href],
+  const ide: IDE = {
     getIdeInfo: async () => ({
       ideType: "vscode",
       name: "stamcont-cli-agent",
@@ -156,40 +166,7 @@ function createCliCoreIde(workspaceRoot: string): IDE {
       extensionVersion: "cli",
       isPrerelease: false,
     }),
-    fileExists: async (value: string) => {
-      try {
-        await fs.access(toPath(value));
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    readFile: readText,
-    readRangeInFile: async (value: string, range: any) => {
-      const lines = (await readText(value)).split(/\r?\n/);
-      return lines
-        .slice(range.start.line, range.end.line + 1)
-        .join("\n");
-    },
-    writeFile: async (value: string, contents: string) => {
-      const target = toPath(value);
-      await fs.mkdir(path.dirname(target), { recursive: true });
-      await fs.writeFile(target, contents, "utf8");
-    },
-    openFile: async () => undefined,
-    saveFile: async () => undefined,
-    getCurrentFile: async () => undefined,
-    getOpenFiles: async () => [],
-    getPinnedFiles: async () => [],
-    getFileResults: async (pattern: string, maxResults?: number) => {
-      const { glob } = await import("glob");
-      const results = await glob(pattern, {
-        cwd: workspaceRoot,
-        dot: false,
-        nodir: false,
-      });
-      return results.slice(0, maxResults ?? 100);
-    },
+    getIdeSettings: async () => unsupported("getIdeSettings"),
     getDiff: async (includeUnstaged: boolean) => {
       const diffs: string[] = [];
       const run = async (args: string[]) => {
@@ -211,6 +188,35 @@ function createCliCoreIde(workspaceRoot: string): IDE {
       await run(["diff", "--cached", "--no-ext-diff"]);
       return diffs;
     },
+    getClipboardContent: async () => unsupported("getClipboardContent"),
+    isTelemetryEnabled: async () => false,
+    isWorkspaceRemote: async () => false,
+    getUniqueId: async () => "stamcont-cli-agent",
+    getTerminalContents: async () => unsupported("getTerminalContents"),
+    getDebugLocals: async () => unsupported("getDebugLocals"),
+    getTopLevelCallStackSources: async () =>
+      unsupported("getTopLevelCallStackSources"),
+    getAvailableThreads: async () => unsupported("getAvailableThreads"),
+    getWorkspaceDirs: async () => [pathToFileURL(workspaceRoot).href],
+    fileExists: async (value: string) => {
+      try {
+        await fs.access(toPath(value));
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    writeFile: async (value: string, contents: string) => {
+      const target = toPath(value);
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      await fs.writeFile(target, contents, "utf8");
+    },
+    removeFile: async (value: string) => {
+      await fs.rm(toPath(value), { force: true });
+    },
+    showVirtualFile: async () => unsupported("showVirtualFile"),
+    openFile: async () => undefined,
+    openUrl: async () => unsupported("openUrl"),
     runCommand: async (command: string) => {
       await execFileAsync(
         process.platform === "win32"
@@ -225,5 +231,46 @@ function createCliCoreIde(workspaceRoot: string): IDE {
         },
       );
     },
-  } as unknown as IDE;
+    saveFile: async () => undefined,
+    readFile: readText,
+    readRangeInFile: async (value: string, range) => {
+      const lines = (await readText(value)).split(/\r?\n/);
+      return lines
+        .slice(range.start.line, range.end.line + 1)
+        .join("\n");
+    },
+    showLines: async () => unsupported("showLines"),
+    getOpenFiles: async () => [],
+    getCurrentFile: async () => undefined,
+    getPinnedFiles: async () => [],
+    getSearchResults: async () => unsupported("getSearchResults"),
+    getFileResults: async (pattern: string, maxResults?: number) => {
+      const { glob } = await import("glob");
+      const results = await glob(pattern, {
+        cwd: workspaceRoot,
+        dot: false,
+        nodir: false,
+      });
+      return results.slice(0, maxResults ?? 100);
+    },
+    subprocess: async () => unsupported("subprocess"),
+    getProblems: async () => unsupported("getProblems"),
+    getBranch: async () => unsupported("getBranch"),
+    getTags: async () => unsupported("getTags"),
+    getRepoName: async () => unsupported("getRepoName"),
+    showToast: async () => unsupported("showToast"),
+    getGitRootPath: async () => unsupported("getGitRootPath"),
+    listDir: async () => unsupported("listDir"),
+    getFileStats: async () => unsupported("getFileStats"),
+    readSecrets: async () => unsupported("readSecrets"),
+    writeSecrets: async () => unsupported("writeSecrets"),
+    gotoDefinition: async () => unsupported("gotoDefinition"),
+    gotoTypeDefinition: async () => unsupported("gotoTypeDefinition"),
+    getSignatureHelp: async () => unsupported("getSignatureHelp"),
+    getReferences: async () => unsupported("getReferences"),
+    getDocumentSymbols: async () => unsupported("getDocumentSymbols"),
+    onDidChangeActiveTextEditor: () => undefined,
+  };
+
+  return ide;
 }
