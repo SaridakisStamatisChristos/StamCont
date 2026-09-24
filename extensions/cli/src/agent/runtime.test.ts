@@ -2,10 +2,16 @@ import { mkdtemp, rm, writeFile, mkdir, utimes } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import {
+  appendAgentLifecycleState,
+  initializeDurableAgentSession,
+} from "core/agent/lifecycle.js";
 import type {
   AgentModelDriver,
+  AgentModelRequest,
   AgentToolExecutor,
 } from "core/agent/model.js";
+import { AgentSessionStore } from "core/agent/persistence.js";
 import type { AgentRunEvent } from "core/agent/protocol.js";
 import { describe, expect, it, vi } from "vitest";
 
@@ -164,6 +170,102 @@ describe("CLI durable agent runtime", () => {
 
       expect(result.result.status).toBe("completed");
       expect(executor.execute).toHaveBeenCalledTimes(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("resumes a nonterminal durable tool boundary and completes it", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "stamcont-cli-agent-"));
+    const sessionId = "resumable-cli";
+    const store = await AgentSessionStore.open({
+      rootDirectory: root,
+      sessionId,
+    });
+    const initialInput = [
+      {
+        type: "message" as const,
+        role: "user" as const,
+        content: "inspect",
+      },
+    ];
+
+    try {
+      await initializeDurableAgentSession(store, initialInput);
+      await appendAgentLifecycleState(store, "waiting_for_model", 1);
+      for (const item of [
+        event(1, { type: "response.started" }),
+        event(2, {
+          type: "output_item.added",
+          item: { id: "t-resume", type: "tool_call" },
+        }),
+        event(3, {
+          type: "output_item.completed",
+          item: {
+            id: "t-resume",
+            type: "tool_call",
+            callId: "c-resume",
+            name: "read_file",
+            input: { filepath: "README.md" },
+          },
+        }),
+        event(4, {
+          type: "response.completed",
+          stopReason: "tool_use",
+        }),
+      ]) {
+        await store.appendModelEvent(item);
+      }
+      await appendAgentLifecycleState(store, "waiting_for_tool", 1);
+    } finally {
+      await store.close();
+    }
+
+    const executor: AgentToolExecutor = {
+      execute: vi.fn(async () => ({
+        status: "success" as const,
+        output: { resumed: true },
+      })),
+    };
+    const requests: AgentModelRequest[] = [];
+    const driver: AgentModelDriver = {
+      async *stream(request) {
+        requests.push(request);
+        yield event(5, { type: "response.started" }, "r-2");
+        yield event(
+          6,
+          {
+            type: "response.completed",
+            stopReason: "end_turn",
+          },
+          "r-2",
+        );
+      },
+    };
+
+    try {
+      const resumed = await runCliAgentRuntime({
+        rootDirectory: root,
+        driver,
+        resumeSessionId: sessionId,
+        tools: [{ name: "read_file" }],
+        toolExecutor: executor,
+        contextLimitTokens: 100_000,
+        reservedOutputTokens: 1_000,
+      });
+
+      expect(resumed.resumed).toBe(true);
+      expect(resumed.result.status).toBe("completed");
+      expect(executor.execute).toHaveBeenCalledTimes(1);
+      expect(requests).toHaveLength(1);
+      expect(requests[0].input).toContainEqual({
+        type: "tool_result",
+        toolCallItemId: "t-resume",
+        callId: "c-resume",
+        name: "read_file",
+        status: "success",
+        output: { resumed: true },
+      });
     } finally {
       await rm(root, { recursive: true, force: true });
     }
