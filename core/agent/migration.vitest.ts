@@ -204,9 +204,7 @@ describe("legacy agent history migration", () => {
         sessionId,
         input,
       }),
-    ).rejects.toMatchObject<
-      Partial<AgentLegacyHistoryMigrationError>
-    >({
+    ).rejects.toMatchObject({
       code: "unsafe_boundary",
     });
 
