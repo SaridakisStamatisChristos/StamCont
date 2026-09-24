@@ -4,6 +4,14 @@ import type {
   AgentStopReason,
   JsonObject,
 } from "./protocol";
+import type { AgentContextBudgetPlan } from "./budget";
+import {
+  describeAgentModelDriver,
+  emitAgentDiagnostic,
+  extractProviderRequestId,
+  type AgentDiagnosticContext,
+  type AgentDiagnosticsSink,
+} from "./diagnostics";
 import {
   createInitialAgentRunState,
   getExecutableToolCalls,
@@ -86,6 +94,10 @@ export interface AgentLoopOptions {
     event: AgentRunEvent,
     state: Readonly<AgentRunState>,
   ) => void | Promise<void>;
+  diagnostics?: AgentDiagnosticsSink;
+  diagnosticContext?: Omit<AgentDiagnosticContext, "provider"> & {
+    readonly provider?: AgentDiagnosticContext["provider"];
+  };
   durability?: AgentLoopDurabilityOptions;
 }
 
@@ -145,17 +157,63 @@ interface LoopExecutionResult {
 export async function runAgentLoop(
   options: AgentLoopOptions,
 ): Promise<AgentLoopResult> {
-  const prepared = await prepareLoopRuntime(options);
-  if (prepared.immediateResult) {
-    return prepared.immediateResult;
-  }
+  const diagnostics = resolveDiagnosticContext(options);
+  const startedAt = Date.now();
 
-  const executed = await runPreparedAgentLoop(options, prepared);
-  return finalizeDurableLoopResult(
-    options,
-    executed.result,
-    executed.logicalIteration,
-  );
+  await emitAgentDiagnostic(options.diagnostics, {
+    type: "session.start",
+    timestamp: startedAt,
+    ...diagnostics,
+    details: {
+      durable: Boolean(options.durability),
+      initialInputItems: options.input.length,
+    },
+  });
+
+  try {
+    const prepared = await prepareLoopRuntime(options);
+    let result: AgentLoopResult;
+
+    if (prepared.immediateResult) {
+      result = prepared.immediateResult;
+    } else {
+      const executed = await runPreparedAgentLoop(options, prepared);
+      result = await finalizeDurableLoopResult(
+        options,
+        executed.result,
+        executed.logicalIteration,
+      );
+    }
+
+    await emitTerminalDiagnostics(
+      options,
+      diagnostics,
+      startedAt,
+      result,
+    );
+    return result;
+  } catch (error) {
+    await emitAgentDiagnostic(options.diagnostics, {
+      type: "failure",
+      timestamp: Date.now(),
+      ...diagnostics,
+      details: {
+        category: "unhandled_runtime_error",
+        errorClass:
+          error instanceof Error ? error.name : typeof error,
+      },
+    });
+    await emitAgentDiagnostic(options.diagnostics, {
+      type: "session.end",
+      timestamp: Date.now(),
+      ...diagnostics,
+      durationMs: Math.max(0, Date.now() - startedAt),
+      details: {
+        status: "threw",
+      },
+    });
+    throw error;
+  }
 }
 
 async function prepareLoopRuntime(
@@ -177,6 +235,21 @@ async function prepareLoopRuntime(
       options.input,
       options.durability.initialMetadata,
     );
+    await emitAgentDiagnostic(options.diagnostics, {
+      type: "recovery",
+      timestamp: Date.now(),
+      ...resolveDiagnosticContext(options),
+      details: {
+        disposition: analysis.disposition,
+        lifecycleState: analysis.lifecycleState ?? "none",
+        lastIteration: analysis.lastIteration,
+        ambiguousToolAttempts: analysis.ambiguousToolAttempts.length,
+        indexStatus: options.durability.store.recovery.indexStatus,
+        truncatedTailBytes:
+          options.durability.store.recovery.truncatedTailBytes,
+        wasEmpty,
+      },
+    });
   } catch (error) {
     const state = createInitialAgentRunState();
     return {
@@ -416,6 +489,7 @@ async function runPreparedAgentLoop(
       state,
       input,
       signal,
+      logicalIteration,
     );
     state = streamed.state;
 
@@ -600,10 +674,25 @@ async function consumeOneModelResponse(
   initialState: AgentRunState,
   input: readonly AgentModelInputItem[],
   signal: AbortSignal,
+  iteration: number,
 ): Promise<StreamResult> {
   let state = initialState;
   let responseId: string | undefined;
+  let providerRequestId: string | undefined;
   let requestInput = input;
+  const modelStartedAt = Date.now();
+  const diagnostics = resolveDiagnosticContext(options);
+
+  await emitAgentDiagnostic(options.diagnostics, {
+    type: "model.start",
+    timestamp: modelStartedAt,
+    ...diagnostics,
+    details: {
+      iteration,
+      inputItems: input.length,
+      toolDefinitions: options.tools?.length ?? 0,
+    },
+  });
 
   if (options.durability) {
     try {
@@ -614,6 +703,7 @@ async function consumeOneModelResponse(
         "pre_request",
         signal,
       );
+      await emitContextBudgetDiagnostics(options, plan);
       requestInput = plan.input ?? input;
     } catch (error) {
       return {
@@ -633,6 +723,11 @@ async function consumeOneModelResponse(
 
   try {
     for await (const event of options.driver.stream(request, signal)) {
+      if (event.type === "response.started") {
+        providerRequestId =
+          extractProviderRequestId(event.providerMetadata) ??
+          providerRequestId;
+      }
       const reduced = applyCanonicalEvent(state, event);
       if (reduced.kind === "failed") {
         return reduced;
@@ -677,6 +772,30 @@ async function consumeOneModelResponse(
       }
 
       if (isTerminalEvent(event)) {
+        await emitAgentDiagnostic(options.diagnostics, {
+          type: "model.end",
+          timestamp: Date.now(),
+          ...diagnostics,
+          responseId: event.responseId,
+          eventId: event.eventId,
+          ...(providerRequestId ? { providerRequestId } : {}),
+          durationMs: Math.max(0, Date.now() - modelStartedAt),
+          details: {
+            iteration,
+            status:
+              event.type === "response.completed"
+                ? "completed"
+                : event.type === "response.aborted"
+                  ? "cancelled"
+                  : "failed",
+            ...(event.type === "response.completed"
+              ? { stopReason: event.stopReason }
+              : {}),
+            ...(event.type === "response.failed"
+              ? { failureCode: event.error.code ?? "provider_error" }
+              : {}),
+          },
+        });
         return {
           kind: "terminal",
           state,
@@ -688,6 +807,19 @@ async function consumeOneModelResponse(
       }
     }
   } catch (error) {
+    await emitAgentDiagnostic(options.diagnostics, {
+      type: "model.end",
+      timestamp: Date.now(),
+      ...diagnostics,
+      ...(responseId ? { responseId } : {}),
+      ...(providerRequestId ? { providerRequestId } : {}),
+      durationMs: Math.max(0, Date.now() - modelStartedAt),
+      details: {
+        iteration,
+        status: signal.aborted ? "cancelled" : "failed",
+        failureCode: signal.aborted ? "cancelled" : "driver_error",
+      },
+    });
     if (signal.aborted) {
       return { kind: "cancelled", state };
     }
@@ -702,8 +834,32 @@ async function consumeOneModelResponse(
   }
 
   if (signal.aborted) {
+    await emitAgentDiagnostic(options.diagnostics, {
+      type: "model.end",
+      timestamp: Date.now(),
+      ...diagnostics,
+      ...(responseId ? { responseId } : {}),
+      durationMs: Math.max(0, Date.now() - modelStartedAt),
+      details: {
+        iteration,
+        status: "cancelled",
+        failureCode: "cancelled",
+      },
+    });
     return { kind: "cancelled", state };
   }
+  await emitAgentDiagnostic(options.diagnostics, {
+    type: "model.end",
+    timestamp: Date.now(),
+    ...diagnostics,
+    ...(responseId ? { responseId } : {}),
+    durationMs: Math.max(0, Date.now() - modelStartedAt),
+    details: {
+      iteration,
+      status: "failed",
+      failureCode: "driver_ended_without_terminal_event",
+    },
+  });
   return {
     kind: "failed",
     state,
@@ -937,6 +1093,19 @@ async function executeToolRound(
       }
     }
 
+    const toolStartedAt = Date.now();
+    const diagnostics = resolveDiagnosticContext(options);
+    await emitAgentDiagnostic(options.diagnostics, {
+      type: "tool.start",
+      timestamp: toolStartedAt,
+      ...diagnostics,
+      responseId,
+      itemId: toolCall.id,
+      toolCallId: toolCall.callId,
+      toolName: toolCall.name,
+      details: { iteration },
+    });
+
     let outcome: AgentToolExecutionOutcome;
     try {
       outcome = await options.toolExecutor.execute(toolCall, {
@@ -945,6 +1114,22 @@ async function executeToolRound(
         state,
       });
     } catch (error) {
+      await emitAgentDiagnostic(options.diagnostics, {
+        type: "tool.end",
+        timestamp: Date.now(),
+        ...diagnostics,
+        responseId,
+        itemId: toolCall.id,
+        toolCallId: toolCall.callId,
+        toolName: toolCall.name,
+        durationMs: Math.max(0, Date.now() - toolStartedAt),
+        details: {
+          iteration,
+          status: signal.aborted ? "cancelled" : "failed",
+          failureCode:
+            signal.aborted ? "cancelled" : "tool_executor_error",
+        },
+      });
       if (options.durability) {
         try {
           await appendAgentToolAttempt(
@@ -973,6 +1158,24 @@ async function executeToolRound(
       };
     }
 
+    await emitAgentDiagnostic(options.diagnostics, {
+      type: "tool.end",
+      timestamp: Date.now(),
+      ...diagnostics,
+      responseId,
+      itemId: toolCall.id,
+      toolCallId: toolCall.callId,
+      toolName: toolCall.name,
+      durationMs: Math.max(0, Date.now() - toolStartedAt),
+      details: {
+        iteration,
+        status: outcome.status,
+        ...(outcome.status === "failure"
+          ? { failureCode: outcome.error.code ?? "tool_failure" }
+          : {}),
+      },
+    });
+
     const result = createAgentToolResult(toolCall, outcome);
     if (options.durability) {
       try {
@@ -999,13 +1202,14 @@ async function executeToolRound(
 
   if (options.durability) {
     try {
-      await prepareDurableAgentContext(
+      const plan = await prepareDurableAgentContext(
         options.durability.store,
         options.durability.context,
         options.tools ?? [],
         "post_tool",
         signal,
       );
+      await emitContextBudgetDiagnostics(options, plan);
       await appendAgentLifecycleState(
         options.durability.store,
         "running",
@@ -1218,6 +1422,128 @@ function resumeBlockError(
         "Durable agent session cannot resume safely",
       );
   }
+}
+
+function resolveDiagnosticContext(
+  options: AgentLoopOptions,
+): AgentDiagnosticContext {
+  return {
+    ...(options.diagnosticContext?.sessionId
+      ? { sessionId: options.diagnosticContext.sessionId }
+      : options.durability
+        ? { sessionId: options.durability.store.sessionId }
+        : {}),
+    ...(options.diagnosticContext?.executionProfile
+      ? {
+          executionProfile:
+            options.diagnosticContext.executionProfile,
+        }
+      : {}),
+    provider:
+      options.diagnosticContext?.provider ??
+      describeAgentModelDriver(options.driver),
+  };
+}
+
+async function emitContextBudgetDiagnostics(
+  options: AgentLoopOptions,
+  plan: AgentContextBudgetPlan,
+): Promise<void> {
+  const provenance = plan.provenance;
+  const diagnostics = resolveDiagnosticContext(options);
+  await emitAgentDiagnostic(options.diagnostics, {
+    type: "context_budget",
+    timestamp: Date.now(),
+    ...diagnostics,
+    details: {
+      phase: provenance.phase,
+      decision: provenance.decision,
+      estimatorId: provenance.estimator.id,
+      estimatorVersion: provenance.estimator.version,
+      estimatorAccuracy: provenance.estimator.accuracy,
+      contextLimitTokens: provenance.contextLimitTokens,
+      reservedOutputTokens: provenance.reservedOutputTokens,
+      safetyMarginTokens: provenance.safetyMarginTokens,
+      toolDefinitionTokens: provenance.toolDefinitionTokens,
+      rawInputTokens: provenance.rawInputTokens,
+      rawTotalRequiredTokens: provenance.rawTotalRequiredTokens,
+      selectedInputTokens: provenance.selectedInputTokens ?? 0,
+      selectedTotalRequiredTokens:
+        provenance.selectedTotalRequiredTokens ?? 0,
+      compactionStatus: provenance.compactionStatus,
+      compactionUsed: provenance.compactionUsed,
+      lastDurableSequence: provenance.lastDurableSequence,
+    },
+  });
+
+  if (provenance.compactionUsed) {
+    await emitAgentDiagnostic(options.diagnostics, {
+      type: "compaction",
+      timestamp: Date.now(),
+      ...diagnostics,
+      details: {
+        phase: provenance.phase,
+        sourceStartSequence:
+          provenance.compactionSourceRange?.startSequence ?? 0,
+        sourceEndSequence:
+          provenance.compactionSourceRange?.endSequence ?? 0,
+        protectedSourceCount:
+          provenance.protectedSourceSequences.length,
+        retainedTailStartSequence:
+          provenance.retainedTailStartSequence ?? 0,
+      },
+    });
+  }
+}
+
+async function emitTerminalDiagnostics(
+  options: AgentLoopOptions,
+  diagnostics: AgentDiagnosticContext,
+  startedAt: number,
+  result: AgentLoopResult,
+): Promise<void> {
+  if (result.status === "cancelled") {
+    await emitAgentDiagnostic(options.diagnostics, {
+      type: "cancellation",
+      timestamp: Date.now(),
+      ...diagnostics,
+      details: {
+        stopReason: result.stopReason ?? "cancelled",
+      },
+    });
+  }
+
+  if (
+    result.status === "failed" ||
+    result.status === "resume_blocked" ||
+    result.status === "iteration_limit"
+  ) {
+    await emitAgentDiagnostic(options.diagnostics, {
+      type: "failure",
+      timestamp: Date.now(),
+      ...diagnostics,
+      details: {
+        category:
+          result.error?.code ??
+          (result.status === "iteration_limit"
+            ? "iteration_limit"
+            : result.status),
+        status: result.status,
+      },
+    });
+  }
+
+  await emitAgentDiagnostic(options.diagnostics, {
+    type: "session.end",
+    timestamp: Date.now(),
+    ...diagnostics,
+    durationMs: Math.max(0, Date.now() - startedAt),
+    details: {
+      status: result.status,
+      iterations: result.iterations,
+      stopReason: result.stopReason ?? "none",
+    },
+  });
 }
 
 function durabilityError(error: unknown): AgentRunError {

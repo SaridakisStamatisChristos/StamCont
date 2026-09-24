@@ -4,6 +4,10 @@ import path from "node:path";
 
 import type { AgentContextEstimator } from "core/agent/budget.js";
 import {
+  AgentDiagnosticsBuffer,
+  type AgentDebugBundle,
+} from "core/agent/diagnostics.js";
+import {
   runAgentLoop,
   type AgentLoopResult,
 } from "core/agent/loop.js";
@@ -56,12 +60,15 @@ export interface CliAgentRuntimeOptions {
   readonly onEvent?: (
     event: AgentRunEvent,
   ) => void | Promise<void>;
+  readonly executionProfile?: string;
+  readonly diagnostics?: AgentDiagnosticsBuffer;
 }
 
 export interface CliAgentRuntimeResult {
   readonly sessionId: string;
   readonly resumed: boolean;
   readonly result: AgentLoopResult;
+  readonly debugBundle: AgentDebugBundle;
 }
 
 export async function runCliAgentRuntime(
@@ -73,6 +80,8 @@ export async function runCliAgentRuntime(
   const input = resumed
     ? []
     : buildInitialInput(options.systemPrompt, options.userPrompt);
+  const diagnostics =
+    options.diagnostics ?? new AgentDiagnosticsBuffer();
 
   const store = await AgentSessionStore.open({
     rootDirectory: options.rootDirectory,
@@ -92,6 +101,12 @@ export async function runCliAgentRuntime(
             await options.onEvent?.(event);
           }
         : undefined,
+      diagnostics: diagnostics.sink,
+      diagnosticContext: {
+        sessionId,
+        executionProfile:
+          options.executionProfile ?? "interactive",
+      },
       durability: {
         store,
         context: {
@@ -106,7 +121,12 @@ export async function runCliAgentRuntime(
       },
     });
 
-    return { sessionId, resumed, result };
+    return {
+      sessionId,
+      resumed,
+      result,
+      debugBundle: diagnostics.buildDebugBundle({ sessionId }),
+    };
   } finally {
     await store.close();
   }
