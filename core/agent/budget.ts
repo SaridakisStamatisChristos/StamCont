@@ -307,7 +307,7 @@ export async function planAgentContextBudgetForStore(
   const compaction =
     options.useExistingCompaction === false
       ? ({ status: "missing" } as const)
-      : await readAgentCompactionArtifact(store);
+      : await readAgentCompactionArtifact(store, records);
 
   return planAgentContextBudget(records, store.sessionId, {
     budget: options.budget,

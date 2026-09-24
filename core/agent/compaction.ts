@@ -277,7 +277,7 @@ export async function compactAndPersistAgentHistory(
   let previousArtifact: AgentCompactionArtifact | undefined;
 
   if (options.usePreviousArtifact !== false) {
-    const existing = await readAgentCompactionArtifact(store);
+    const existing = await readAgentCompactionArtifact(store, records);
     if (existing.status === "valid") {
       previousArtifact = existing.artifact;
     }
@@ -384,6 +384,7 @@ export async function writeAgentCompactionArtifact(
 
 export async function readAgentCompactionArtifact(
   store: AgentSessionStore,
+  records?: readonly AgentPersistedRecord[],
 ): Promise<AgentCompactionArtifactReadResult> {
   const filePath = getAgentCompactionPath(store);
   let raw: string;
@@ -417,10 +418,18 @@ export async function readAgentCompactionArtifact(
     };
   }
 
-  const records = await store.readAllRecords();
+  // Reuse a caller's already-read durable snapshot only while it still
+  // matches the store's current committed sequence. If the store advanced,
+  // fall back to a fresh authoritative log read rather than validating an
+  // artifact against stale derived input.
+  const durableRecords =
+    records !== undefined &&
+    (records.at(-1)?.sequence ?? 0) === store.lastSequence
+      ? records
+      : await store.readAllRecords();
   try {
     assertArtifactMatchesRecords(
-      records,
+      durableRecords,
       store.sessionId,
       artifact,
     );
