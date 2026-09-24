@@ -8,6 +8,7 @@ import type {
 } from "core/agent/model.js";
 import { AgentSessionStore } from "core/agent/persistence.js";
 import type { AgentRunEvent } from "core/agent/protocol.js";
+import type { AgentSurfaceTimelineItem } from "core/agent/surface.js";
 import { AgentSurfaceRuntime } from "core/agent/surfaceRuntime.js";
 import { describe, expect, it } from "vitest";
 
@@ -174,7 +175,7 @@ describe("PR16 CLI/Core-surface parity", () => {
         },
       );
       const surfaceSemanticTimeline =
-        surfaceSnapshot?.timeline.map((item) => {
+        surfaceSnapshot?.timeline.map((item: AgentSurfaceTimelineItem) => {
           if (item.type === "assistant_message") {
             return {
               type: item.type,
