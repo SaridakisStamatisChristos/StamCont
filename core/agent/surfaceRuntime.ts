@@ -7,6 +7,7 @@ import type {
 } from "./adapters/coreToolRuntime";
 import type { AgentCompactionSummarizer } from "./compaction";
 import { emitAgentCompatibilityFailureDiagnostic } from "./compatibility";
+import { migrateLegacyAgentHistoryAtomically } from "./migration";
 import {
   AgentDiagnosticsBuffer,
   type AgentDebugBundle,
@@ -340,11 +341,16 @@ export class AgentSurfaceRuntime {
     let store: AgentSessionStore | undefined;
     let runtime: AgentSurfaceResolvedRuntime | undefined;
     try {
+      const migrated = await migrateLegacyAgentHistoryAtomically({
+        rootDirectory: this.rootDirectory,
+        sessionId,
+        input: request.initialInput ?? [],
+      });
       store = await AgentSessionStore.open({
         rootDirectory: this.rootDirectory,
         sessionId,
       });
-      const resumed = store.lastSequence > 0;
+      const resumed = store.lastSequence > 0 && !migrated;
       const input = await prepareSurfaceInput(store, request);
 
       const approve: CoreAgentToolApprovalHandler = (approvalRequest) =>
@@ -502,9 +508,16 @@ async function prepareSurfaceInput(
   request: AgentSurfaceRunRequest,
 ): Promise<readonly AgentModelInputItem[]> {
   if (store.lastSequence === 0) {
-    const input: AgentModelInputItem[] = [
-      ...(request.initialInput ?? []),
-    ];
+    const bootstrap = request.initialInput ?? [];
+    const unsupported = bootstrap.find(
+      (item) => item.type !== "message",
+    );
+    if (unsupported) {
+      throw new Error(
+        "Compatibility history containing canonical model output or tool results must be migrated before durable session initialization",
+      );
+    }
+    const input: AgentModelInputItem[] = [...bootstrap];
     const systemPrompt = request.systemPrompt?.trim();
     if (systemPrompt && !hasSystemMessage(input)) {
       input.unshift({
