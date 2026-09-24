@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { AgentDiagnosticsBuffer } from "./diagnostics";
 import { AgentLifecycleError } from "./lifecycle";
+import { AgentLegacyHistoryMigrationError } from "./migration";
 import { AgentPersistenceError } from "./persistence";
 import {
   emitAgentCompatibilityFailureDiagnostic,
@@ -26,6 +27,14 @@ describe("agent compatibility diagnostics", () => {
         ),
       ),
     ).toBe("unsupported_lifecycle_schema");
+    expect(
+      getAgentCompatibilityFailureCode(
+        new AgentLegacyHistoryMigrationError(
+          "unsafe_boundary",
+          "legacy history is incomplete",
+        ),
+      ),
+    ).toBe("legacy_history_incompatible");
     expect(
       getAgentCompatibilityFailureCode(new Error("other")),
     ).toBeUndefined();

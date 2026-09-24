@@ -470,10 +470,18 @@ describe("AgentSurfaceRuntime tool lifecycle", () => {
             responseId,
           }) as AgentRunEvent;
         yield event({ type: "response.started" });
+        const answerId = `answer-${requests.length}`;
+        yield event({
+          type: "output_item.added",
+          item: {
+            id: answerId,
+            type: "message",
+          },
+        });
         yield event({
           type: "output_item.completed",
           item: {
-            id: `answer-${requests.length}`,
+            id: answerId,
             type: "message",
             role: "assistant",
             content: "done",

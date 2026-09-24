@@ -70,17 +70,18 @@ export async function migrateLegacyAgentHistoryAtomically(
   options: AgentLegacyHistoryMigrationOptions,
 ): Promise<boolean> {
   const sessionId = validateSessionId(options.sessionId);
-  const plan = buildLegacyMigrationPlan(options.input);
-  if (!plan) {
-    return false;
-  }
-
   const rootDirectory = path.resolve(options.rootDirectory);
   const targetDirectory = path.join(rootDirectory, sessionId);
   const targetLog = path.join(targetDirectory, "session.jsonl");
 
-  const targetExists = await fileExists(targetLog);
-  if (targetExists) {
+  // Durable state is authoritative. Once the canonical log exists, stale or
+  // malformed surface history must never block or reinterpret resume.
+  if (await fileExists(targetLog)) {
+    return false;
+  }
+
+  const plan = buildLegacyMigrationPlan(options.input);
+  if (!plan) {
     return false;
   }
 
@@ -354,8 +355,10 @@ async function importLegacyMigrationPlan(
 
     const responseId =
       "compat-migration-response-" + String(iteration);
-    const appendEvent = async (
-      event: Omit<AgentRunEvent, "eventId" | "sequence" | "responseId">,
+    const appendEvent = async <
+      T extends AgentRunEvent,
+    >(
+      event: Omit<T, "eventId" | "sequence" | "responseId">,
     ) => {
       eventSequence += 1;
       await store.appendModelEvent({
