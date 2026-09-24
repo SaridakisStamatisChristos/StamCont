@@ -418,7 +418,15 @@ export async function readAgentCompactionArtifact(
     };
   }
 
-  const durableRecords = records ?? (await store.readAllRecords());
+  // Reuse a caller's already-read durable snapshot only while it still
+  // matches the store's current committed sequence. If the store advanced,
+  // fall back to a fresh authoritative log read rather than validating an
+  // artifact against stale derived input.
+  const durableRecords =
+    records !== undefined &&
+    (records.at(-1)?.sequence ?? 0) === store.lastSequence
+      ? records
+      : await store.readAllRecords();
   try {
     assertArtifactMatchesRecords(
       durableRecords,
