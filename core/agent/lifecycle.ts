@@ -831,8 +831,11 @@ function parseLifecycleRecord(
   if (value.schemaVersion !== AGENT_LIFECYCLE_SCHEMA_VERSION) {
     throw new AgentLifecycleError(
       "unsupported_lifecycle_schema",
-      "Unsupported persisted agent lifecycle schema version: " +
-        String(value.schemaVersion),
+      "Unsupported persisted agent lifecycle schema version " +
+        String(value.schemaVersion) +
+        "; this build supports version " +
+        String(AGENT_LIFECYCLE_SCHEMA_VERSION) +
+        ". Migrate the durable session before resuming it.",
     );
   }
   if (value.type !== "state" && value.type !== "tool_attempt") {
