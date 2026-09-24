@@ -151,6 +151,7 @@ export async function agent(
       ),
       compactionSummarizer: createAgentDriverCompactionSummarizer(runtime.driver),
       onEvent: (event) => renderer.onEvent(event),
+      executionProfile: profile,
     });
 
     renderer.finish(result.sessionId, result.result);
