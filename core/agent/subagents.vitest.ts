@@ -61,7 +61,7 @@ const context = {
 function event(
   sequence: number,
   responseId: string,
-  value: Omit<AgentRunEvent, "eventId" | "sequence" | "responseId">,
+  value: any,
 ): AgentRunEvent {
   return {
     ...value,
