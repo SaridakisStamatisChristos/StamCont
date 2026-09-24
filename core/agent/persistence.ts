@@ -286,15 +286,12 @@ export class AgentSessionStore {
       this.logSize += entry.length;
       this.indexEntries.push(entry);
 
-      try {
-        await writeIndexAtomic(this.paths.index, this.sessionId, {
-          entries: this.indexEntries,
-          completeBytes: this.logSize,
-        });
-        this.indexDirtyValue = false;
-      } catch {
-        this.indexDirtyValue = true;
-      }
+      // The index is derived state. Rewriting the full JSON index after every
+      // authoritative append makes long streamed sessions quadratic in total
+      // index bytes written. Keep the in-memory index current and checkpoint it
+      // on close/rebuild; a crash can only leave a stale derived index, which
+      // open() already rebuilds from the authoritative JSONL log.
+      this.indexDirtyValue = true;
 
       return record;
     });
@@ -449,10 +446,33 @@ export class AgentSessionStore {
       await this.writeQueue;
       return;
     }
+
+    // Queue the derived-index checkpoint behind every pending authoritative
+    // append before preventing new writes. Index failure must never make an
+    // already-fsynced log append non-durable.
+    const flushIndex = this.enqueueWrite(async () => {
+      await this.flushDerivedIndex();
+    });
     this.closing = true;
-    await this.writeQueue;
+    await flushIndex;
     this.closed = true;
     activeWriters.delete(path.resolve(this.paths.directory));
+  }
+
+  private async flushDerivedIndex(): Promise<void> {
+    if (!this.indexDirtyValue) {
+      return;
+    }
+
+    try {
+      await writeIndexAtomic(this.paths.index, this.sessionId, {
+        entries: this.indexEntries,
+        completeBytes: this.logSize,
+      });
+      this.indexDirtyValue = false;
+    } catch {
+      this.indexDirtyValue = true;
+    }
   }
 
   private async enqueueWrite<T>(operation: () => Promise<T>): Promise<T> {
