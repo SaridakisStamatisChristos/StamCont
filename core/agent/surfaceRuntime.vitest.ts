@@ -4,11 +4,16 @@ import * as path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import {
+  appendAgentLifecycleState,
+  initializeDurableAgentSession,
+} from "./lifecycle";
 import type {
   AgentModelDriver,
   AgentModelRequest,
   AgentToolExecutor,
 } from "./model";
+import { AgentSessionStore } from "./persistence";
 import type { AgentRunEvent } from "./protocol";
 import {
   AgentSurfaceRuntime,
@@ -223,5 +228,217 @@ describe("AgentSurfaceRuntime tool lifecycle", () => {
 
     const snapshot = await runtime.getSession("cancelled");
     expect(snapshot?.status).toBe("cancelled");
+  });
+
+  it("resumes a durable pending tool round through the surface runtime", async () => {
+    const directory = await root();
+    const sessionId = "surface-resume";
+    const store = await AgentSessionStore.open({
+      rootDirectory: directory,
+      sessionId,
+    });
+    await initializeDurableAgentSession(store, [
+      { type: "message", role: "user", content: "inspect" },
+    ]);
+    await appendAgentLifecycleState(store, "waiting_for_model", 1);
+    await store.appendModelEvent({
+      type: "response.started",
+      eventId: "e-1",
+      sequence: 1,
+      responseId: "r-1",
+    });
+    await store.appendModelEvent({
+      type: "output_item.added",
+      eventId: "e-2",
+      sequence: 2,
+      responseId: "r-1",
+      item: { id: "tool-resume", type: "tool_call" },
+    });
+    await store.appendModelEvent({
+      type: "output_item.completed",
+      eventId: "e-3",
+      sequence: 3,
+      responseId: "r-1",
+      item: {
+        id: "tool-resume",
+        type: "tool_call",
+        callId: "call-resume",
+        name: "write_file",
+        input: { path: "a.txt" },
+      },
+    });
+    await store.appendModelEvent({
+      type: "response.completed",
+      eventId: "e-4",
+      sequence: 4,
+      responseId: "r-1",
+      stopReason: "tool_use",
+    });
+    await appendAgentLifecycleState(store, "waiting_for_tool", 1);
+    await store.close();
+
+    const requests: AgentModelRequest[] = [];
+    const driver: AgentModelDriver = {
+      async *stream(request) {
+        requests.push(request);
+        let sequence = request.runState.lastSequence;
+        yield {
+          type: "response.started",
+          eventId: `e-${++sequence}`,
+          sequence,
+          responseId: "r-2",
+        };
+        yield {
+          type: "response.completed",
+          eventId: `e-${++sequence}`,
+          sequence,
+          responseId: "r-2",
+          stopReason: "end_turn",
+        };
+      },
+    };
+    const toolExecutor: AgentToolExecutor = {
+      async execute() {
+        return {
+          status: "success",
+          output: { resumed: true },
+        };
+      },
+    };
+    const runtime = new AgentSurfaceRuntime(
+      directory,
+      () => runtimeValue(driver, toolExecutor),
+    );
+
+    const generator = runtime.stream({
+      sessionId,
+      profile: "interactive",
+      toolNames: ["write_file"],
+    });
+    let next = await generator.next();
+    while (!next.done) {
+      next = await generator.next();
+    }
+
+    expect(next.value).toMatchObject({
+      status: "completed",
+      resumed: true,
+    });
+    expect(requests).toHaveLength(1);
+    expect(requests[0].input).toContainEqual({
+      type: "tool_result",
+      toolCallItemId: "tool-resume",
+      callId: "call-resume",
+      name: "write_file",
+      status: "success",
+      output: { resumed: true },
+    });
+  });
+
+  it("rejects a second active run for the same durable session", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const driver: AgentModelDriver = {
+      async *stream(request) {
+        let sequence = request.runState.lastSequence;
+        yield {
+          type: "response.started",
+          eventId: `e-${++sequence}`,
+          sequence,
+          responseId: "blocking",
+        };
+        await gate;
+        yield {
+          type: "response.completed",
+          eventId: `e-${++sequence}`,
+          sequence,
+          responseId: "blocking",
+          stopReason: "end_turn",
+        };
+      },
+    };
+    const runtime = new AgentSurfaceRuntime(
+      await root(),
+      () => runtimeValue(driver),
+    );
+
+    const first = runtime.stream({
+      sessionId: "exclusive",
+      profile: "interactive",
+      toolNames: [],
+      userPrompt: "first",
+    });
+    expect(await first.next()).toMatchObject({
+      done: false,
+      value: { type: "run_state", status: "running" },
+    });
+
+    const second = runtime.stream({
+      sessionId: "exclusive",
+      profile: "interactive",
+      toolNames: [],
+      userPrompt: "second",
+    });
+    await expect(second.next()).rejects.toThrow(
+      'Agent session "exclusive" already has an active run',
+    );
+
+    release();
+    let next = await first.next();
+    while (!next.done) {
+      next = await first.next();
+    }
+    expect(next.value.status).toBe("completed");
+  });
+
+  it("preserves a thrown undefined as an actual queue failure", async () => {
+    const runtime = new AgentSurfaceRuntime(
+      await root(),
+      () => {
+        throw undefined;
+      },
+    );
+    const generator = runtime.stream({
+      sessionId: "undefined-failure",
+      profile: "interactive",
+      toolNames: [],
+      userPrompt: "fail",
+    });
+
+    let rejected = false;
+    try {
+      await generator.next();
+    } catch (error) {
+      rejected = true;
+      expect(error).toBeUndefined();
+    }
+    expect(rejected).toBe(true);
+  });
+
+  it("returns false for stale approvals after a run has settled", async () => {
+    const runtime = new AgentSurfaceRuntime(
+      await root(),
+      () => runtimeValue(scriptedDriver()),
+    );
+    const generator = runtime.stream({
+      sessionId: "stale-approval",
+      profile: "interactive",
+      toolNames: [],
+      userPrompt: "hello",
+    });
+    let next = await generator.next();
+    while (!next.done) {
+      next = await generator.next();
+    }
+
+    expect(
+      await runtime.approve(
+        "stale-approval",
+        "approval:missing:missing",
+        true,
+      ),
+    ).toBe(false);
   });
 });
