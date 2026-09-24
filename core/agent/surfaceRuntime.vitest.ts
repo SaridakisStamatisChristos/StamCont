@@ -1,4 +1,9 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -441,4 +446,180 @@ describe("AgentSurfaceRuntime tool lifecycle", () => {
       ),
     ).toBe(false);
   });
+
+  it("bootstraps legacy surface history once and then keeps durable replay authoritative", async () => {
+    const directory = await root();
+    const requests: AgentModelRequest[] = [];
+    const driver: AgentModelDriver = {
+      async *stream(request) {
+        requests.push(request);
+        let sequence = request.runState.lastSequence;
+        const responseId = `compat-r-${sequence + 1}`;
+        const event = <
+          T extends Omit<
+            AgentRunEvent,
+            "eventId" | "sequence" | "responseId"
+          >,
+        >(
+          value: T,
+        ) =>
+          ({
+            ...value,
+            eventId: `compat-e-${++sequence}`,
+            sequence,
+            responseId,
+          }) as AgentRunEvent;
+        yield event({ type: "response.started" });
+        const answerId = `answer-${requests.length}`;
+        yield event({
+          type: "output_item.added",
+          item: {
+            id: answerId,
+            type: "message",
+          },
+        });
+        yield event({
+          type: "output_item.completed",
+          item: {
+            id: answerId,
+            type: "message",
+            role: "assistant",
+            content: "done",
+          },
+        });
+        yield event({
+          type: "response.completed",
+          stopReason: "end_turn",
+        });
+      },
+    };
+    const runtime = new AgentSurfaceRuntime(
+      directory,
+      () => runtimeValue(driver),
+    );
+
+    const first = runtime.stream({
+      sessionId: "compat-bootstrap",
+      profile: "interactive",
+      toolNames: [],
+      initialInput: [
+        {
+          type: "message",
+          role: "system",
+          content: "legacy system",
+        },
+        {
+          type: "message",
+          role: "user",
+          content: "legacy question",
+        },
+        {
+          type: "model_output",
+          item: {
+            id: "legacy-answer",
+            type: "message",
+            role: "assistant",
+            content: "legacy answer",
+          },
+        },
+      ],
+      userPrompt: "new question",
+    });
+    let firstNext = await first.next();
+    while (!firstNext.done) firstNext = await first.next();
+
+    expect(firstNext.value).toMatchObject({
+      status: "completed",
+      resumed: false,
+    });
+    expect(requests[0].input).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "model_output",
+          item: expect.objectContaining({
+            id: "legacy-answer",
+            content: "legacy answer",
+          }),
+        }),
+        {
+          type: "message",
+          role: "user",
+          content: "new question",
+        },
+      ]),
+    );
+
+    const second = runtime.stream({
+      sessionId: "compat-bootstrap",
+      profile: "interactive",
+      toolNames: [],
+      initialInput: [
+        {
+          type: "message",
+          role: "user",
+          content: "stale surface history must not replace durable truth",
+        },
+      ],
+      userPrompt: "follow-up",
+    });
+    let secondNext = await second.next();
+    while (!secondNext.done) secondNext = await second.next();
+
+    expect(secondNext.value).toMatchObject({
+      status: "completed",
+      resumed: true,
+    });
+    expect(requests[1].input).toContainEqual({
+      type: "message",
+      role: "user",
+      content: "follow-up",
+    });
+    expect(requests[1].input).not.toContainEqual({
+      type: "message",
+      role: "user",
+      content: "stale surface history must not replace durable truth",
+    });
+  });
+
+  it("reports unsupported durable schema through privacy-safe surface diagnostics", async () => {
+    const directory = await root();
+    const sessionId = "surface-old-schema";
+    const sessionDirectory = path.join(directory, sessionId);
+    await mkdir(sessionDirectory, { recursive: true });
+    await writeFile(
+      path.join(sessionDirectory, "session.jsonl"),
+      JSON.stringify({
+        schemaVersion: 999,
+        sessionId,
+        sequence: 1,
+        kind: "metadata",
+        payload: { prompt: "must-not-leak" },
+      }) + "\n",
+      "utf8",
+    );
+    const createRuntime = () => runtimeValue(scriptedDriver());
+    const runtime = new AgentSurfaceRuntime(directory, createRuntime);
+
+    const stream = runtime.stream({
+      sessionId,
+      profile: "interactive",
+      toolNames: [],
+    });
+    await expect(stream.next()).rejects.toMatchObject({
+      code: "unsupported_schema",
+    });
+    expect(runtime.getDiagnostics(sessionId)).toEqual([
+      expect.objectContaining({
+        type: "failure",
+        details: {
+          category: "compatibility",
+          code: "unsupported_persistence_schema",
+        },
+      }),
+    ]);
+    expect(JSON.stringify(runtime.getDiagnostics(sessionId))).not.toContain(
+      "must-not-leak",
+    );
+  });
+
 });

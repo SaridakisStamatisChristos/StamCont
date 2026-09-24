@@ -1,5 +1,6 @@
 import { createAsyncThunk } from "@reduxjs/toolkit";
 import type { ContextItem, Tool } from "core";
+import { continueChatMessagesToAgentInput } from "core/agent/adapters/continueHistory";
 import type {
   AgentSurfaceEvent,
   AgentSurfaceRunResult,
@@ -81,13 +82,12 @@ export const streamAgentInput = createAsyncThunk<
       );
     }
 
-    const systemPrompt = messages.find(
-      (message) => message.role === "system",
+    const userMessageIndex = messages.findLastIndex(
+      (message) => message.role === "user",
     );
-    const userMessage = [...messages]
-      .reverse()
-      .find((message) => message.role === "user");
-    if (!userMessage) {
+    const userMessage =
+      userMessageIndex >= 0 ? messages[userMessageIndex] : undefined;
+    if (!userMessage || userMessage.role !== "user") {
       throw new Error("Canonical agent run requires a user message");
     }
 
@@ -108,9 +108,9 @@ export const streamAgentInput = createAsyncThunk<
         profile: state.session.executionProfile,
         toolNames: activeTools.map((tool) => tool.function.name),
         toolPolicies: getAgentSurfaceToolPolicies(state, activeTools),
-        systemPrompt: systemPrompt
-          ? renderChatMessage(systemPrompt)
-          : undefined,
+        initialInput: continueChatMessagesToAgentInput(
+          messages.slice(0, userMessageIndex),
+        ),
         userPrompt,
       },
       streamAborter.signal,

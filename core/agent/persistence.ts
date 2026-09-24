@@ -683,7 +683,10 @@ function validatePersistedRecord(
     throw new AgentPersistenceError(
       "unsupported_schema",
       "Unsupported agent persistence schema version " +
-        String(value.schemaVersion),
+        String(value.schemaVersion) +
+        "; this build supports version " +
+        String(AGENT_PERSISTENCE_SCHEMA_VERSION) +
+        ". Upgrade/downgrade StamCont or migrate this durable session before resuming it.",
     );
   }
   if (
