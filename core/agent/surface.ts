@@ -1,3 +1,4 @@
+import type { AgentModelInputItem } from "./model";
 import type { BuiltInExecutionProfileId } from "./capabilities";
 import type { AgentLoopStatus } from "./loop";
 import type {
@@ -24,6 +25,12 @@ export interface AgentSurfaceRunRequest {
   readonly toolPolicies?: Readonly<
     Record<string, AgentSurfaceToolPolicy>
   >;
+  /**
+   * Compatibility-only context used to bootstrap a previously non-durable
+   * surface into an empty durable session. Once durable history exists it is
+   * ignored; the durable log remains authoritative.
+   */
+  readonly initialInput?: readonly AgentModelInputItem[];
   readonly systemPrompt?: string;
   readonly userPrompt?: string;
   readonly maxIterations?: number;

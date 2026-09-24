@@ -6,6 +6,7 @@ import type {
   CoreAgentToolApprovalRequest,
 } from "./adapters/coreToolRuntime";
 import type { AgentCompactionSummarizer } from "./compaction";
+import { emitAgentCompatibilityFailureDiagnostic } from "./compatibility";
 import {
   AgentDiagnosticsBuffer,
   type AgentDebugBundle,
@@ -405,6 +406,16 @@ export class AgentSurfaceRuntime {
         error: result.error,
       });
       return surfaceResult(sessionId, resumed, result);
+    } catch (error) {
+      await emitAgentCompatibilityFailureDiagnostic(
+        this.diagnostics.sink,
+        {
+          sessionId,
+          executionProfile: request.profile,
+        },
+        error,
+      );
+      throw error;
     } finally {
       externalSignal?.removeEventListener(
         "abort",
@@ -491,34 +502,49 @@ async function prepareSurfaceInput(
   request: AgentSurfaceRunRequest,
 ): Promise<readonly AgentModelInputItem[]> {
   if (store.lastSequence === 0) {
-    const userPrompt = request.userPrompt?.trim();
-    if (!userPrompt) {
-      throw new Error(
-        "A user prompt is required when starting a new durable agent session",
-      );
-    }
-    const input: AgentModelInputItem[] = [];
+    const input: AgentModelInputItem[] = [
+      ...(request.initialInput ?? []),
+    ];
     const systemPrompt = request.systemPrompt?.trim();
-    if (systemPrompt) {
-      input.push({
+    if (systemPrompt && !hasSystemMessage(input)) {
+      input.unshift({
         type: "message",
         role: "system",
         content: systemPrompt,
       });
     }
-    input.push({
-      type: "message",
-      role: "user",
-      content: userPrompt,
-    });
+
+    const userPrompt = request.userPrompt?.trim();
+    if (userPrompt) {
+      input.push({
+        type: "message",
+        role: "user",
+        content: userPrompt,
+      });
+    }
+    if (!input.some((item) => item.type === "message" && item.role === "user")) {
+      throw new Error(
+        "A user prompt is required when starting a new durable agent session",
+      );
+    }
     return input;
   }
 
+  // Compatibility bootstrap input is deliberately one-shot. Once the durable
+  // log exists, replay is authoritative and stale surface history is ignored.
   const userPrompt = request.userPrompt?.trim();
   if (userPrompt) {
     await appendDurableAgentUserTurn(store, userPrompt);
   }
   return [];
+}
+
+function hasSystemMessage(
+  input: readonly AgentModelInputItem[],
+): boolean {
+  return input.some(
+    (item) => item.type === "message" && item.role === "system",
+  );
 }
 
 function createObservableToolExecutor(
