@@ -342,6 +342,7 @@ export async function reconcileDurableAgentToolAttempt(
 export async function initializeDurableAgentSession(
   store: AgentSessionStore,
   initialInput: readonly AgentModelInputItem[],
+  initialMetadata: readonly JsonObject[] = [],
 ): Promise<AgentDurableResumeAnalysis> {
   const existing = await store.readAllRecords();
   if (existing.length > 0) {
@@ -358,6 +359,9 @@ export async function initializeDurableAgentSession(
 
   validateInitialInput(initialInput);
   await appendAgentLifecycleState(store, "created", 0);
+  for (const metadata of initialMetadata) {
+    await store.appendMetadata(metadata);
+  }
   for (const input of initialInput) {
     await store.appendModelInput(input);
   }
@@ -1144,6 +1148,9 @@ async function repairCreatedDurableAgentSession(
       if (parsed.type === "state" && parsed.state === "created") {
         continue;
       }
+    }
+    if (record.kind === "metadata") {
+      continue;
     }
     throw new AgentLifecycleError(
       "invalid_lifecycle",
