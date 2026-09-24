@@ -7,6 +7,7 @@ import {
   AgentRunEvent,
   AgentStopReason,
   AgentToolCallItem,
+  isAgentStopReason,
   isExecutableToolCallItem,
 } from "./protocol";
 
@@ -78,6 +79,24 @@ export class AgentProtocolError extends Error {
     this.name = "AgentProtocolError";
   }
 }
+
+const AGENT_RUN_EVENT_TYPES = new Set<string>([
+  "response.started",
+  "output_item.added",
+  "content.delta",
+  "reasoning.delta",
+  "tool_call.delta",
+  "output_item.completed",
+  "response.completed",
+  "response.aborted",
+  "response.failed",
+]);
+
+const AGENT_OUTPUT_ITEM_TYPES = new Set<string>([
+  "message",
+  "reasoning",
+  "tool_call",
+]);
 
 export function createInitialAgentRunState(): AgentRunState {
   return {
@@ -174,6 +193,25 @@ export function getExecutableToolCalls(
 }
 
 function validateBasicEventEnvelope(event: AgentRunEvent): void {
+  const eventType = (event as { readonly type?: unknown }).type;
+  if (
+    typeof eventType !== "string" ||
+    !AGENT_RUN_EVENT_TYPES.has(eventType)
+  ) {
+    throw new AgentProtocolError(
+      `Unsupported agent event type: ${String(eventType)}`,
+    );
+  }
+  if (
+    eventType === "response.completed" &&
+    !isAgentStopReason(
+      (event as { readonly stopReason?: unknown }).stopReason,
+    )
+  ) {
+    throw new AgentProtocolError(
+      "response.completed contains an unsupported stop reason",
+    );
+  }
   if (!event.eventId.trim()) {
     throw new AgentProtocolError("Agent event id must be non-empty");
   }
@@ -364,6 +402,11 @@ function addOutputItem(
   items: readonly AgentOutputItemState[],
   descriptor: { id: string; type: AgentOutputItemType },
 ): readonly AgentOutputItemState[] {
+  if (!AGENT_OUTPUT_ITEM_TYPES.has(descriptor.type as string)) {
+    throw new AgentProtocolError(
+      `Unsupported output item type: ${String(descriptor.type)}`,
+    );
+  }
   if (!descriptor.id.trim()) {
     throw new AgentProtocolError("Output item id must be non-empty");
   }
