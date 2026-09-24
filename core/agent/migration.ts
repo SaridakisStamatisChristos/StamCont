@@ -49,6 +49,11 @@ export interface AgentLegacyHistoryMigrationOptions {
   readonly input: readonly AgentModelInputItem[];
 }
 
+type AgentMigrationEventInput<T> = T extends AgentRunEvent
+  ? Omit<T, "eventId" | "sequence" | "responseId">
+  : never;
+type AgentMigrationEvent = AgentMigrationEventInput<AgentRunEvent>;
+
 interface LegacyResponseStep {
   readonly type: "response";
   readonly output: readonly AgentModelOutputInput[];
@@ -355,10 +360,8 @@ async function importLegacyMigrationPlan(
 
     const responseId =
       "compat-migration-response-" + String(iteration);
-    const appendEvent = async <
-      T extends AgentRunEvent,
-    >(
-      event: Omit<T, "eventId" | "sequence" | "responseId">,
+    const appendEvent = async (
+      event: AgentMigrationEvent,
     ) => {
       eventSequence += 1;
       await store.appendModelEvent({
