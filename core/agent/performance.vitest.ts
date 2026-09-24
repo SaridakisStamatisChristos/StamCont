@@ -221,6 +221,112 @@ afterEach(async () => {
 });
 
 describe("PR15 deterministic performance fixtures", () => {
+  it("preserves authoritative completions across large mixed provider streams", () => {
+    const responseId = "mixed-stream-response";
+    const messageId = responseId + "-message";
+    const reasoningId = responseId + "-reasoning";
+    const toolId = responseId + "-tool";
+    let sequence = 1;
+    let state = createInitialAgentRunState();
+
+    const apply = (value: EventInput): void => {
+      state = reduceAgentRunEvent(
+        state,
+        event(sequence++, { ...value, responseId } as EventInput, "mixed"),
+      );
+    };
+
+    apply({ type: "response.started", responseId });
+    apply({
+      type: "output_item.added",
+      responseId,
+      item: { id: messageId, type: "message" },
+    });
+    apply({
+      type: "output_item.added",
+      responseId,
+      item: { id: reasoningId, type: "reasoning" },
+    });
+    apply({
+      type: "output_item.added",
+      responseId,
+      item: { id: toolId, type: "tool_call" },
+    });
+
+    for (let index = 0; index < 750; index += 1) {
+      apply({
+        type: "content.delta",
+        responseId,
+        itemId: messageId,
+        delta: "m",
+      });
+      apply({
+        type: "reasoning.delta",
+        responseId,
+        itemId: reasoningId,
+        delta: "r",
+      });
+      apply({
+        type: "tool_call.delta",
+        responseId,
+        itemId: toolId,
+        argumentsDelta: "a",
+      });
+    }
+
+    apply({
+      type: "output_item.completed",
+      responseId,
+      item: {
+        id: messageId,
+        type: "message",
+        role: "assistant",
+        content: "authoritative-message",
+      },
+    });
+    apply({
+      type: "output_item.completed",
+      responseId,
+      item: {
+        id: reasoningId,
+        type: "reasoning",
+        text: "authoritative-reasoning",
+        opaque: { encrypted: "opaque-mixed-stream" },
+      },
+    });
+    apply({
+      type: "output_item.completed",
+      responseId,
+      item: {
+        id: toolId,
+        type: "tool_call",
+        callId: "call-mixed",
+        name: "mixed_tool",
+        input: { value: "authoritative-tool-input" },
+      },
+    });
+    apply({
+      type: "response.completed",
+      responseId,
+      stopReason: "tool_use",
+    });
+
+    const response = getLatestAgentResponse(state);
+    expect(response).toMatchObject({
+      status: "completed",
+      stopReason: "tool_use",
+    });
+    expect(response?.outputItems).toMatchObject([
+      { status: "completed", text: "authoritative-message" },
+      { status: "completed", text: "authoritative-reasoning" },
+      {
+        status: "completed",
+        callId: "call-mixed",
+        name: "mixed_tool",
+      },
+    ]);
+  });
+
   it(
     "measures representative long-session hot paths without weakening semantics",
     async () => {
