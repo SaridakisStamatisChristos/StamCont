@@ -349,6 +349,28 @@ describe("StamCont durable agent persistence", () => {
     await reopened.close();
   });
 
+  it("checkpoints the derived index on clean close after hot-path appends", async () => {
+    const root = await makeRoot();
+    const store = await AgentSessionStore.open({
+      rootDirectory: root,
+      sessionId: "close-index-checkpoint",
+    });
+
+    await store.appendMetadata({ value: "durable" });
+    expect(store.indexDirty).toBe(true);
+    await store.close();
+
+    const reopened = await AgentSessionStore.open({
+      rootDirectory: root,
+      sessionId: "close-index-checkpoint",
+    });
+    expect(reopened.recovery.indexStatus).toBe("valid");
+    expect((await reopened.readRecord(1))?.payload).toEqual({
+      value: "durable",
+    });
+    await reopened.close();
+  });
+
   it("rebuilds corrupt and stale indexes without changing valid log data", async () => {
     const root = await makeRoot();
     const corrupt = await AgentSessionStore.open({
