@@ -140,7 +140,7 @@ describe("CliAgentKernelBridge", () => {
     ).resolves.toBe("written");
   });
 
-  it("forks a child session with explicit parent lineage", async () => {
+  it("forks a child with explicit lineage without exceeding the parent profile", async () => {
     const bridge = new CliAgentKernelBridge();
 
     const child = await bridge.forkSession({
@@ -151,7 +151,9 @@ describe("CliAgentKernelBridge", () => {
     });
 
     expect(child.parentSessionId).toBe("cli:parent-chat:interactive");
-    expect(child.profile.id).toBe("full_access");
+    expect(child.profile.id).toBe("interactive");
+    expect(child.capabilities.computerControl).toBe(false);
+    expect(child.capabilities.approvalMode).toBe("policy");
     expect(child.state).toBe("active");
   });
 
