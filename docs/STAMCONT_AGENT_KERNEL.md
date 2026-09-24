@@ -172,17 +172,17 @@ const result = await kernel.executeTool(
 );
 ```
 
-## Remaining Phase 2 work
+## Current release status
 
-The execution-hardening implementation is complete when both the focused cross-platform execution-security workflow and the normal StamCont baseline are green on the PR and again on merged `main`.
+The execution-hardening phase and provider-neutral AgentLoop are implemented. Roadmap PR16 is the final integration/release-readiness gate rather than a new kernel architecture phase.
 
-The final hardening gate covers:
+The focused execution-security workflow remains authoritative for:
 
 - Windows AppContainer filesystem, Plan read-only, descendant-process, environment, temp-isolation, cancellation, and network-denial properties;
 - Linux/macOS sandbox filesystem, read-only, nested-shell, environment, temp-isolation, cancellation, and network-denial properties;
 - restricted HTTP DNS-to-connect pinning, redirect revalidation, cross-origin credential stripping, and caller `Host`/proxy-auth suppression;
 - Full Access regression coverage proving that host-wide current-user filesystem/shell semantics remain unrestricted.
 
-After that gate is merged and green, the next architecture phase is the provider-neutral `AgentLoop`. The separate Orchestrator repository remains out of scope until the AgentLoop is stable.
+The complete runtime, persistence, resume, provider, compaction, diagnostics, nested-session, performance, and release contract is documented in [STAMCONT_AGENT_RUNTIME.md](./STAMCONT_AGENT_RUNTIME.md).
 
-The separate Orchestrator repository remains a later higher-level planning/DAG/durability layer and is not a dependency of the kernel.
+The separate Orchestrator repository remains a later higher-level planning/DAG layer and is not a dependency of the canonical StamCont runtime.
