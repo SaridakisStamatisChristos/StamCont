@@ -7,6 +7,10 @@ import {
   type ExecutionCapabilities,
   type ExecutionProfile,
 } from "./capabilities";
+import {
+  AgentDiagnosticsBuffer,
+  type AgentDebugBundle,
+} from "./diagnostics";
 import type { AgentDurableContextOptions } from "./lifecycle";
 import {
   runAgentLoop,
@@ -58,6 +62,7 @@ export interface AgentSubagentRelation {
 export interface AgentSubagentRuntimeOptions {
   readonly rootDirectory: string;
   readonly kernel?: AgentKernel;
+  readonly diagnostics?: AgentDiagnosticsBuffer;
 }
 
 interface AgentSubagentExecutionOptions {
@@ -97,10 +102,23 @@ export interface AgentSubagentRunResult {
 
 export class AgentSubagentRuntime {
   readonly kernel: AgentKernel;
+  readonly diagnostics: AgentDiagnosticsBuffer;
   private readonly activeChildren = new Map<string, AgentSession>();
 
   constructor(private readonly options: AgentSubagentRuntimeOptions) {
     this.kernel = options.kernel ?? new AgentKernel();
+    this.diagnostics =
+      options.diagnostics ?? new AgentDiagnosticsBuffer();
+  }
+
+  getDebugBundle(
+    childSessionId: string,
+    version?: string,
+  ): AgentDebugBundle {
+    return this.diagnostics.buildDebugBundle({
+      sessionId: childSessionId,
+      ...(version ? { version } : {}),
+    });
   }
 
   async run(
@@ -242,6 +260,11 @@ export class AgentSubagentRuntime {
         onEvent: options.onEvent
           ? async (event) => options.onEvent?.(event)
           : undefined,
+        diagnostics: this.diagnostics.sink,
+        diagnosticContext: {
+          sessionId: child.id,
+          executionProfile: child.profile.id,
+        },
         durability: {
           store,
           context: options.context,
