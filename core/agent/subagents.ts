@@ -30,10 +30,7 @@ import type {
   JsonObject,
   JsonValue,
 } from "./protocol";
-import {
-  AgentKernel,
-  type CreateAgentSessionOptions,
-} from "./kernel";
+import { AgentKernel } from "./kernel";
 import { AgentSession } from "./session";
 import {
   AgentCapabilityDeniedError,
