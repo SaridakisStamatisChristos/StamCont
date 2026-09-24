@@ -6,6 +6,11 @@ import type {
   CoreAgentToolApprovalRequest,
 } from "./adapters/coreToolRuntime";
 import type { AgentCompactionSummarizer } from "./compaction";
+import {
+  AgentDiagnosticsBuffer,
+  type AgentDebugBundle,
+  type AgentDiagnosticEvent,
+} from "./diagnostics";
 import type { BuiltInExecutionProfileId } from "./capabilities";
 import {
   analyzeDurableAgentSession,
@@ -82,11 +87,31 @@ interface ActiveSurfaceRun {
 
 export class AgentSurfaceRuntime {
   private readonly activeRuns = new Map<string, ActiveSurfaceRun>();
+  readonly diagnostics: AgentDiagnosticsBuffer;
 
   constructor(
     readonly rootDirectory: string,
     private readonly createRuntime: AgentSurfaceRuntimeFactory,
-  ) {}
+    diagnostics: AgentDiagnosticsBuffer = new AgentDiagnosticsBuffer(),
+  ) {
+    this.diagnostics = diagnostics;
+  }
+
+  getDiagnostics(
+    sessionId?: string,
+  ): readonly AgentDiagnosticEvent[] {
+    return this.diagnostics.list(sessionId);
+  }
+
+  getDebugBundle(
+    sessionId: string,
+    version?: string,
+  ): AgentDebugBundle {
+    return this.diagnostics.buildDebugBundle({
+      sessionId: validateSessionId(sessionId),
+      ...(version ? { version } : {}),
+    });
+  }
 
   async *stream(
     request: AgentSurfaceRunRequest,
@@ -361,6 +386,11 @@ export class AgentSurfaceRuntime {
           )) {
             emit(projected);
           }
+        },
+        diagnostics: this.diagnostics.sink,
+        diagnosticContext: {
+          sessionId,
+          executionProfile: request.profile,
         },
         durability: {
           store,
