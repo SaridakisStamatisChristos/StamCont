@@ -111,12 +111,14 @@ export class AgentSubagentRuntime {
     const requestedProfile = resolveProfile(
       options.profile ?? options.parent.profile,
     );
-    const child = await this.kernel.createSession({
-      id: options.id,
-      profile: requestedProfile,
-      parent: options.parent,
-      metadata: options.metadata,
-    });
+    const child = await this.kernel.forkSession(
+      options.parent,
+      {
+        id: options.id,
+        profile: requestedProfile,
+        metadata: options.metadata,
+      },
+    );
 
     if (child.id === options.parent.id) {
       child.close();
@@ -168,14 +170,16 @@ export class AgentSubagentRuntime {
       relation.effectiveProfile.description,
       cloneCapabilities(relation.effectiveProfile.capabilities),
     );
-    const child = await this.kernel.createSession({
-      id: relation.childSessionId,
-      profile: persistedProfile,
-      parent: options.parent,
-      metadata: {
-        restoredFromDurableRelation: true,
+    const child = await this.kernel.forkSession(
+      options.parent,
+      {
+        id: relation.childSessionId,
+        profile: persistedProfile,
+        metadata: {
+          restoredFromDurableRelation: true,
+        },
       },
-    });
+    );
     assertChildCapabilityInvariant(child, options.parent);
 
     return this.executeChild(
