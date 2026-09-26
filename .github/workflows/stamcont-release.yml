@@ -150,18 +150,42 @@ jobs:
           mkdir -p "$STAGE"
           cp -R extensions/cli/dist "$STAGE/dist"
           cp extensions/cli/package.json "$STAGE/package.json"
+
+          # The repository package manifest contains development lifecycle hooks
+          # (notably prepare -> build) that are correct in source checkouts but
+          # wrong for a prebuilt release bundle. Produce an installable local
+          # package manifest without changing the compatibility npm identity.
+          node - "$STAGE/package.json" "$VERSION" <<'NODE'
+          const fs = require("fs");
+          const path = process.argv[2];
+          const version = process.argv[3];
+          const pkg = JSON.parse(fs.readFileSync(path, "utf8"));
+
+          pkg.version = version;
+          pkg.private = true;
+          if (pkg.scripts) {
+            delete pkg.scripts.prepare;
+            delete pkg.scripts["semantic-release"];
+            delete pkg.scripts["semantic-release:dry-run"];
+          }
+
+          fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + "\n");
+          NODE
+
           cp LICENSE "$STAGE/LICENSE"
           cat > "$STAGE/INSTALL.txt" <<'EOF'
           StamCont CLI standalone bundle.
 
-          Primary entry point:
-            node dist/stamcont.js
+          Install the extracted bundle locally:
+            npm install --global .
 
-          Compatibility alias:
+          Or run the prebuilt entry points directly:
+            node dist/stamcont.js
             node dist/cn.js
 
           The package manifest intentionally retains the compatibility npm identity
-          until a StamCont-owned npm target is provisioned.
+          and is marked private so it cannot be accidentally published. External
+          npm publication remains disabled until a StamCont-owned target exists.
           EOF
           tar -C release -czf "release/stamcont-cli-$VERSION.tar.gz" "stamcont-cli-$VERSION"
           rm -rf "$STAGE"
