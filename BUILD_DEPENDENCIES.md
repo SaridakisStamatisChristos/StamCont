@@ -1,6 +1,8 @@
 # Build Dependencies & Secrets
 
-This document catalogs all build dependencies, secrets, and environment variables required by the continue-fork repository.
+This document inventories build dependencies, secrets, and environment variables referenced by the StamCont repository, including inherited Continue-era workflows and compatibility code.
+
+> **Important:** presence in this inventory does not mean a credential is required for normal StamCont development or that StamCont owns the corresponding upstream service. Inherited publishing and marketplace paths remain quarantined until StamCont has an intentionally defined release identity.
 
 ---
 
@@ -32,8 +34,8 @@ This document catalogs all build dependencies, secrets, and environment variable
 
 | Variable            | Purpose                                                                 | Referenced In                                                                                      |
 | ------------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `CONTINUE_API_BASE` | Base URL for the Continue API (defaults to `https://api.continue.dev/`) | `extensions/cli/.env.example`                                                                      |
-| `CONTINUE_API_KEY`  | API key for Continue authentication                                     | `extensions/cli/.env.example`, `packages/continue-sdk/typescript/.env.example`, multiple workflows |
+| `CONTINUE_API_BASE` | Inherited Continue API compatibility endpoint (defaults to `https://api.continue.dev/`); not a StamCont-owned service | `extensions/cli/.env.example`                                                                      |
+| `CONTINUE_API_KEY`  | Inherited Continue authentication compatibility variable; not a StamCont-issued credential                 | `extensions/cli/.env.example`, `packages/continue-sdk/typescript/.env.example`, multiple workflows |
 
 ---
 
@@ -73,7 +75,7 @@ Used for integration tests in PR checks and package releases.
 | ------------------ | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | `GITHUB_TOKEN`     | Default GitHub Actions token (automatic)                        | Many workflows                                                                                                        |
 | `CI_GITHUB_TOKEN`  | Elevated GitHub PAT for cross-repo operations and PR management | `jetbrains-release.yaml`, `preview.yaml`, `main.yaml`, `pr-checks.yaml`, `auto-assign-issue.yaml`                     |
-| `CONTINUE_API_KEY` | Continue platform API key for agent workflows                   | `run-continue-agent.yml`, `tidy-up-codebase.yml`, `snyk-agent.yaml`, `auto-fix-failed-tests.yml`, `cli-pr-checks.yml` |
+| `CONTINUE_API_KEY` | Inherited Continue platform key referenced by legacy/upstream workflows | `run-continue-agent.yml`, `tidy-up-codebase.yml`, `snyk-agent.yaml`, `auto-fix-failed-tests.yml`, `cli-pr-checks.yml` |
 | `RUNLOOP_API_KEY`  | Runloop API key for uploading sandbox blueprints                | `stable-release.yml`, `upload-runloop-blueprint.yml`                                                                  |
 | `SNYK_TOKEN`       | Snyk security scanning token                                    | `snyk-agent.yaml`                                                                                                     |
 
