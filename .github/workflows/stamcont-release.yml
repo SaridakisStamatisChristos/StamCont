@@ -9,6 +9,11 @@ on:
       - ".github/actions/build-vscode-extension/action.yml"
       - "release/**"
       - "scripts/stamcont-release-*.mjs"
+      - "README.md"
+      - "UPSTREAM.md"
+      - "docs/ide-extensions/install.mdx"
+      - "docs/snippets/cli-install.mdx"
+      - "extensions/cli/README.md"
   workflow_dispatch:
     inputs:
       version:
@@ -16,6 +21,8 @@ on:
         required: true
         default: "0.1.0"
   push:
+    branches:
+      - "release-validation/**"
     tags:
       - "v*.*.*"
 
@@ -51,6 +58,9 @@ jobs:
       - name: Validate release ownership policy
         run: node scripts/stamcont-release-policy.mjs
 
+      - name: Validate standalone release-readiness contract
+        run: node scripts/stamcont-release-readiness.mjs
+
       - name: Resolve release version and source policy
         id: release
         shell: bash
@@ -69,6 +79,8 @@ jobs:
               exit 1
             fi
             VERSION="$EVENT_VERSION"
+          elif [[ "$EVENT_NAME" == "push" && "${GITHUB_REF}" == refs/heads/release-validation/* ]]; then
+            VERSION="0.1.0-validation.${GITHUB_RUN_NUMBER}"
           elif [[ "$EVENT_NAME" == "push" && "${GITHUB_REF}" == refs/tags/* ]]; then
             TAG="${GITHUB_REF_NAME}"
             if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -138,18 +150,42 @@ jobs:
           mkdir -p "$STAGE"
           cp -R extensions/cli/dist "$STAGE/dist"
           cp extensions/cli/package.json "$STAGE/package.json"
+
+          # The repository package manifest contains development lifecycle hooks
+          # (notably prepare -> build) that are correct in source checkouts but
+          # wrong for a prebuilt release bundle. Produce an installable local
+          # package manifest without changing the compatibility npm identity.
+          node - "$STAGE/package.json" "$VERSION" <<'NODE'
+          const fs = require("fs");
+          const path = process.argv[2];
+          const version = process.argv[3];
+          const pkg = JSON.parse(fs.readFileSync(path, "utf8"));
+
+          pkg.version = version;
+          pkg.private = true;
+          if (pkg.scripts) {
+            delete pkg.scripts.prepare;
+            delete pkg.scripts["semantic-release"];
+            delete pkg.scripts["semantic-release:dry-run"];
+          }
+
+          fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + "\n");
+          NODE
+
           cp LICENSE "$STAGE/LICENSE"
           cat > "$STAGE/INSTALL.txt" <<'EOF'
           StamCont CLI standalone bundle.
 
-          Primary entry point:
-            node dist/stamcont.js
+          Install the extracted bundle locally:
+            npm install --global .
 
-          Compatibility alias:
+          Or run the prebuilt entry points directly:
+            node dist/stamcont.js
             node dist/cn.js
 
           The package manifest intentionally retains the compatibility npm identity
-          until a StamCont-owned npm target is provisioned.
+          and is marked private so it cannot be accidentally published. External
+          npm publication remains disabled until a StamCont-owned target exists.
           EOF
           tar -C release -czf "release/stamcont-cli-$VERSION.tar.gz" "stamcont-cli-$VERSION"
           rm -rf "$STAGE"
@@ -366,11 +402,242 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  cli-clean-install:
+    name: Clean CLI install / ${{ matrix.os }}
+    needs:
+      - contract
+      - metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+
+      - name: Download complete release bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: stamcont-release-bundle-${{ needs.contract.outputs.version }}
+          path: release
+
+      - name: Verify and install CLI bundle from scratch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release
+          sha256sum --check SHA256SUMS
+          cd ..
+
+          ARCHIVE="$(find release -maxdepth 1 -type f -name 'stamcont-cli-*.tar.gz' | sort | head -n 1)"
+          test -n "$ARCHIVE"
+
+          SMOKE_ROOT=".release-smoke"
+          INSTALL_ROOT="$SMOKE_ROOT/cli"
+          GLOBAL_PREFIX="$SMOKE_ROOT/npm-global"
+          rm -rf "$SMOKE_ROOT"
+          mkdir -p "$INSTALL_ROOT" "$GLOBAL_PREFIX"
+          tar -C "$INSTALL_ROOT" -xzf "$ARCHIVE"
+
+          PACKAGE_DIR="$(find "$INSTALL_ROOT" -mindepth 1 -maxdepth 1 -type d -name 'stamcont-cli-*' | sort | head -n 1)"
+          test -n "$PACKAGE_DIR"
+          test -f "$PACKAGE_DIR/package.json"
+          test -f "$PACKAGE_DIR/dist/stamcont.js"
+          test -f "$PACKAGE_DIR/dist/cn.js"
+
+          ABS_PREFIX="$(cd "$GLOBAL_PREFIX" && pwd)"
+          ABS_PACKAGE="$(cd "$PACKAGE_DIR" && pwd)"
+          npm install --global --ignore-scripts --prefix "$ABS_PREFIX" "$ABS_PACKAGE"
+
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            export PATH="$ABS_PREFIX:$PATH"
+          else
+            export PATH="$ABS_PREFIX/bin:$PATH"
+          fi
+
+          stamcont --help > "$SMOKE_ROOT/stamcont-help.txt"
+          cn --help > "$SMOKE_ROOT/cn-help.txt"
+          test -s "$SMOKE_ROOT/stamcont-help.txt"
+          test -s "$SMOKE_ROOT/cn-help.txt"
+
+  vscode-clean-install:
+    name: Clean VSIX install
+    needs:
+      - contract
+      - metadata
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: ".nvmrc"
+
+      - name: Download complete release bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: stamcont-release-bundle-${{ needs.contract.outputs.version }}
+          path: release
+
+      - name: Verify release checksums
+        working-directory: release
+        run: sha256sum --check SHA256SUMS
+
+      - name: Install VS Code test harness
+        working-directory: extensions/vscode
+        run: npm ci
+
+      - name: Install released VSIX into a clean extension directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          VSIX="$(find release -maxdepth 1 -type f -name 'stamcont-vscode-*-linux-x64.vsix' | sort | head -n 1)"
+          test -n "$VSIX"
+
+          STORAGE="$RUNNER_TEMP/stamcont-vscode-storage"
+          EXTENSIONS="$RUNNER_TEMP/stamcont-vscode-extensions"
+          mkdir -p "$STORAGE" "$EXTENSIONS"
+
+          cd extensions/vscode
+          npx extest get-vscode --storage "$STORAGE" --code_version 1.95.0
+          npx extest install-vsix -f "$GITHUB_WORKSPACE/$VSIX" --extensions_dir "$EXTENSIONS" --storage "$STORAGE"
+
+          PACKAGE_JSON="$(find "$EXTENSIONS" -mindepth 2 -maxdepth 2 -type f -name package.json | sort | head -n 1)"
+          test -n "$PACKAGE_JSON"
+
+          node - "$PACKAGE_JSON" <<'NODE'
+          const fs = require("fs");
+          const pkg = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+
+          if (pkg.publisher !== "Continue" || pkg.name !== "continue") {
+            throw new Error("VS Code compatibility marketplace identity drifted");
+          }
+          if (!String(pkg.displayName).startsWith("StamCont")) {
+            throw new Error("VS Code installed display identity is not StamCont");
+          }
+
+          const commands = new Set((pkg.contributes?.commands ?? []).map((entry) => entry.command));
+          if (!commands.has("continue.newSession") || !commands.has("stamcont.newSession")) {
+            throw new Error("VS Code command alias compatibility is missing");
+          }
+
+          const configKeys = Object.keys(pkg.contributes?.configuration?.properties ?? {});
+          if (!configKeys.includes("continue.telemetryEnabled")) {
+            throw new Error("VS Code persisted continue.* configuration compatibility is missing");
+          }
+          if (configKeys.some((key) => key.startsWith("stamcont."))) {
+            throw new Error("VS Code persisted settings namespace changed unexpectedly");
+          }
+
+          const viewContainers = Object.keys(pkg.contributes?.views ?? {});
+          if (!viewContainers.includes("continue") || !viewContainers.includes("continueConsole")) {
+            throw new Error("VS Code persisted view identity is missing");
+          }
+          NODE
+
+  jetbrains-clean-install:
+    name: Clean JetBrains install
+    needs:
+      - contract
+      - metadata
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download complete release bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: stamcont-release-bundle-${{ needs.contract.outputs.version }}
+          path: release
+
+      - name: Verify and install plugin ZIP into a clean plugin directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release
+          sha256sum --check SHA256SUMS
+          cd ..
+
+          ZIP="$(find release -maxdepth 1 -type f -name 'stamcont-jetbrains-*.zip' | sort | head -n 1)"
+          test -n "$ZIP"
+          unzip -t "$ZIP"
+
+          PLUGINS="$RUNNER_TEMP/stamcont-jetbrains-plugins"
+          mkdir -p "$PLUGINS"
+          unzip -q "$ZIP" -d "$PLUGINS"
+
+          PLUGIN_JAR=""
+          while IFS= read -r jar; do
+            if unzip -l "$jar" META-INF/plugin.xml >/dev/null 2>&1; then
+              PLUGIN_JAR="$jar"
+              break
+            fi
+          done < <(find "$PLUGINS" -type f -name '*.jar' | sort)
+
+          test -n "$PLUGIN_JAR"
+          unzip -p "$PLUGIN_JAR" META-INF/plugin.xml > "$RUNNER_TEMP/plugin.xml"
+
+          grep -F '<id>com.github.continuedev.continueintellijextension</id>' "$RUNNER_TEMP/plugin.xml"
+          grep -F '<name>StamCont</name>' "$RUNNER_TEMP/plugin.xml"
+          grep -F '<toolWindow id="Continue"' "$RUNNER_TEMP/plugin.xml"
+          grep -F '<notificationGroup id="Continue"' "$RUNNER_TEMP/plugin.xml"
+          grep -F 'id="continue.inlineEdit"' "$RUNNER_TEMP/plugin.xml"
+          grep -F 'displayName="StamCont"' "$RUNNER_TEMP/plugin.xml"
+
+          test "$(find "$PLUGINS" -type f | wc -l)" -gt 10
+
+  durable-resume-demo:
+    name: Durable resume demonstration
+    needs: contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build local packages
+        uses: ./.github/actions/setup-packages
+
+      - name: Setup core
+        uses: ./.github/actions/setup-component
+        with:
+          component: core
+          include-root: true
+
+      - name: Run durable release-readiness flows
+        working-directory: core
+        run: npm run vitest -- agent/releaseReadiness.vitest.ts
+
+  release-readiness:
+    name: Standalone readiness gate
+    if: always()
+    needs:
+      - metadata
+      - cli-clean-install
+      - vscode-clean-install
+      - jetbrains-clean-install
+      - durable-resume-demo
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all standalone release checks
+        shell: bash
+        run: |
+          test "${{ needs.metadata.result }}" = "success"
+          test "${{ needs.cli-clean-install.result }}" = "success"
+          test "${{ needs.vscode-clean-install.result }}" = "success"
+          test "${{ needs.jetbrains-clean-install.result }}" = "success"
+          test "${{ needs.durable-resume-demo.result }}" = "success"
+
   publish-github:
     name: Publish GitHub release
     needs:
       - contract
-      - metadata
+      - release-readiness
     if: >-
       github.event_name == 'push' &&
       startsWith(github.ref, 'refs/tags/v') &&

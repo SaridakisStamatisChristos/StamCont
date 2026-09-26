@@ -1,18 +1,29 @@
 <Tabs>
   <Tab title="macOS / Linux">
+    Download `stamcont-cli-<version>.tar.gz` and `SHA256SUMS` from the
+    StamCont GitHub release, verify the checksum, then extract it:
+
     ```bash
-    curl -fsSL https://raw.githubusercontent.com/continuedev/continue/main/extensions/cli/scripts/install.sh | bash
+    sha256sum --check SHA256SUMS
+    tar -xzf stamcont-cli-<version>.tar.gz
+    cd stamcont-cli-<version>
+    node dist/stamcont.js --help
     ```
   </Tab>
   <Tab title="Windows">
+    Download `stamcont-cli-<version>.tar.gz` and `SHA256SUMS` from the
+    StamCont GitHub release, verify the SHA-256 value, extract the archive, then
+    run:
+
     ```powershell
-    irm https://raw.githubusercontent.com/continuedev/continue/main/extensions/cli/scripts/install.ps1 | iex
+    node .\dist\stamcont.js --help
     ```
+
+    The bundled `dist\cn.js` remains available as the compatibility alias.
   </Tab>
-  <Tab title="npm (cross-platform)">
-    If you already have Node.js 20+:
-    ```bash
-    npm i -g @continuedev/cli
-    ```
+  <Tab title="Package identity">
+    StamCont does not publish the inherited `@continuedev/cli` npm identity.
+    Standalone releases are distributed as StamCont-owned GitHub release
+    artifacts until a separate StamCont-owned registry target is provisioned.
   </Tab>
 </Tabs>
