@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "phase": "pr22-dry-run",
+  "product": "StamCont",
+  "repository": "SaridakisStamatisChristos/StamCont",
+  "release": {
+    "tagPattern": "^v\\d+\\.\\d+\\.\\d+$",
+    "sourceBranch": "main",
+    "firstPlannedVersion": "0.1.0",
+    "github": {
+      "owned": true,
+      "publishEnabled": false,
+      "enableRepositoryVariable": "STAMCONT_RELEASES_ENABLED",
+      "mode": "draft-upload-publish",
+      "rollback": "delete-new-draft-on-upload-or-publish-failure"
+    }
+  },
+  "externalDistribution": {
+    "npm": {
+      "publishEnabled": false,
+      "ownedTarget": null,
+      "compatibilityIdentity": "@continuedev/cli",
+      "reason": "No StamCont-owned npm scope/package has been provisioned."
+    },
+    "vscodeMarketplace": {
+      "publishEnabled": false,
+      "ownedTarget": null,
+      "compatibilityIdentity": "Continue.continue",
+      "reason": "No StamCont-owned VS Code Marketplace publisher/extension has been provisioned."
+    },
+    "jetbrainsMarketplace": {
+      "publishEnabled": false,
+      "ownedTarget": null,
+      "compatibilityIdentity": "com.github.continuedev.continueintellijextension",
+      "reason": "No StamCont-owned JetBrains Marketplace listing/upgrade path has been provisioned."
+    }
+  },
+  "supplyChain": {
+    "checksums": "SHA-256",
+    "sbom": "CycloneDX JSON via Syft/Anchore",
+    "provenance": "GitHub artifact attestation with Sigstore-backed SLSA provenance",
+    "externalCodeSigningEnabled": false,
+    "externalCodeSigningReason": "No StamCont-owned code-signing identities/keys are provisioned; do not reuse upstream credentials."
+  },
+  "artifacts": [
+    "stamcont-cli-{version}.tar.gz",
+    "stamcont-vscode-{version}-linux-x64.vsix",
+    "stamcont-vscode-{version}-win32-x64.vsix",
+    "stamcont-vscode-{version}-darwin-arm64.vsix",
+    "stamcont-jetbrains-{version}.zip",
+    "stamcont-sbom.cdx.json",
+    "release-manifest.json",
+    "SHA256SUMS"
+  ]
+}
