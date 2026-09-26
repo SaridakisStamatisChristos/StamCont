@@ -1,68 +1,67 @@
 ---
-title: "Install"
-description: "Get Continue installed in your favorite IDE in just a few steps."
+title: "Install StamCont IDE packages"
+description: "Install a standalone StamCont GitHub release in VS Code or JetBrains."
 ---
 
-<iframe
-  width="100%"
-  height="400"
-  src="https://www.youtube.com/embed/gjekTru4Cg4"
-  title="Install Continue VS Code Extension"
-  frameborder="0"
-  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-  allowfullscreen
-></iframe>
+StamCont standalone releases are installed from artifacts attached to the
+StamCont GitHub release. The inherited Continue Marketplace identities remain
+compatibility identifiers and are not StamCont-owned publication channels.
 
 <Tabs>
 <Tab title="VS Code">
 
 <Steps>
-<Step title="Install from Marketplace">
-Click `Install` on the [Continue extension page in the Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=Continue.continue)
+<Step title="Download the VSIX">
+Download the artifact matching your platform, for example
+`stamcont-vscode-<version>-linux-x64.vsix`, together with `SHA256SUMS`.
 </Step>
 
-<Step title="Install in VS Code">
-  This will open the Continue extension page in VS Code, where you will need to
-  click `Install` again
+<Step title="Verify the artifact">
+Verify the VSIX SHA-256 digest against the release's `SHA256SUMS`.
 </Step>
 
-<Step title="Move to Right Sidebar">
-The Continue logo will appear on the left sidebar. For a better experience, move Continue to the right sidebar
+<Step title="Install from VSIX">
+Open the Extensions view, choose **Views and More Actions (...) → Install from
+VSIX...**, and select the downloaded `.vsix` file.
 
-![move-to-right-sidebar](/images/move-to-right-sidebar-b2d315296198e41046fc174d8178f30a.gif)
+You can also use the VS Code CLI:
 
+```bash
+code --install-extension stamcont-vscode-<version>-<platform>-<arch>.vsix
+```
 </Step>
 
+<Step title="Confirm StamCont identity">
+The installed extension presents itself as **StamCont**. Continue-era extension,
+view, configuration, and command identifiers may remain internally so existing
+state and automation continue to work.
+</Step>
 </Steps>
-
-<Info>
-  If you have any problems, see the [troubleshooting guide](/troubleshooting).
-</Info>
 
 </Tab>
 
 <Tab title="JetBrains">
 
 <Steps>
-<Step title="Open Settings">
-Open your JetBrains IDE and open **Settings** using `Ctrl` + `Alt` + `S`
+<Step title="Download the plugin ZIP">
+Download `stamcont-jetbrains-<version>.zip` and `SHA256SUMS` from the
+StamCont GitHub release.
 </Step>
 
-<Step title="Find Continue Plugin">
-  Select **Plugins** on the sidebar and search for "Continue" in the marketplace
+<Step title="Verify the artifact">
+Verify the ZIP SHA-256 digest against the release metadata.
 </Step>
 
-<Step title="Install Plugin">
-Click `Install`, which will cause the Continue logo to show up on the right toolbar
+<Step title="Install Plugin from Disk">
+Open **Settings → Plugins**, open the gear menu, choose
+**Install Plugin from Disk...**, and select the downloaded StamCont ZIP.
+</Step>
 
-![jetbrains-getting-started.png](/images/getting-started/images/jetbrains-getting-started-d62b7edee1cdd58508c5075faf285955.png)
-
+<Step title="Confirm compatibility">
+The plugin presents itself as **StamCont** while retaining the compatibility
+plugin ID and persisted settings identifiers required by existing installations.
 </Step>
 </Steps>
-
-<Info>
-  If you have any problems, see the [troubleshooting guide](/troubleshooting).
-</Info>
 
 </Tab>
 </Tabs>
