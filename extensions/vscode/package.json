@@ -5,22 +5,21 @@
   "version": "1.3.40",
   "repository": {
     "type": "git",
-    "url": "https://github.com/continuedev/continue"
+    "url": "https://github.com/SaridakisStamatisChristos/StamCont"
   },
   "extensionKind": [
     "ui",
     "workspace"
   ],
   "bugs": {
-    "url": "https://github.com/continuedev/continue/issues",
-    "email": "nate@continue.dev"
+    "url": "https://github.com/SaridakisStamatisChristos/StamCont"
   },
-  "homepage": "https://continue.dev",
-  "qna": "https://github.com/continuedev/continue/issues/new/choose",
+  "homepage": "https://github.com/SaridakisStamatisChristos/StamCont",
+  "qna": "https://github.com/SaridakisStamatisChristos/StamCont",
   "license": "Apache-2.0",
-  "displayName": "Continue - open-source AI code agent",
+  "displayName": "StamCont - durable AI coding agent",
   "pricing": "Free",
-  "description": "The leading open-source AI code agent",
+  "description": "Durable, provider-neutral AI coding agent with resumable sessions and capability-scoped tools",
   "publisher": "Continue",
   "engines": {
     "vscode": "^1.70.0",
@@ -84,19 +83,19 @@
       }
     ],
     "configuration": {
-      "title": "Continue",
+      "title": "StamCont",
       "properties": {
         "continue.telemetryEnabled": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Continue collects anonymous usage data, cleaned of PII, to help us improve the product for our users. Read more  at [continue.dev › Telemetry](https://docs.continue.dev/telemetry).",
+          "markdownDescription": "Controls the extension's legacy anonymous telemetry preference. This compatibility key is retained during the StamCont identity migration.",
           "markdownDeprecationMessage": "This setting is deprecated and will be removed in a later version. Please use the _Telemetry > Allow Anonymous Telemetry_ setting in the extension's User Settings page.",
           "deprecationMessage": "Please use the _Telemetry > Allow Anonymous Telemetry_ setting in the extension's User Settings page."
         },
         "continue.showInlineTip": {
           "type": "boolean",
           "default": true,
-          "description": "Show inline suggestion to use the Continue keyboard shortcuts (e.g. \"Cmd/Ctrl L to select code, Cmd/Ctrl I to edit\")."
+          "description": "Show inline suggestions for StamCont keyboard shortcuts (for example, \"Cmd/Ctrl L\" for chat context and \"Cmd/Ctrl I\" for edit)."
         },
         "continue.disableQuickFix": {
           "type": "boolean",
@@ -106,27 +105,27 @@
         "continue.enableQuickActions": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Enable the experimental Quick Actions feature. Read our walkthrough to learn about configuration and how to share feedback: [continue.dev › Walkthrough: Quick Actions (experimental)](https://docs.continue.dev/customize/deep-dives/vscode-actions#quick-actions)"
+          "markdownDescription": "Enable the experimental Quick Actions feature."
         },
         "continue.enableTabAutocomplete": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Enable Continue's tab autocomplete feature. Read our walkthrough to learn about configuration and how to share feedback: [continue.dev › Walkthrough: Tab Autocomplete (beta)](https://docs.continue.dev/features/tab-autocomplete)"
+          "markdownDescription": "Enable StamCont's tab autocomplete feature."
         },
         "continue.enableNextEdit": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Enable Continue's next edit feature. Read our docs to learn about configuration and how to share feedback: [continue.dev › Features › Autocomplete › Next Edit (experimental)](https://docs.continue.dev/features/autocomplete/next-edit)"
+          "markdownDescription": "Enable StamCont's next edit feature."
         },
         "continue.pauseTabAutocompleteOnBattery": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Pause Continue's tab autocomplete feature when your battery is low."
+          "markdownDescription": "Pause StamCont's tab autocomplete feature when your battery is low."
         },
         "continue.pauseCodebaseIndexOnStart": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Pause Continue's codebase index on start."
+          "markdownDescription": "Pause StamCont's codebase index on start."
         },
         "continue.enableConsole": {
           "type": "boolean",
@@ -153,226 +152,226 @@
     "commands": [
       {
         "command": "continue.applyCodeFromChat",
-        "category": "Continue",
+        "category": "StamCont",
         "title": "Apply code from chat",
         "group": "Continue"
       },
       {
         "command": "continue.acceptDiff",
-        "category": "Continue",
+        "category": "StamCont",
         "title": "Accept Diff",
         "group": "Continue"
       },
       {
         "command": "continue.rejectDiff",
-        "category": "Continue",
+        "category": "StamCont",
         "title": "Reject Diff",
         "group": "Continue",
         "icon": "$(stop)"
       },
       {
         "command": "continue.acceptVerticalDiffBlock",
-        "category": "Continue",
+        "category": "StamCont",
         "title": "Accept Vertical Diff Block",
         "group": "Continue"
       },
       {
         "command": "continue.rejectVerticalDiffBlock",
-        "category": "Continue",
+        "category": "StamCont",
         "title": "Reject Vertical Diff Block",
         "group": "Continue"
       },
       {
         "command": "continue.focusEdit",
-        "category": "Continue",
+        "category": "StamCont",
         "title": "Add to Edit",
         "group": "Continue"
       },
       {
         "command": "continue.focusContinueInput",
-        "category": "Continue",
+        "category": "StamCont",
         "title": "Add Highlighted Code to Context and Clear Chat",
         "group": "Continue"
       },
       {
         "command": "continue.focusContinueInputWithoutClear",
-        "category": "Continue",
+        "category": "StamCont",
         "title": "Add to Chat",
         "group": "Continue"
       },
       {
         "command": "continue.debugTerminal",
-        "category": "Continue",
+        "category": "StamCont",
         "title": "Debug Terminal",
         "group": "Continue"
       },
       {
         "command": "continue.exitEditMode",
-        "category": "Continue",
+        "category": "StamCont",
         "title": "Exit Edit Mode",
         "group": "Continue"
       },
       {
         "command": "continue.openConfigPage",
-        "category": "Continue",
+        "category": "StamCont",
         "title": "Open Settings",
         "icon": "$(gear)",
         "group": "Continue"
       },
       {
         "command": "continue.toggleTabAutocompleteEnabled",
-        "category": "Continue",
+        "category": "StamCont",
         "title": "Toggle Autocomplete Enabled",
         "group": "Continue"
       },
       {
         "command": "continue.forceAutocomplete",
-        "title": "Continue: Force Autocomplete",
-        "category": "Continue"
+        "title": "StamCont: Force Autocomplete",
+        "category": "StamCont"
       },
       {
         "command": "continue.selectFilesAsContext",
-        "category": "Continue",
+        "category": "StamCont",
         "title": "Select Files as Context",
         "group": "Continue"
       },
       {
         "command": "continue.newSession",
-        "category": "Continue",
+        "category": "StamCont",
         "title": "New Session",
         "icon": "$(add)",
         "group": "Continue"
       },
       {
         "command": "continue.shareSession",
-        "category": "Continue",
+        "category": "StamCont",
         "title": "Share Current Chat Session as Markdown",
         "group": "Continue"
       },
       {
         "command": "continue.viewHistory",
-        "category": "Continue",
+        "category": "StamCont",
         "title": "View History",
         "icon": "$(history)",
         "group": "Continue"
       },
       {
         "command": "continue.viewLogs",
-        "category": "Continue",
+        "category": "StamCont",
         "title": "View Logs",
         "group": "Continue"
       },
       {
         "command": "continue.clearConsole",
-        "category": "Continue",
+        "category": "StamCont",
         "title": "Clear Console",
         "icon": "$(clear-all)",
         "group": "Continue"
       },
       {
         "command": "continue.navigateTo",
-        "category": "Continue",
+        "category": "StamCont",
         "title": "Navigate to a path",
         "group": "Continue"
       },
       {
         "command": "continue.writeCommentsForCode",
-        "category": "Continue",
+        "category": "StamCont",
         "title": "Write Comments for this Code",
         "group": "Continue"
       },
       {
         "command": "continue.writeDocstringForCode",
-        "category": "Continue",
+        "category": "StamCont",
         "title": "Write a Docstring for this Code",
         "group": "Continue"
       },
       {
         "command": "continue.fixCode",
-        "category": "Continue",
+        "category": "StamCont",
         "title": "Fix this Code",
         "group": "Continue"
       },
       {
         "command": "continue.optimizeCode",
-        "category": "Continue",
+        "category": "StamCont",
         "title": "Optimize this Code",
         "group": "Continue"
       },
       {
         "command": "continue.fixGrammar",
-        "category": "Continue",
+        "category": "StamCont",
         "title": "Fix Grammar / Spelling",
         "group": "Continue"
       },
       {
         "command": "continue.codebaseForceReIndex",
-        "category": "Continue",
+        "category": "StamCont",
         "title": "Codebase Force Re-Index",
         "group": "Continue"
       },
       {
         "command": "continue.rebuildCodebaseIndex",
-        "category": "Continue",
+        "category": "StamCont",
         "title": "Rebuild codebase index",
         "group": "Continue"
       },
       {
         "command": "continue.docsIndex",
-        "category": "Continue",
+        "category": "StamCont",
         "title": "Docs Index",
         "group": "Continue"
       },
       {
         "command": "continue.docsReIndex",
-        "category": "Continue",
+        "category": "StamCont",
         "title": "Docs Force Re-Index",
         "group": "Continue"
       },
       {
         "command": "continue.focusContinueInput",
-        "category": "Continue",
-        "title": "Focus Continue Chat",
+        "category": "StamCont",
+        "title": "Focus StamCont Chat",
         "group": "Continue"
       },
       {
         "command": "continue.enterEnterpriseLicenseKey",
-        "category": "Continue",
+        "category": "StamCont",
         "title": "Enter Enterprise License Key",
         "group": "Continue"
       },
       {
         "command": "continue.toggleNextEditEnabled",
-        "title": "Continue: Toggle Next Edit"
+        "title": "StamCont: Toggle Next Edit"
       },
       {
         "command": "continue.nextEditWindow.hideNextEditSuggestion",
-        "category": "Continue",
+        "category": "StamCont",
         "title": "Hide Next Edit Suggestion"
       },
       {
         "command": "continue.nextEditWindow.acceptNextEditSuggestion",
-        "category": "Continue",
+        "category": "StamCont",
         "title": "Accept Next Edit Suggestion"
       },
       {
         "command": "continue.forceNextEdit",
-        "category": "Continue",
-        "title": "Continue: Force Next Edit"
+        "category": "StamCont",
+        "title": "StamCont: Force Next Edit"
       },
       {
         "command": "continue.acceptJump",
-        "category": "Continue",
-        "title": "Continue: Accept Jump Suggestion"
+        "category": "StamCont",
+        "title": "StamCont: Accept Jump Suggestion"
       },
       {
         "command": "continue.rejectJump",
-        "category": "Continue",
-        "title": "Continue: Reject Jump Suggestion"
+        "category": "StamCont",
+        "title": "StamCont: Reject Jump Suggestion"
       },
       {
         "command": "continue.openInNewWindow",
-        "category": "Continue",
+        "category": "StamCont",
         "title": "Open in new window",
         "group": "Continue"
       }
@@ -498,7 +497,7 @@
     "submenus": [
       {
         "id": "continue.continueSubMenu",
-        "label": "Continue"
+        "label": "StamCont"
       }
     ],
     "menus": {
@@ -597,14 +596,14 @@
       "activitybar": [
         {
           "id": "continue",
-          "title": "Continue",
+          "title": "StamCont",
           "icon": "media/sidebar-icon.png"
         }
       ],
       "panel": [
         {
           "id": "continueConsole",
-          "title": "Continue Console",
+          "title": "StamCont Console",
           "icon": "$(window)"
         }
       ]
@@ -614,7 +613,7 @@
         {
           "type": "webview",
           "id": "continue.continueGUIView",
-          "name": "Continue",
+          "name": "StamCont",
           "icon": "media/sidebar-icon.png",
           "visibility": "visible"
         }
@@ -623,7 +622,7 @@
         {
           "type": "webview",
           "id": "continue.continueConsoleView",
-          "name": "Continue Console",
+          "name": "StamCont Console",
           "icon": "$(window)",
           "visibility": "visible",
           "when": "config.continue.enableConsole"

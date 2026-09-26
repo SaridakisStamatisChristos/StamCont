@@ -1,7 +1,7 @@
 {
   "name": "@continuedev/cli",
   "version": "0.0.0-dev",
-  "description": "Continue CLI",
+  "description": "StamCont CLI",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",
@@ -38,12 +38,12 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/continuedev/continue.git"
+    "url": "https://github.com/SaridakisStamatisChristos/StamCont.git"
   },
   "bugs": {
-    "url": "https://github.com/continuedev/continue/issues"
+    "url": "https://github.com/SaridakisStamatisChristos/StamCont"
   },
-  "homepage": "https://continue.dev",
+  "homepage": "https://github.com/SaridakisStamatisChristos/StamCont",
   "dependencies": {
     "fdir": "^6.4.2",
     "find-up": "^8.0.0",
