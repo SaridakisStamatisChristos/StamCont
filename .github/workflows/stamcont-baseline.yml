@@ -131,6 +131,31 @@ jobs:
           npm run lint
           npm run vitest
 
+  jetbrains:
+    name: JetBrains
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: zulu
+          java-version: 17
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-home-cache-cleanup: true
+
+      - name: Test and package JetBrains plugin
+        working-directory: extensions/intellij
+        run: ./gradlew test buildPlugin --stacktrace --no-daemon
+
   native:
     name: Binary
     runs-on: ubuntu-latest
@@ -208,6 +233,7 @@ jobs:
       - core
       - cli
       - ide
+      - jetbrains
       - native
     steps:
       - name: Require all baseline jobs
@@ -216,4 +242,5 @@ jobs:
           test "${{ needs.core.result }}" = "success"
           test "${{ needs.cli.result }}" = "success"
           test "${{ needs.ide.result }}" = "success"
+          test "${{ needs.jetbrains.result }}" = "success"
           test "${{ needs.native.result }}" = "success"
