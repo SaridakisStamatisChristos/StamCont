@@ -21,6 +21,8 @@ import * as YAML from "yaml";
 
 import { convertJsonToYamlConfig } from "../../../packages/config-yaml/dist";
 
+import { getCompatibleCommandIds } from "./identity";
+
 import {
   getAutocompleteStatusBarDescription,
   getAutocompleteStatusBarTitle,
@@ -893,8 +895,10 @@ export function registerAllCommands(
       editDecorationManager,
     ),
   )) {
-    context.subscriptions.push(
-      vscode.commands.registerCommand(command, callback),
-    );
+    for (const commandId of getCompatibleCommandIds(command)) {
+      context.subscriptions.push(
+        vscode.commands.registerCommand(commandId, callback),
+      );
+    }
   }
 }

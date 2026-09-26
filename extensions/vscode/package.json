@@ -52,7 +52,44 @@
   "activationEvents": [
     "onUri",
     "onStartupFinished",
-    "onView:continueGUIView"
+    "onView:continueGUIView",
+    "onCommand:stamcont.applyCodeFromChat",
+    "onCommand:stamcont.acceptDiff",
+    "onCommand:stamcont.rejectDiff",
+    "onCommand:stamcont.acceptVerticalDiffBlock",
+    "onCommand:stamcont.rejectVerticalDiffBlock",
+    "onCommand:stamcont.focusEdit",
+    "onCommand:stamcont.focusContinueInput",
+    "onCommand:stamcont.focusContinueInputWithoutClear",
+    "onCommand:stamcont.debugTerminal",
+    "onCommand:stamcont.exitEditMode",
+    "onCommand:stamcont.openConfigPage",
+    "onCommand:stamcont.toggleTabAutocompleteEnabled",
+    "onCommand:stamcont.forceAutocomplete",
+    "onCommand:stamcont.selectFilesAsContext",
+    "onCommand:stamcont.newSession",
+    "onCommand:stamcont.shareSession",
+    "onCommand:stamcont.viewHistory",
+    "onCommand:stamcont.viewLogs",
+    "onCommand:stamcont.clearConsole",
+    "onCommand:stamcont.navigateTo",
+    "onCommand:stamcont.writeCommentsForCode",
+    "onCommand:stamcont.writeDocstringForCode",
+    "onCommand:stamcont.fixCode",
+    "onCommand:stamcont.optimizeCode",
+    "onCommand:stamcont.fixGrammar",
+    "onCommand:stamcont.codebaseForceReIndex",
+    "onCommand:stamcont.rebuildCodebaseIndex",
+    "onCommand:stamcont.docsIndex",
+    "onCommand:stamcont.docsReIndex",
+    "onCommand:stamcont.enterEnterpriseLicenseKey",
+    "onCommand:stamcont.toggleNextEditEnabled",
+    "onCommand:stamcont.nextEditWindow.hideNextEditSuggestion",
+    "onCommand:stamcont.nextEditWindow.acceptNextEditSuggestion",
+    "onCommand:stamcont.forceNextEdit",
+    "onCommand:stamcont.acceptJump",
+    "onCommand:stamcont.rejectJump",
+    "onCommand:stamcont.openInNewWindow"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -374,122 +411,342 @@
         "category": "StamCont",
         "title": "Open in new window",
         "group": "Continue"
+      },
+      {
+        "command": "stamcont.applyCodeFromChat",
+        "category": "StamCont",
+        "title": "Apply code from chat",
+        "group": "Continue"
+      },
+      {
+        "command": "stamcont.acceptDiff",
+        "category": "StamCont",
+        "title": "Accept Diff",
+        "group": "Continue"
+      },
+      {
+        "command": "stamcont.rejectDiff",
+        "category": "StamCont",
+        "title": "Reject Diff",
+        "group": "Continue",
+        "icon": "$(stop)"
+      },
+      {
+        "command": "stamcont.acceptVerticalDiffBlock",
+        "category": "StamCont",
+        "title": "Accept Vertical Diff Block",
+        "group": "Continue"
+      },
+      {
+        "command": "stamcont.rejectVerticalDiffBlock",
+        "category": "StamCont",
+        "title": "Reject Vertical Diff Block",
+        "group": "Continue"
+      },
+      {
+        "command": "stamcont.focusEdit",
+        "category": "StamCont",
+        "title": "Add to Edit",
+        "group": "Continue"
+      },
+      {
+        "command": "stamcont.focusContinueInput",
+        "category": "StamCont",
+        "title": "Focus StamCont Chat",
+        "group": "Continue"
+      },
+      {
+        "command": "stamcont.focusContinueInputWithoutClear",
+        "category": "StamCont",
+        "title": "Add to Chat",
+        "group": "Continue"
+      },
+      {
+        "command": "stamcont.debugTerminal",
+        "category": "StamCont",
+        "title": "Debug Terminal",
+        "group": "Continue"
+      },
+      {
+        "command": "stamcont.exitEditMode",
+        "category": "StamCont",
+        "title": "Exit Edit Mode",
+        "group": "Continue"
+      },
+      {
+        "command": "stamcont.openConfigPage",
+        "category": "StamCont",
+        "title": "Open Settings",
+        "icon": "$(gear)",
+        "group": "Continue"
+      },
+      {
+        "command": "stamcont.toggleTabAutocompleteEnabled",
+        "category": "StamCont",
+        "title": "Toggle Autocomplete Enabled",
+        "group": "Continue"
+      },
+      {
+        "command": "stamcont.forceAutocomplete",
+        "title": "StamCont: Force Autocomplete",
+        "category": "StamCont"
+      },
+      {
+        "command": "stamcont.selectFilesAsContext",
+        "category": "StamCont",
+        "title": "Select Files as Context",
+        "group": "Continue"
+      },
+      {
+        "command": "stamcont.newSession",
+        "category": "StamCont",
+        "title": "New Session",
+        "icon": "$(add)",
+        "group": "Continue"
+      },
+      {
+        "command": "stamcont.shareSession",
+        "category": "StamCont",
+        "title": "Share Current Chat Session as Markdown",
+        "group": "Continue"
+      },
+      {
+        "command": "stamcont.viewHistory",
+        "category": "StamCont",
+        "title": "View History",
+        "icon": "$(history)",
+        "group": "Continue"
+      },
+      {
+        "command": "stamcont.viewLogs",
+        "category": "StamCont",
+        "title": "View Logs",
+        "group": "Continue"
+      },
+      {
+        "command": "stamcont.clearConsole",
+        "category": "StamCont",
+        "title": "Clear Console",
+        "icon": "$(clear-all)",
+        "group": "Continue"
+      },
+      {
+        "command": "stamcont.navigateTo",
+        "category": "StamCont",
+        "title": "Navigate to a path",
+        "group": "Continue"
+      },
+      {
+        "command": "stamcont.writeCommentsForCode",
+        "category": "StamCont",
+        "title": "Write Comments for this Code",
+        "group": "Continue"
+      },
+      {
+        "command": "stamcont.writeDocstringForCode",
+        "category": "StamCont",
+        "title": "Write a Docstring for this Code",
+        "group": "Continue"
+      },
+      {
+        "command": "stamcont.fixCode",
+        "category": "StamCont",
+        "title": "Fix this Code",
+        "group": "Continue"
+      },
+      {
+        "command": "stamcont.optimizeCode",
+        "category": "StamCont",
+        "title": "Optimize this Code",
+        "group": "Continue"
+      },
+      {
+        "command": "stamcont.fixGrammar",
+        "category": "StamCont",
+        "title": "Fix Grammar / Spelling",
+        "group": "Continue"
+      },
+      {
+        "command": "stamcont.codebaseForceReIndex",
+        "category": "StamCont",
+        "title": "Codebase Force Re-Index",
+        "group": "Continue"
+      },
+      {
+        "command": "stamcont.rebuildCodebaseIndex",
+        "category": "StamCont",
+        "title": "Rebuild codebase index",
+        "group": "Continue"
+      },
+      {
+        "command": "stamcont.docsIndex",
+        "category": "StamCont",
+        "title": "Docs Index",
+        "group": "Continue"
+      },
+      {
+        "command": "stamcont.docsReIndex",
+        "category": "StamCont",
+        "title": "Docs Force Re-Index",
+        "group": "Continue"
+      },
+      {
+        "command": "stamcont.enterEnterpriseLicenseKey",
+        "category": "StamCont",
+        "title": "Enter Enterprise License Key",
+        "group": "Continue"
+      },
+      {
+        "command": "stamcont.toggleNextEditEnabled",
+        "title": "StamCont: Toggle Next Edit",
+        "category": "StamCont"
+      },
+      {
+        "command": "stamcont.nextEditWindow.hideNextEditSuggestion",
+        "category": "StamCont",
+        "title": "Hide Next Edit Suggestion"
+      },
+      {
+        "command": "stamcont.nextEditWindow.acceptNextEditSuggestion",
+        "category": "StamCont",
+        "title": "Accept Next Edit Suggestion"
+      },
+      {
+        "command": "stamcont.forceNextEdit",
+        "category": "StamCont",
+        "title": "StamCont: Force Next Edit"
+      },
+      {
+        "command": "stamcont.acceptJump",
+        "category": "StamCont",
+        "title": "StamCont: Accept Jump Suggestion"
+      },
+      {
+        "command": "stamcont.rejectJump",
+        "category": "StamCont",
+        "title": "StamCont: Reject Jump Suggestion"
+      },
+      {
+        "command": "stamcont.openInNewWindow",
+        "category": "StamCont",
+        "title": "Open in new window",
+        "group": "Continue"
       }
     ],
     "keybindings": [
       {
-        "command": "continue.focusContinueInput",
+        "command": "stamcont.focusContinueInput",
         "mac": "cmd+l",
         "key": "ctrl+l"
       },
       {
-        "command": "continue.focusContinueInputWithoutClear",
+        "command": "stamcont.focusContinueInputWithoutClear",
         "mac": "cmd+shift+l",
         "key": "ctrl+shift+l"
       },
       {
-        "command": "continue.acceptDiff",
+        "command": "stamcont.acceptDiff",
         "mac": "shift+cmd+enter",
         "key": "shift+ctrl+enter",
         "when": "continue.diffVisible"
       },
       {
-        "command": "continue.rejectDiff",
+        "command": "stamcont.rejectDiff",
         "mac": "shift+cmd+backspace",
         "key": "shift+ctrl+backspace",
         "when": "continue.diffVisible"
       },
       {
-        "command": "continue.rejectDiff",
+        "command": "stamcont.rejectDiff",
         "mac": "cmd+z",
         "key": "ctrl+z",
         "when": "continue.diffVisible"
       },
       {
-        "command": "continue.quickEditHistoryUp",
+        "command": "stamcont.quickEditHistoryUp",
         "mac": "up",
         "key": "up",
         "when": "false && continue.quickEditHistoryFocused"
       },
       {
-        "command": "continue.quickEditHistoryDown",
+        "command": "stamcont.quickEditHistoryDown",
         "mac": "down",
         "key": "down",
         "when": "false && continue.quickEditHistoryFocused"
       },
       {
-        "command": "continue.acceptVerticalDiffBlock",
+        "command": "stamcont.acceptVerticalDiffBlock",
         "mac": "alt+cmd+y",
         "key": "alt+ctrl+y"
       },
       {
-        "command": "continue.rejectVerticalDiffBlock",
+        "command": "stamcont.rejectVerticalDiffBlock",
         "mac": "alt+cmd+n",
         "key": "alt+ctrl+n"
       },
       {
-        "command": "continue.focusEdit",
+        "command": "stamcont.focusEdit",
         "title": "Edit code with natural language",
         "mac": "cmd+i",
         "key": "ctrl+i"
       },
       {
-        "command": "continue.exitEditMode",
+        "command": "stamcont.exitEditMode",
         "mac": "escape",
         "key": "escape",
         "when": "continue.inEditMode && editorFocus"
       },
       {
-        "command": "continue.debugTerminal",
+        "command": "stamcont.debugTerminal",
         "mac": "cmd+shift+r",
         "key": "ctrl+shift+r"
       },
       {
-        "command": "continue.openInNewWindow",
+        "command": "stamcont.openInNewWindow",
         "mac": "cmd+k cmd+m",
         "key": "ctrl+k ctrl+m",
         "when": "!terminalFocus"
       },
       {
-        "command": "continue.toggleTabAutocompleteEnabled",
+        "command": "stamcont.toggleTabAutocompleteEnabled",
         "mac": "cmd+k cmd+a",
         "key": "ctrl+k ctrl+a",
         "when": "!terminalFocus"
       },
       {
-        "command": "continue.forceAutocomplete",
+        "command": "stamcont.forceAutocomplete",
         "key": "ctrl+alt+space",
         "mac": "cmd+alt+space",
         "when": "editorTextFocus && !editorHasSelection && !editorReadOnly && !inSnippetMode"
       },
       {
-        "command": "continue.applyCodeFromChat",
+        "command": "stamcont.applyCodeFromChat",
         "mac": "alt+a",
         "key": "alt+a"
       },
       {
-        "command": "continue.toggleNextEditEnabled",
+        "command": "stamcont.toggleNextEditEnabled",
         "key": "ctrl+k ctrl+n",
         "mac": "cmd+k cmd+n",
         "when": "editorTextFocus"
       },
       {
-        "command": "continue.nextEditWindow.hideNextEditSuggestion",
+        "command": "stamcont.nextEditWindow.hideNextEditSuggestion",
         "key": "escape",
         "when": "editorTextFocus && nextEditWindowActive && !continue.jumpDecorationVisible"
       },
       {
-        "command": "continue.nextEditWindow.acceptNextEditSuggestion",
+        "command": "stamcont.nextEditWindow.acceptNextEditSuggestion",
         "key": "tab",
         "when": "editorTextFocus && nextEditWindowActive && !continue.jumpDecorationVisible"
       },
       {
-        "command": "continue.acceptJump",
+        "command": "stamcont.acceptJump",
         "key": "tab",
         "when": "editorTextFocus && continue.jumpDecorationVisible"
       },
       {
-        "command": "continue.rejectJump",
+        "command": "stamcont.rejectJump",
         "key": "escape",
         "when": "editorTextFocus && continue.jumpDecorationVisible"
       }
@@ -503,22 +760,170 @@
     "menus": {
       "commandPalette": [
         {
-          "command": "continue.focusContinueInput"
+          "command": "stamcont.focusContinueInput"
         },
         {
-          "command": "continue.focusContinueInputWithoutClear"
+          "command": "stamcont.focusContinueInputWithoutClear"
         },
         {
-          "command": "continue.debugTerminal"
+          "command": "stamcont.debugTerminal"
         },
         {
-          "command": "continue.newSession"
+          "command": "stamcont.newSession"
         },
         {
-          "command": "continue.enterEnterpriseLicenseKey"
+          "command": "stamcont.enterEnterpriseLicenseKey"
         },
         {
-          "command": "continue.openInNewWindow"
+          "command": "stamcont.openInNewWindow"
+        },
+        {
+          "command": "continue.applyCodeFromChat",
+          "when": "false"
+        },
+        {
+          "command": "continue.acceptDiff",
+          "when": "false"
+        },
+        {
+          "command": "continue.rejectDiff",
+          "when": "false"
+        },
+        {
+          "command": "continue.acceptVerticalDiffBlock",
+          "when": "false"
+        },
+        {
+          "command": "continue.rejectVerticalDiffBlock",
+          "when": "false"
+        },
+        {
+          "command": "continue.focusEdit",
+          "when": "false"
+        },
+        {
+          "command": "continue.focusContinueInput",
+          "when": "false"
+        },
+        {
+          "command": "continue.focusContinueInputWithoutClear",
+          "when": "false"
+        },
+        {
+          "command": "continue.debugTerminal",
+          "when": "false"
+        },
+        {
+          "command": "continue.exitEditMode",
+          "when": "false"
+        },
+        {
+          "command": "continue.openConfigPage",
+          "when": "false"
+        },
+        {
+          "command": "continue.toggleTabAutocompleteEnabled",
+          "when": "false"
+        },
+        {
+          "command": "continue.forceAutocomplete",
+          "when": "false"
+        },
+        {
+          "command": "continue.selectFilesAsContext",
+          "when": "false"
+        },
+        {
+          "command": "continue.newSession",
+          "when": "false"
+        },
+        {
+          "command": "continue.shareSession",
+          "when": "false"
+        },
+        {
+          "command": "continue.viewHistory",
+          "when": "false"
+        },
+        {
+          "command": "continue.viewLogs",
+          "when": "false"
+        },
+        {
+          "command": "continue.clearConsole",
+          "when": "false"
+        },
+        {
+          "command": "continue.navigateTo",
+          "when": "false"
+        },
+        {
+          "command": "continue.writeCommentsForCode",
+          "when": "false"
+        },
+        {
+          "command": "continue.writeDocstringForCode",
+          "when": "false"
+        },
+        {
+          "command": "continue.fixCode",
+          "when": "false"
+        },
+        {
+          "command": "continue.optimizeCode",
+          "when": "false"
+        },
+        {
+          "command": "continue.fixGrammar",
+          "when": "false"
+        },
+        {
+          "command": "continue.codebaseForceReIndex",
+          "when": "false"
+        },
+        {
+          "command": "continue.rebuildCodebaseIndex",
+          "when": "false"
+        },
+        {
+          "command": "continue.docsIndex",
+          "when": "false"
+        },
+        {
+          "command": "continue.docsReIndex",
+          "when": "false"
+        },
+        {
+          "command": "continue.enterEnterpriseLicenseKey",
+          "when": "false"
+        },
+        {
+          "command": "continue.toggleNextEditEnabled",
+          "when": "false"
+        },
+        {
+          "command": "continue.nextEditWindow.hideNextEditSuggestion",
+          "when": "false"
+        },
+        {
+          "command": "continue.nextEditWindow.acceptNextEditSuggestion",
+          "when": "false"
+        },
+        {
+          "command": "continue.forceNextEdit",
+          "when": "false"
+        },
+        {
+          "command": "continue.acceptJump",
+          "when": "false"
+        },
+        {
+          "command": "continue.rejectJump",
+          "when": "false"
+        },
+        {
+          "command": "continue.openInNewWindow",
+          "when": "false"
         }
       ],
       "editor/context": [
@@ -529,65 +934,65 @@
       ],
       "editor/title/run": [
         {
-          "command": "continue.rejectDiff",
+          "command": "stamcont.rejectDiff",
           "group": "Continue",
           "when": "continue.streamingDiff"
         }
       ],
       "continue.continueSubMenu": [
         {
-          "command": "continue.focusContinueInputWithoutClear",
+          "command": "stamcont.focusContinueInputWithoutClear",
           "group": "Continue"
         },
         {
-          "command": "continue.focusEdit",
+          "command": "stamcont.focusEdit",
           "group": "Continue",
           "when": "!editorReadonly"
         }
       ],
       "explorer/context": [
         {
-          "command": "continue.selectFilesAsContext",
+          "command": "stamcont.selectFilesAsContext",
           "group": "1_debug@1"
         }
       ],
       "view/title": [
         {
-          "command": "continue.newSession",
+          "command": "stamcont.newSession",
           "group": "navigation@1",
           "when": "view == continue.continueGUIView"
         },
         {
-          "command": "continue.viewHistory",
+          "command": "stamcont.viewHistory",
           "group": "navigation@2",
           "when": "view == continue.continueGUIView"
         },
         {
-          "command": "continue.openConfigPage",
+          "command": "stamcont.openConfigPage",
           "group": "navigation@4",
           "when": "view == continue.continueGUIView"
         },
         {
-          "command": "continue.clearConsole",
+          "command": "stamcont.clearConsole",
           "group": "navigation@1",
           "when": "view == continue.continueConsoleView"
         }
       ],
       "editor/title": [
         {
-          "command": "continue.newSession",
+          "command": "stamcont.newSession",
           "group": "navigation@1",
           "when": "activeWebviewPanelId == continue.continueGUIView"
         },
         {
-          "command": "continue.viewHistory",
+          "command": "stamcont.viewHistory",
           "group": "navigation@2",
           "when": "activeWebviewPanelId == continue.continueGUIView"
         }
       ],
       "terminal/context": [
         {
-          "command": "continue.debugTerminal",
+          "command": "stamcont.debugTerminal",
           "group": "navigation@top"
         }
       ]
