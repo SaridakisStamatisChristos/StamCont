@@ -1,96 +1,51 @@
 ---
 title: "Overview"
-description: "Source-controlled AI checks, enforceable in CI"
+description: "StamCont runtime, surfaces, execution profiles, persistence, and compatibility boundaries."
 ---
 
-<Frame>
-  <img src="/images/intro-0c302b9c15b890c251b1ad04586c880f.png" />
-</Frame>
+# Overview
 
-## Continue CLI
+StamCont provides a shared agent runtime beneath multiple developer surfaces rather than maintaining separate execution semantics for each UI.
 
-<Note>Terminal-native AI coding assistance with TUI and headless modes.</Note>
+## Surfaces
 
-<CodeGroup>
+### CLI
 
-    ```bash npm
-    npm i -g @continuedev/cli
-    ```
+The CLI uses the canonical Core AgentLoop and durable session store. It supports persisted sessions, resume, tool execution through AgentKernel, context planning, compaction, and canonical terminal semantics.
 
-    ```bash yarn
-    yarn global add @continuedev/cli
-    ```
+### IDE / GUI
 
-    ```bash pnpm
-    pnpm add -g @continuedev/cli
-    ```
+The IDE/GUI surface projects the same canonical runtime into interactive presentation and approval UX. Durable Core state remains authoritative once a session exists.
 
-</CodeGroup>
+### Subagents
 
-<CardGroup cols={2}>
-  <Card
-    title="TUI Mode"
-    icon="terminal"
-    href="/cli/tui-mode"
-  >
-    Interactive Terminal User Interface for development workflows
+Subagents execute as child kernel sessions. Their effective authority is constrained by the parent session; they are not an independent privilege or orchestration bypass.
 
-    <sub>• Automate builds & refactoring</sub>
-    <br />
-    <sub>• Pre-commit hooks & scripted fixes</sub>
-    <br />
-    <sub>• Terminal-first development</sub>
-  </Card>
-  <Card
-    title="Headless Mode"
-    icon="server"
-    href="/cli/headless-mode"
-  >
-    Automated AI coding for CI/CD and server environments
+## Execution profiles
 
-    <sub>• Run in CI/CD pipelines</sub>
-    <br />
-    <sub>• Batch processing & bulk operations</sub>
-    <br />
-    <sub>• Server & container deployments</sub>
-  </Card>
-</CardGroup>
+| Profile | Workspace | Shell | Network | Approval |
+| --- | --- | --- | --- | --- |
+| Plan | Read-only | Sandboxed | Restricted | Always |
+| Interactive | Read/write | Sandboxed | Restricted | Policy-driven |
+| Full Access | OS-user scope | Host | Full | No per-command kernel approval |
 
-## IDE Extensions
+## Persistence and resume
 
-<Note>
-  Optional IDE extensions for real-time code editing and assistance.
-</Note>
+Durable sessions use an append-only authoritative log with rebuildable derived indexes, snapshots, and compaction artifacts.
 
-Learn more about [extension features](https://docs.continue.dev/ide-extensions/quick-start) and how to [customize](https://docs.continue.dev/customize/overview) →
+StamCont distinguishes safe replay boundaries from ambiguous external side effects. Work that may already have changed external state is not silently repeated after a crash.
 
-<CardGroup cols={2}>
-  <Card
-    title="VS Code"
-    icon="code"
-    href="https://marketplace.visualstudio.com/items?itemName=Continue.continue"
-  >
-    Install from VS Code Marketplace
-    <sub>Real-time coding assistance and refactoring</sub>
-  </Card>
-  <Card
-    title="JetBrains"
-    icon="jet-fighter"
-    href="https://plugins.jetbrains.com/plugin/22707-continue-extension"
-  >
-    Install from JetBrains Plugin Repository
-    <sub>Community supported for autocomplete and multi-file edits</sub>
-  </Card>
-</CardGroup>
+## Release status
 
-## Resources
+The current architecture is documented at the PR16 release-readiness gate. Repository validation is centered on:
 
-<CardGroup cols={2}>
-  <Card
-    title="GitHub Repository"
-    icon="github"
-    href="https://github.com/continuedev/continue"
-  >
-    Open source on GitHub
-  </Card>
-</CardGroup>
+- **StamCont Baseline**
+- **StamCont Execution Security**
+
+See [Agent Runtime](./STAMCONT_AGENT_RUNTIME.md) for the complete release contract.
+
+## Inherited Continue interfaces
+
+StamCont originated from Continue and still carries inherited UI, configuration, package, and filesystem identifiers. Some deeper documentation therefore remains useful as compatibility/reference material.
+
+Do not interpret links to upstream Continue packages, marketplaces, or historical docs as StamCont releases. StamCont does not currently claim those upstream distribution channels as its own.
