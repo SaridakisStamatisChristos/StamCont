@@ -1,60 +1,57 @@
 ---
-name: 📖 Documentation Issue Report
-description: Report issues related to the documentation
+name: 📖 Documentation issue
+description: Report missing, incorrect, or unclear StamCont documentation
 labels: [area:docs]
 
 body:
   - type: markdown
     attributes:
       value: |
-        ## Thank you for helping us improve our documentation!
-        We appreciate your feedback. Before submitting, please check if a similar issue already exists.
+        Thank you for helping improve StamCont documentation.
 
-        ### Quick Contribution Tips:
-        - Click "Edit this page" at the bottom of any page on [docs.continue.dev](https://docs.continue.dev) to contribute directly.
-        - For local development, see [CONTRIBUTING.md](https://github.com/continuedev/continue/blob/main/CONTRIBUTING.md#-updating--improving-documentation).
+        For StamCont-specific architecture, start with:
+        - [Agent Runtime](https://github.com/SaridakisStamatisChristos/StamCont/blob/main/docs/STAMCONT_AGENT_RUNTIME.md)
+        - [Agent Kernel](https://github.com/SaridakisStamatisChristos/StamCont/blob/main/docs/STAMCONT_AGENT_KERNEL.md)
+        - [Contributing](https://github.com/SaridakisStamatisChristos/StamCont/blob/main/CONTRIBUTING.md)
+
+        Some deeper documentation still describes inherited Continue-compatible interfaces. Please identify whether your report concerns current StamCont behavior or a legacy compatibility surface.
 
   - type: dropdown
     id: doc-issue-category
     attributes:
-      label: Issue Category
-      description: Select the category that best describes your issue.
+      label: Issue category
       options:
-        - Undocumented feature or missing documentation
-        - Incorrect or outdated information
-        - Suggestion for existing article
+        - Missing StamCont documentation
+        - Incorrect or outdated StamCont information
+        - Legacy Continue wording / identity leak
         - Broken or dead link
-        - Documentation organization issue
-        - Other (please describe in the details section)
+        - Documentation organization
+        - Suggested clarification
+        - Other
     validations:
       required: true
 
   - type: input
-    id: page-url
+    id: page
     attributes:
-      label: Affected Documentation Page URL
-      description: Provide the URL of the specific page where you encountered the issue.
-      placeholder: "https://docs.continue.dev/path/to/page"
+      label: Affected file or page
+      description: Provide a repository path or URL.
+      placeholder: "docs/STAMCONT_AGENT_RUNTIME.md"
     validations:
       required: false
 
   - type: textarea
     id: details
     attributes:
-      label: Issue Description
-      description: Please describe the issue in detail. Include specifics about missing information, outdated content, or improvements needed.
-      placeholder: |
-        Examples:
-        - Missing section on [topic]
-        - Incorrect information about [subject]
-        - Outdated example code for [feature]
-        - Suggestion to improve [section] by [details]
+      label: Issue description
+      description: Explain what is wrong, missing, misleading, or unclear.
     validations:
       required: true
 
   - type: textarea
-    id: expected-content
+    id: expected
     attributes:
-      label: Expected Content
-      description: If applicable, provide the content you believe should be added or updated.
-      placeholder: "Suggested details or changes for the documentation..."
+      label: Suggested correction
+      description: Optional proposed wording or technical correction.
+    validations:
+      required: false
