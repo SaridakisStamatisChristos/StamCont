@@ -414,26 +414,33 @@ jobs:
           ARCHIVE="$(find release -maxdepth 1 -type f -name 'stamcont-cli-*.tar.gz' | sort | head -n 1)"
           test -n "$ARCHIVE"
 
-          INSTALL_ROOT="$RUNNER_TEMP/stamcont-cli-install"
-          GLOBAL_PREFIX="$RUNNER_TEMP/stamcont-npm-global"
+          SMOKE_ROOT=".release-smoke"
+          INSTALL_ROOT="$SMOKE_ROOT/cli"
+          GLOBAL_PREFIX="$SMOKE_ROOT/npm-global"
+          rm -rf "$SMOKE_ROOT"
           mkdir -p "$INSTALL_ROOT" "$GLOBAL_PREFIX"
           tar -C "$INSTALL_ROOT" -xzf "$ARCHIVE"
 
-          PACKAGE_DIR="$(find "$INSTALL_ROOT" -maxdepth 1 -type d -name 'stamcont-cli-*' | sort | head -n 1)"
+          PACKAGE_DIR="$(find "$INSTALL_ROOT" -mindepth 1 -maxdepth 1 -type d -name 'stamcont-cli-*' | sort | head -n 1)"
           test -n "$PACKAGE_DIR"
+          test -f "$PACKAGE_DIR/package.json"
+          test -f "$PACKAGE_DIR/dist/stamcont.js"
+          test -f "$PACKAGE_DIR/dist/cn.js"
 
-          npm install --global --ignore-scripts --prefix "$GLOBAL_PREFIX" "$PACKAGE_DIR"
+          ABS_PREFIX="$(cd "$GLOBAL_PREFIX" && pwd)"
+          ABS_PACKAGE="$(cd "$PACKAGE_DIR" && pwd)"
+          npm install --global --ignore-scripts --prefix "$ABS_PREFIX" "$ABS_PACKAGE"
 
           if [[ "$RUNNER_OS" == "Windows" ]]; then
-            export PATH="$GLOBAL_PREFIX:$PATH"
+            export PATH="$ABS_PREFIX:$PATH"
           else
-            export PATH="$GLOBAL_PREFIX/bin:$PATH"
+            export PATH="$ABS_PREFIX/bin:$PATH"
           fi
 
-          stamcont --help > "$RUNNER_TEMP/stamcont-help.txt"
-          cn --help > "$RUNNER_TEMP/cn-help.txt"
-          test -s "$RUNNER_TEMP/stamcont-help.txt"
-          test -s "$RUNNER_TEMP/cn-help.txt"
+          stamcont --help > "$SMOKE_ROOT/stamcont-help.txt"
+          cn --help > "$SMOKE_ROOT/cn-help.txt"
+          test -s "$SMOKE_ROOT/stamcont-help.txt"
+          test -s "$SMOKE_ROOT/cn-help.txt"
 
   vscode-clean-install:
     name: Clean VSIX install
@@ -479,7 +486,7 @@ jobs:
           npx extest get-vscode --storage "$STORAGE" --code_version 1.95.0
           npx extest install-vsix -f "$GITHUB_WORKSPACE/$VSIX" --extensions_dir "$EXTENSIONS" --storage "$STORAGE"
 
-          PACKAGE_JSON="$(find "$EXTENSIONS" -type f -name package.json | sort | head -n 1)"
+          PACKAGE_JSON="$(find "$EXTENSIONS" -mindepth 2 -maxdepth 2 -type f -name package.json | sort | head -n 1)"
           test -n "$PACKAGE_JSON"
 
           node - "$PACKAGE_JSON" <<'NODE'
@@ -507,7 +514,7 @@ jobs:
           }
 
           const viewContainers = Object.keys(pkg.contributes?.views ?? {});
-          if (!viewContainers.includes("continue") && !viewContainers.includes("continueConsole")) {
+          if (!viewContainers.includes("continue") || !viewContainers.includes("continueConsole")) {
             throw new Error("VS Code persisted view identity is missing");
           }
           NODE
