@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "phase": "pr23-validation",
+  "phase": "pr23-release-ready",
   "product": "StamCont",
   "repository": "SaridakisStamatisChristos/StamCont",
   "release": {
@@ -9,7 +9,7 @@
     "firstPlannedVersion": "0.1.0",
     "github": {
       "owned": true,
-      "publishEnabled": false,
+      "publishEnabled": true,
       "enableRepositoryVariable": "STAMCONT_RELEASES_ENABLED",
       "mode": "draft-upload-publish",
       "rollback": "delete-new-draft-on-upload-or-publish-failure"
