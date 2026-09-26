@@ -11,6 +11,7 @@ import com.intellij.ui.content.ContentFactory
 class ContinuePluginToolWindowFactory : ToolWindowFactory, DumbAware {
 
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
+        toolWindow.setTitle("StamCont")
         val browserOrError = project.getBrowser()?.getComponent()
             ?: JcefErrorPanel.create()
         toolWindow.contentManager.addContent(ContentFactory.getInstance().createContent(browserOrError, null, false))
