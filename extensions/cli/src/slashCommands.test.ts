@@ -42,10 +42,23 @@ vi.mock("./util/logger.js", () => ({
   },
 }));
 
-// Mock env.js to avoid file operations
+// Mock env.js to avoid file operations while preserving the PR19
+// identity-alias contract used by telemetry and other consumers.
 vi.mock("./env.js", () => ({
   env: {
+    stamcontHome: "/home/test/.continue",
     continueHome: "/home/test/.continue",
+  },
+  readIdentityEnv: (
+    source: Record<string, string | undefined>,
+    stamcontName: string,
+    continueName: string,
+  ) => {
+    const stamcontValue = source[stamcontName];
+    if (stamcontValue !== undefined && stamcontValue !== "") {
+      return stamcontValue;
+    }
+    return source[continueName];
   },
 }));
 
