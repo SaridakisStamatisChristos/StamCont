@@ -35,7 +35,7 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - uses: actions/setup-node@v4
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
       with:
         node-version-file: ".nvmrc"
         
@@ -45,31 +45,31 @@ runs:
       run: echo "target=${{ inputs.platform }}-${{ inputs.arch }}" >> $GITHUB_OUTPUT
     
     - name: Cache npm
-      uses: actions/cache@v4
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.npm
         key: ${{ runner.os }}-npm-cache-build-${{ hashFiles('**/package-lock.json') }}
 
     - name: Cache extension node_modules
-      uses: actions/cache@v4
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: extensions/vscode/node_modules
         key: ${{ runner.os }}-node-${{ hashFiles('extensions/vscode/package-lock.json') }}
 
     - name: Cache core node_modules
-      uses: actions/cache@v4
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: core/node_modules
         key: ${{ runner.os }}-node-${{ hashFiles('core/package-lock.json') }}
 
     - name: Cache gui node_modules
-      uses: actions/cache@v4
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: gui/node_modules
         key: ${{ runner.os }}-node-${{ hashFiles('gui/package-lock.json') }}
 
     - name: Cache packages node_modules
-      uses: actions/cache@v4
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
           packages/*/node_modules

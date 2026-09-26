@@ -156,6 +156,21 @@ jobs:
         working-directory: extensions/intellij
         run: ./gradlew test buildPlugin --stacktrace --no-daemon
 
+  release-contract:
+    name: Release contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: ".nvmrc"
+
+      - name: Validate StamCont release ownership and quarantine
+        run: node scripts/stamcont-release-policy.mjs
+
   native:
     name: Binary
     runs-on: ubuntu-latest
@@ -234,6 +249,7 @@ jobs:
       - cli
       - ide
       - jetbrains
+      - release-contract
       - native
     steps:
       - name: Require all baseline jobs
@@ -243,4 +259,5 @@ jobs:
           test "${{ needs.cli.result }}" = "success"
           test "${{ needs.ide.result }}" = "success"
           test "${{ needs.jetbrains.result }}" = "success"
+          test "${{ needs.release-contract.result }}" = "success"
           test "${{ needs.native.result }}" = "success"
