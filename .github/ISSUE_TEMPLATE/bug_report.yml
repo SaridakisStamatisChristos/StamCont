@@ -1,70 +1,52 @@
 ---
 name: 🐛 Bug report
-description: Create a report to help us fix your bug
+description: Report a reproducible StamCont bug
 labels: [bug]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for taking the time to report this bug! This will help us find the cause of the problem quickly with less back-and-forth required.
+        Thanks for helping improve StamCont. Please include enough information to reproduce the problem without posting secrets, credentials, or sensitive logs.
   - type: checkboxes
     attributes:
-      label: Before submitting your bug report
+      label: Before submitting
       options:
-        - label: I've tried finding an answer on the [Continue docs site](https://docs.continue.dev/)
-          required: false
-        - label: I'm not able to find an [open issue](https://github.com/continuedev/continue/issues?q=is%3Aopen+is%3Aissue) that reports the same bug
-          required: false
-        - label: I've seen the [troubleshooting guide](https://docs.continue.dev/troubleshooting) on the Continue Docs
+        - label: I searched the [open StamCont issues](https://github.com/SaridakisStamatisChristos/StamCont/issues?q=is%3Aopen+is%3Aissue) for the same problem.
+          required: true
+        - label: I reviewed the relevant StamCont architecture/runtime documentation when this issue concerns agent execution, persistence, sandboxing, or resume behavior.
           required: false
   - type: textarea
     attributes:
-      label: Relevant environment info
-      description: |
-        Feel free to omit any info that is not relevant to your issue.
-
-        - **OS**: macOS
-        - **Continue version**: v0.9.4
-        - **IDE version**:  VSCode 1.85.1
-        - Model: Claude Sonnet 4.5
-        - Agent configuration
+      label: Environment
+      description: Include only information relevant to the issue.
       value: |
         - OS:
-        - Continue version:
-        - IDE version:
-        - Model:
-        - config:
-          ```yaml
-
-          ```
-          OR link to agent in Continue hub:
-      render: Markdown
+        - StamCont commit/release:
+        - Surface: CLI / VS Code / JetBrains / other
+        - Node version:
+        - Model/provider:
+        - Legacy Continue-compatible package/extension version (if relevant):
     validations:
-      required: false
+      required: true
   - type: textarea
     attributes:
       label: Description
-      description: |
-        Please provide a clear and concise description of the bug
-      placeholder: |
-        Short description
+      description: What happened, and what did you expect instead?
     validations:
-      required: false
+      required: true
   - type: textarea
     attributes:
-      label: To reproduce
-      description: Steps to reproduce the problem. If possible, include a gif, screenshot, or video to better illustrate.
+      label: Steps to reproduce
+      description: Provide the smallest reliable reproduction you can.
       placeholder: |
-        1. Go to …
-        2. Click on …
-        3. Scroll down to …
-        4. See error
+        1. …
+        2. …
+        3. …
     validations:
-      required: false
+      required: true
   - type: textarea
-    id: logs
     attributes:
-      label: Log output
+      label: Logs or diagnostics
       description: |
-        Please refer to the [troubleshooting guide](https://docs.continue.dev/troubleshooting) in the Continue Docs for instructions on obtaining the logs. Copy either the relevant lines or the last 100 lines or so.
+        Paste only the relevant, redacted output. Do not include API keys, credentials, private prompts, sensitive tool payloads, or opaque provider reasoning state.
       render: Shell
