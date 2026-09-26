@@ -7,11 +7,9 @@ import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Colors for output
 const colors = {
   green: "\x1b[32m",
   red: "\x1b[31m",
-  yellow: "\x1b[33m",
   reset: "\x1b[0m",
 };
 
@@ -40,39 +38,46 @@ function execCommand(command, options = {}) {
   });
 }
 
-console.log("🧪 Running smoke tests for bundled CLI...\n");
-
-// Test 1: Check if bundle exists
-runTest("Bundle file exists", () => {
-  if (!existsSync(resolve(__dirname, "dist/index.js"))) {
-    throw new Error("dist/index.js not found");
-  }
-  if (!existsSync(resolve(__dirname, "dist/cn.js"))) {
-    throw new Error("dist/cn.js not found");
-  }
-});
-
-// Test 2: Check if wrapper script is executable
-runTest("Wrapper script has shebang", () => {
-  const content = readFileSync(resolve(__dirname, "dist/cn.js"), "utf8");
-  if (!content.startsWith("#!/usr/bin/env node")) {
-    throw new Error("Wrapper script missing shebang");
-  }
-});
-
-// Cross-platform command execution helper
-function getCLICommand(args = "") {
-  const isWindows = process.platform === "win32";
-  if (isWindows) {
-    return `node dist/cn.js ${args}`;
-  } else {
-    return `./dist/cn.js ${args}`;
-  }
+function getCLICommand(binary, args = "") {
+  const script = `dist/${binary}.js`;
+  return process.platform === "win32"
+    ? `node ${script} ${args}`
+    : `./${script} ${args}`;
 }
 
-// Test 3: Version command works
-runTest("Version command", () => {
-  const output = execCommand(getCLICommand("--version"));
+console.log("🧪 Running smoke tests for bundled StamCont CLI...\n");
+
+runTest("Primary and compatibility wrappers exist", () => {
+  for (const file of ["dist/index.js", "dist/stamcont.js", "dist/cn.js"]) {
+    if (!existsSync(resolve(__dirname, file))) {
+      throw new Error(`${file} not found`);
+    }
+  }
+});
+
+runTest("Both wrappers have shebangs", () => {
+  for (const file of ["dist/stamcont.js", "dist/cn.js"]) {
+    const content = readFileSync(resolve(__dirname, file), "utf8");
+    if (!content.startsWith("#!/usr/bin/env node")) {
+      throw new Error(`${file} is missing its shebang`);
+    }
+  }
+});
+
+runTest("Package exposes stamcont primary and cn alias", () => {
+  const packageJson = JSON.parse(
+    readFileSync(resolve(__dirname, "package.json"), "utf8"),
+  );
+  if (packageJson.bin?.stamcont !== "dist/stamcont.js") {
+    throw new Error("stamcont bin mapping is missing or incorrect");
+  }
+  if (packageJson.bin?.cn !== "dist/cn.js") {
+    throw new Error("cn compatibility alias is missing or incorrect");
+  }
+});
+
+runTest("Primary version command works", () => {
+  const output = execCommand(getCLICommand("stamcont", "--version"));
   const packageJson = JSON.parse(
     readFileSync(resolve(__dirname, "package.json"), "utf8"),
   );
@@ -83,48 +88,39 @@ runTest("Version command", () => {
   }
 });
 
-// Test 4: Help command works
-runTest("Help command", () => {
-  const output = execCommand(getCLICommand("--help"));
-  if (!output.includes("Continue CLI") || !output.includes("--version")) {
-    throw new Error("Help output missing expected content");
+runTest("Legacy cn version command remains compatible", () => {
+  const output = execCommand(getCLICommand("cn", "--version"));
+  const packageJson = JSON.parse(
+    readFileSync(resolve(__dirname, "package.json"), "utf8"),
+  );
+  if (!output.includes(packageJson.version)) {
+    throw new Error("cn compatibility alias did not return the package version");
   }
 });
 
-// Test 5: Check bundle size
-runTest("Bundle size is reasonable", () => {
-  const isWindows = process.platform === "win32";
-  const command = isWindows
-    ? `powershell -Command "(Get-Item dist/index.js).length / 1MB"`
-    : `ls -lh dist/index.js`;
-
-  let sizeInMB;
-
-  if (isWindows) {
-    try {
-      const output = execCommand(command);
-      sizeInMB = parseFloat(output.trim());
-    } catch {
-      // Fallback for Windows if PowerShell fails
-      const stats = readFileSync(resolve(__dirname, "dist/index.js"));
-      sizeInMB = stats.length / (1024 * 1024);
-    }
-  } else {
-    const stats = execCommand(command);
-    const sizeMatch = stats.match(/(\d+(?:\.\d+)?[MK])/);
-    if (sizeMatch) {
-      const size = sizeMatch[1];
-      const numSize = parseFloat(size);
-      const unit = size.slice(-1);
-      sizeInMB = unit === "M" ? numSize : numSize / 1024;
-    }
+runTest("Primary help identifies StamCont", () => {
+  const output = execCommand(getCLICommand("stamcont", "--help"));
+  if (
+    !output.includes("StamCont CLI") ||
+    !output.includes("Usage: stamcont") ||
+    !output.includes("--version")
+  ) {
+    throw new Error("stamcont help output is missing expected identity");
   }
+});
 
+runTest("Legacy help preserves cn invocation name", () => {
+  const output = execCommand(getCLICommand("cn", "--help"));
+  if (!output.includes("StamCont CLI") || !output.includes("Usage: cn")) {
+    throw new Error("cn help output does not preserve compatibility");
+  }
+});
+
+runTest("Bundle size is reasonable", () => {
+  const stats = readFileSync(resolve(__dirname, "dist/index.js"));
+  const sizeInMB = stats.length / (1024 * 1024);
   console.log(`(${sizeInMB.toFixed(1)}M)`);
 
-  // PR9 adds the canonical Core AgentLoop model/tool runtime and its
-  // provider-neutral model registry to the self-contained CLI. Keep a hard
-  // ceiling so accidental dependency explosions are still caught.
   const MAX_BUNDLE_SIZE_MB = 28;
   if (sizeInMB > MAX_BUNDLE_SIZE_MB) {
     throw new Error(
@@ -133,14 +129,12 @@ runTest("Bundle size is reasonable", () => {
   }
 });
 
-// Test 6: Check that local packages are bundled
 runTest("Local packages are bundled", () => {
   const bundleContent = readFileSync(
     resolve(__dirname, "dist/index.js"),
     "utf8",
   );
 
-  // Check for code from @continuedev/config-yaml
   if (
     !bundleContent.includes("AssistantUnrolled") &&
     !bundleContent.includes("config-yaml")
@@ -148,9 +142,6 @@ runTest("Local packages are bundled", () => {
     throw new Error("@continuedev/config-yaml not properly bundled");
   }
 
-  // Check for code from @continuedev/openai-adapters
-  // Since the bundle is minified, check for strings that would be present
-  // even after minification (e.g., error messages, property names)
   if (
     !bundleContent.includes("anthropic") &&
     !bundleContent.includes("gemini") &&
@@ -162,24 +153,15 @@ runTest("Local packages are bundled", () => {
   }
 });
 
-// Test 7: Test that the CLI can be invoked programmatically
-runTest("CLI can be invoked", () => {
-  try {
-    // Test that the CLI runs without crashing when given no args
-    const isWindows = process.platform === "win32";
-    const nullDevice = isWindows ? "nul" : "/dev/null";
-    execCommand(`${getCLICommand("--help")} > ${nullDevice} 2>&1`);
-  } catch (error) {
-    throw new Error(`CLI invocation failed: ${error.message}`);
-  }
+runTest("Primary CLI can be invoked", () => {
+  const nullDevice = process.platform === "win32" ? "nul" : "/dev/null";
+  execCommand(`${getCLICommand("stamcont", "--help")} > ${nullDevice} 2>&1`);
 });
 
-// Test 8: Check metadata file
 runTest("Build metadata exists", () => {
   if (!existsSync(resolve(__dirname, "dist/meta.json"))) {
     throw new Error("dist/meta.json not found");
   }
-
   const meta = JSON.parse(
     readFileSync(resolve(__dirname, "dist/meta.json"), "utf8"),
   );
@@ -188,12 +170,11 @@ runTest("Build metadata exists", () => {
   }
 });
 
-// Test 9: Verify no missing external dependencies
 runTest("No missing runtime dependencies", () => {
-  // This would fail in Test 3 if dependencies were missing, but let's be explicit
-  const output = execCommand(`${getCLICommand("--version")} 2>&1`, {
-    env: { ...process.env, NODE_ENV: "production" },
-  });
+  const output = execCommand(
+    `${getCLICommand("stamcont", "--version")} 2>&1`,
+    { env: { ...process.env, NODE_ENV: "production" } },
+  );
 
   if (
     output.includes("Cannot find module") ||
@@ -203,32 +184,15 @@ runTest("No missing runtime dependencies", () => {
   }
 });
 
-// Test 10: Test npm link scenario
-runTest("CLI works via npm link", () => {
-  try {
-    // Simply test that we can execute with node directly
-    const output = execCommand("node dist/cn.js --version 2>&1");
-    const packageJson = JSON.parse(
-      readFileSync(resolve(__dirname, "package.json"), "utf8"),
-    );
-    if (!output.includes(packageJson.version)) {
-      throw new Error("Version not found when running via node");
-    }
-  } catch (error) {
-    throw new Error(`npm link scenario failed: ${error.message}`);
-  }
-});
-
-// Summary
 console.log("\n" + "=".repeat(50));
 if (testsFailed === 0) {
   console.log(
     `${colors.green}✅ All ${testsPassed} tests passed!${colors.reset}`,
   );
   process.exit(0);
-} else {
-  console.log(
-    `${colors.red}❌ ${testsFailed} test(s) failed, ${testsPassed} passed${colors.reset}`,
-  );
-  process.exit(1);
 }
+
+console.log(
+  `${colors.red}❌ ${testsFailed} test(s) failed, ${testsPassed} passed${colors.reset}`,
+);
+process.exit(1);

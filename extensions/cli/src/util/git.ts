@@ -1,6 +1,8 @@
 import { exec, execSync } from "child_process";
 import { promisify } from "util";
 
+import { readIdentityEnv } from "../env.js";
+
 const execAsync = promisify(exec);
 const LARGE_STDIO_BUFFER_BYTES = 10 * 1024 * 1024; // bump buffer for large git output
 
@@ -65,7 +67,10 @@ export function isGitHubActions(): boolean {
  * Check if running in Continue remote agents
  */
 export function isContinueRemoteAgent(): boolean {
-  return process.env.CONTINUE_REMOTE === "true";
+  return (
+    readIdentityEnv(process.env, "STAMCONT_REMOTE", "CONTINUE_REMOTE") ===
+    "true"
+  );
 }
 
 /**

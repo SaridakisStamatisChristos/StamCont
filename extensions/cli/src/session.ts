@@ -1,5 +1,4 @@
 import fs from "fs";
-import os from "os";
 import path from "path";
 
 import type {
@@ -13,6 +12,7 @@ import historyManager from "core/util/history.js";
 import { v4 as uuidv4 } from "uuid";
 
 import { DEFAULT_SESSION_TITLE } from "./constants/session.js";
+import { env, readIdentityEnv } from "./env.js";
 import { logger } from "./util/logger.js";
 
 // Re-export BaseSessionMetadata for external consumers
@@ -34,7 +34,13 @@ export interface ExtendedSessionMetadata extends BaseSessionMetadata {
  */
 function getSessionDir(): string {
   // For tests, use the test directory if we're in test mode
-  if (process.env.CONTINUE_CLI_TEST && process.env.HOME) {
+  if (
+    readIdentityEnv(
+      process.env,
+      "STAMCONT_CLI_TEST",
+      "CONTINUE_CLI_TEST",
+    ) && process.env.HOME
+  ) {
     const sessionDir = path.join(process.env.HOME, ".continue", "sessions");
 
     // Create directory if it doesn't exist
@@ -45,10 +51,9 @@ function getSessionDir(): string {
     return sessionDir;
   }
 
-  // Use CONTINUE_GLOBAL_DIR if set (for testing)
-  const continueHome =
-    process.env.CONTINUE_GLOBAL_DIR || path.join(os.homedir(), ".continue");
-  const sessionDir = path.join(continueHome, "sessions");
+  // STAMCONT_GLOBAL_DIR takes precedence; CONTINUE_GLOBAL_DIR and the
+  // historical ~/.continue default remain supported by env.continueHome.
+  const sessionDir = path.join(env.continueHome, "sessions");
 
   // Create directory if it doesn't exist
   if (!fs.existsSync(sessionDir)) {
@@ -93,9 +98,12 @@ class SessionManager {
   getCurrentSession(): Session {
     if (!this.currentSession) {
       // Use test session ID for testing consistency
-      const sessionId = process.env.CONTINUE_CLI_TEST_SESSION_ID
-        ? process.env.CONTINUE_CLI_TEST_SESSION_ID
-        : uuidv4();
+      const testSessionId = readIdentityEnv(
+        process.env,
+        "STAMCONT_CLI_TEST_SESSION_ID",
+        "CONTINUE_CLI_TEST_SESSION_ID",
+      );
+      const sessionId = testSessionId || uuidv4();
 
       this.currentSession = {
         sessionId,

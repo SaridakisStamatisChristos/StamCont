@@ -4,6 +4,7 @@ import {
   getGitBranch,
   getGitHubActionsRepoUrl,
   isGitHubActions,
+  isContinueRemoteAgent,
 } from "./git.js";
 
 describe("git utilities - GitHub Actions detection", () => {
@@ -12,6 +13,8 @@ describe("git utilities - GitHub Actions detection", () => {
     delete process.env.GITHUB_ACTIONS;
     delete process.env.GITHUB_REPOSITORY;
     delete process.env.GITHUB_SERVER_URL;
+    delete process.env.STAMCONT_REMOTE;
+    delete process.env.CONTINUE_REMOTE;
   });
 
   describe("isGitHubActions", () => {
@@ -27,6 +30,24 @@ describe("git utilities - GitHub Actions detection", () => {
     it("should return false when GITHUB_ACTIONS is set to other values", () => {
       process.env.GITHUB_ACTIONS = "false";
       expect(isGitHubActions()).toBe(false);
+    });
+  });
+
+  describe("remote-agent compatibility environment", () => {
+    it("accepts the StamCont-prefixed variable", () => {
+      process.env.STAMCONT_REMOTE = "true";
+      expect(isContinueRemoteAgent()).toBe(true);
+    });
+
+    it("keeps the Continue-era variable working", () => {
+      process.env.CONTINUE_REMOTE = "true";
+      expect(isContinueRemoteAgent()).toBe(true);
+    });
+
+    it("gives STAMCONT_REMOTE precedence", () => {
+      process.env.STAMCONT_REMOTE = "false";
+      process.env.CONTINUE_REMOTE = "true";
+      expect(isContinueRemoteAgent()).toBe(false);
     });
   });
 

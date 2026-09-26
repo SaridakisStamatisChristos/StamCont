@@ -25,7 +25,8 @@ export function setConfigFilePermissions(filePath: string): void {
 }
 
 const CONTINUE_GLOBAL_DIR = (() => {
-  const configPath = process.env.CONTINUE_GLOBAL_DIR;
+  const configPath =
+    process.env.STAMCONT_GLOBAL_DIR || process.env.CONTINUE_GLOBAL_DIR;
   if (configPath) {
     // Convert relative path to absolute paths based on current working directory
     return path.isAbsolute(configPath)
