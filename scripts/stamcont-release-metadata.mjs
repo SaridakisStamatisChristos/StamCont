@@ -78,13 +78,24 @@ const manifest = {
   artifacts: files,
 };
 
-writeFileSync(
-  join(directory, "release-manifest.json"),
-  `${JSON.stringify(manifest, null, 2)}\n`,
-);
+const manifestPath = join(directory, "release-manifest.json");
+writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+
+const manifestBytes = readFileSync(manifestPath);
+const checksumEntries = [
+  ...files,
+  {
+    path: "release-manifest.json",
+    size: manifestBytes.length,
+    sha256: createHash("sha256").update(manifestBytes).digest("hex"),
+  },
+].sort((a, b) => a.path.localeCompare(b.path));
+
 writeFileSync(
   join(directory, "SHA256SUMS"),
-  `${files.map((f) => `${f.sha256}  ${f.path}`).join("\n")}\n`,
+  `${checksumEntries.map((f) => `${f.sha256}  ${f.path}`).join("\n")}\n`,
 );
 
-console.log(`release-metadata: wrote metadata for ${files.length} artifacts`);
+console.log(
+  `release-metadata: wrote metadata for ${files.length} primary artifacts plus the release manifest`,
+);
