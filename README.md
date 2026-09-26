@@ -161,11 +161,11 @@ The repository-level release gates are **StamCont Baseline** and **StamCont Exec
 
 ## Origin and attribution
 
-StamCont began as a fork of [Continue](https://github.com/continuedev/continue) and intentionally retains substantial inherited code, compatibility layers, history, and Apache-2.0 attribution where applicable.
+StamCont began from an imported [Continue](https://github.com/continuedev/continue) source baseline and intentionally retains substantial inherited code and compatibility layers under Apache-2.0. The standalone repository represents that upstream baseline as a provenance root rather than carrying the full upstream commit graph.
 
 **StamCont is not the upstream Continue project.** Its current development centers on the StamCont-specific durable agent runtime, execution kernel, persistence/resume model, context-management architecture, cross-platform execution security, and release-readiness integration described above.
 
-Inherited Continue components and notices remain attributable to their original authors.
+Inherited Continue components and notices remain attributable to their original authors. See [UPSTREAM.md](UPSTREAM.md) for the exact imported baseline and history policy.
 
 ## License
 
