@@ -6,6 +6,7 @@
   "types": "dist/index.d.ts",
   "type": "module",
   "bin": {
+    "stamcont": "dist/stamcont.js",
     "cn": "dist/cn.js"
   },
   "scripts": {
@@ -20,7 +21,7 @@
     "build:validate": "node validate-aliases.mjs",
     "build:bundle": "node build.mjs",
     "build": "npm run build:validate && npm run build:bundle",
-    "start": "node dist/cn.js",
+    "start": "node dist/stamcont.js",
     "dev": "tsx src/index.ts",
     "repomix:sdk": "npx repomix node_modules/@continuedev/sdk --ignore **/api,cli-repomix.xml -o sdk-repomix.xml",
     "repomix:cli": "npx repomix --ignore sdk-repomix.xml -o cli-repomix.xml",

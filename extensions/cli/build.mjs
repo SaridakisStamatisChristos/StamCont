@@ -123,12 +123,19 @@ const __dirname = __pathDirname(__filename);`,
   // Write metafile for analysis
   writeFileSync("dist/meta.json", JSON.stringify(result.metafile, null, 2));
 
-  // Create wrapper script with shebang that explicitly runs the CLI
-  // Note: We must call runCli(); a plain dynamic import will not execute the CLI.
-  writeFileSync(
-    "dist/cn.js",
-    "#!/usr/bin/env node\nimport { runCli } from './index.js';\nawait runCli();\n",
-  );
+  // Create a primary StamCont wrapper plus the legacy `cn` compatibility alias.
+  // Both wrappers run the same bundle; only the displayed invocation name differs.
+  const writeCliWrapper = (fileName, commandName) => {
+    const outputPath = `dist/${fileName}.js`;
+    writeFileSync(
+      outputPath,
+      `#!/usr/bin/env node\nimport { runCli } from './index.js';\nawait runCli("${commandName}");\n`,
+    );
+    chmodSync(outputPath, 0o755);
+  };
+
+  writeCliWrapper("stamcont", "stamcont");
+  writeCliWrapper("cn", "cn");
   // Copy worker files needed by JSDOM
   const workerSource = resolve(
     __dirname,
@@ -141,9 +148,6 @@ const __dirname = __pathDirname(__filename);`,
   } catch (error) {
     console.warn("Warning: Could not copy xhr-sync-worker.js:", error.message);
   }
-
-  // Make the wrapper script executable
-  chmodSync("dist/cn.js", 0o755);
 
   // Calculate bundle size
   const bundleSize = result.metafile.outputs["dist/index.js"].bytes;

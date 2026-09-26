@@ -172,9 +172,9 @@ process.on("SIGINT", async () => {
 const program = new Command();
 
 program
-  .name("cn")
+  .name("stamcont")
   .description(
-    "Continue CLI - AI-powered development assistant. Starts an interactive session by default, use -p/--print for non-interactive output.",
+    "StamCont CLI - durable AI coding agent. Starts an interactive session by default; use -p/--print for non-interactive output.",
   )
   .version(getVersion(), "-v, --version", "Display version number");
 
@@ -239,7 +239,7 @@ addCommonOptions(program)
       ask: options.ask,
       exclude: options.exclude,
       isRootCommand: true,
-      commandName: "cn",
+      commandName: program.name(),
     });
 
     if (!validation.isValid) {
@@ -282,12 +282,12 @@ addCommonOptions(program)
         "Error: A prompt is required when using the -p/--print flag, unless --prompt, --agent, or --resume is provided.\n\n",
       );
       safeStderr("Usage examples:\n");
-      safeStderr('  cn -p "please review my current git diff"\n');
-      safeStderr('  echo "hello" | cn -p\n');
-      safeStderr('  cn -p "analyze the code in src/"\n');
-      safeStderr("  cn -p --agent my-org/my-agent\n");
-      safeStderr("  cn -p --prompt my-org/my-prompt\n");
-      safeStderr("  cn -p --resume\n");
+      safeStderr(`  ${program.name()} -p "please review my current git diff"\n`);
+      safeStderr(`  echo "hello" | ${program.name()} -p\n`);
+      safeStderr(`  ${program.name()} -p "analyze the code in src/"\n`);
+      safeStderr(`  ${program.name()} -p --agent my-org/my-agent\n`);
+      safeStderr(`  ${program.name()} -p --prompt my-org/my-prompt\n`);
+      safeStderr(`  ${program.name()} -p --resume\n`);
       await gracefulExit(1);
     }
 
@@ -417,7 +417,7 @@ program.on("command:*", () => {
   void gracefulExit(1);
 });
 
-export async function runCli(): Promise<void> {
+export async function runCli(commandName: "stamcont" | "cn" = "stamcont"): Promise<void> {
   // Handle internal worker subprocess for cn review
   if (process.argv.includes("--internal-review-worker")) {
     const { runReviewWorker } = await import(
@@ -426,6 +426,9 @@ export async function runCli(): Promise<void> {
     await runReviewWorker();
     return;
   }
+
+  // Render help/errors using the executable that actually invoked the bundle.
+  program.name(commandName);
 
   // Parse arguments and handle errors
   try {

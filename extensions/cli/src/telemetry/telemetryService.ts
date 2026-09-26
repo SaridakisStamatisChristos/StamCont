@@ -24,6 +24,7 @@ import { logger } from "../util/logger.js";
 import { getVersion } from "../version.js";
 
 import { detectTerminalType, parseOtelHeaders } from "./headerUtils.js";
+import { resolveTelemetryPreference } from "./identity.js";
 
 export interface TelemetryConfig {
   enabled: boolean;
@@ -72,16 +73,7 @@ class TelemetryService {
       process.env.OTEL_METRICS_EXPORTER
     );
 
-    let telemetryEnabled = true;
-    if (process.env.CONTINUE_METRICS_ENABLED === "0") {
-      telemetryEnabled = false;
-    } else if (process.env.CONTINUE_METRICS_ENABLED === "1") {
-      telemetryEnabled = true;
-    } else {
-      telemetryEnabled = process.env.CONTINUE_CLI_ENABLE_TELEMETRY !== "0";
-    }
-
-    const enabled = telemetryEnabled && hasOtelConfig;
+    const enabled = resolveTelemetryPreference(process.env) && hasOtelConfig;
     const sessionId = uuidv4();
 
     return {
