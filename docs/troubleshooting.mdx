@@ -1,7 +1,10 @@
 ---
 title: "Troubleshooting"
-description: "Comprehensive guide to resolving common issues with Continue, including logging, keyboard shortcuts, networking problems, model capabilities, and extension configuration troubleshooting"
+description: "Troubleshooting StamCont and its inherited Continue-compatible IDE and configuration surfaces"
 ---
+<Warning>
+This page contains troubleshooting material for **inherited Continue-compatible UI, configuration, and filesystem identifiers** still present in StamCont. Upstream Continue marketplace packages, pre-releases, and release channels are **not StamCont releases**.
+</Warning>
 
 1. [Check the logs](#check-the-logs)
 2. [Try the latest pre-release](#download-the-latest-pre-release)
@@ -47,32 +50,6 @@ To view prompt logs/analytics, you can enable the Continue Console.
 Open `~/.continue/logs/core.log` to view the logs for the Continue plugin. The most recent logs are found at the bottom of the file.
 
 Some JetBrains-related logs may also be found by clicking "Help" > "Show Log in Explorer/Finder".
-
-## Download the latest pre-release
-
-### VS Code
-
-We are constantly making fixes and improvements to Continue, but the latest changes remain in a "pre-release" version for roughly a week so that we can test their stability. If you are experiencing issues, you can try the pre-release by going to the Continue extension page in VS Code and selecting "Switch to Pre-Release" as shown below.
-
-![Pre-Release](/images/images/prerelease-9bed93e846914165d30a3b227a680d9b.png)
-
-### JetBrains
-
-On JetBrains, the "pre-release" happens through their Early Access Program (EAP) channel. To download the latest EAP version, enable the EAP channel:
-
-1. Open JetBrains settings (`cmd/ctrl` + `,`) and go to "Plugins"
-2. Click the gear icon at the top
-3. Select "Manage Plugin Repositories..."
-4. Add "[https://plugins.jetbrains.com/plugins/eap/list](https://plugins.jetbrains.com/plugins/eap/list)" to the list
-5. You'll now always be able to download the latest EAP version from the marketplace
-
-## Download an Older Version
-
-If you've tried everything, reported an error, know that a previous version was working for you, and are waiting to hear back, you can try downloading an older version of the extension.
-
-For VS Code, All versions are hosted on the Open VSX Registry [here](https://open-vsx.org/extension/Continue/continue). Once you've downloaded the extension, which will be a .vsix file, you can install it manually by following the instructions [here](https://code.visualstudio.com/docs/editor/extension-gallery#_install-from-a-vsix).
-
-You can find older versions of the JetBrains extension on their [marketplace](https://plugins.jetbrains.com/plugin/22707-continue), which will walk you through installing from disk.
 
 ## Keyboard shortcuts not resolving
 
@@ -167,4 +144,4 @@ As a temporary debugging step, you can set `requestOptions.verifySsl: false` to 
 
 ## Still having trouble?
 
-You can create a GitHub issue [here](https://github.com/continuedev/continue/issues/new?assignees=&labels=bug&projects=&template=bug-report-%F0%9F%90%9B.md&title=), providing details of your problem, and we'll be able to help you out more quickly.
+You can create a GitHub issue [in the StamCont issue tracker](https://github.com/SaridakisStamatisChristos/StamCont/issues/new), providing details of your problem, and we'll be able to help you out more quickly.
