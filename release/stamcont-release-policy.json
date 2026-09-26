@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "phase": "pr22-dry-run",
+  "phase": "pr23-validation",
   "product": "StamCont",
   "repository": "SaridakisStamatisChristos/StamCont",
   "release": {
