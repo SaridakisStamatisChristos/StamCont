@@ -6,15 +6,29 @@ provider-neutral coding-agent runtime.
 The primary executable is `stamcont`. The historical `cn` executable remains
 available as a compatibility alias and invokes the same runtime.
 
-## PR19 release status
+## Standalone release installation
 
-The StamCont CLI is **not published as a standalone StamCont package yet**.
-Publication remains intentionally deferred until PR22 establishes StamCont-owned
-release infrastructure, registry ownership, credentials, signing, and provenance.
+StamCont's CLI distribution is a GitHub release bundle, not the inherited npm
+package identity.
 
-Do not use `npm i -g @continuedev/cli` as a StamCont installation method; that
-name is an inherited package identity and is intentionally retained only for
-build/dependency compatibility during this migration phase.
+For a published version `X.Y.Z`:
+
+1. Download `stamcont-cli-X.Y.Z.tar.gz` and `SHA256SUMS` from the StamCont
+   GitHub release.
+2. Verify the archive checksum.
+3. Extract the archive.
+4. Run the bundled primary entry point:
+
+```bash
+node dist/stamcont.js --help
+```
+
+The bundle also contains `dist/cn.js` as a compatibility alias.
+
+The package manifest inside the bundle intentionally retains
+`@continuedev/cli` for compatibility. StamCont does not publish that upstream
+npm identity and does not use `npm i -g @continuedev/cli` as a StamCont
+installation method.
 
 ## Build and run from source
 
