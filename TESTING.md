@@ -1,5 +1,7 @@
 # PR #2 Testing Checklist — Strip Hub/Mission Control Code
 
+> **Historical StamCont migration checklist:** this file records an earlier cleanup phase. Names such as the `Continue` VS Code output channel, `~/.continue`, and related command/config identifiers are retained here where they describe compatibility surfaces that still existed during the test. They are not project-identity claims.
+
 ## Critical
 
 - [x] **Extension cold start** — Launch VS Code with the extension. No errors in Output panel ("Continue" channel) or Dev Tools console. _(Found and fixed `message.includes` crash in `webviewProtocol.ts` + removed dead proxy-server error handling block.)_
