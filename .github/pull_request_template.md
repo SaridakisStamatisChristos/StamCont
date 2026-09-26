@@ -1,22 +1,34 @@
 ## Description
 
-[ What changed? Feel free to be brief. ]
+Describe the problem and the change. Keep the scope focused.
 
-## AI Code Review
+## Architecture / compatibility impact
 
-- **Team members only**: AI review runs automatically when PR is opened or marked ready for review
-- Team members can also trigger a review by commenting `@continue-review`
+- Does this change affect AgentLoop, AgentKernel, persistence/replay, context compaction, sandboxing, networking, cancellation, subagents, or execution profiles?
+- Does it change an inherited Continue-compatible identifier or interface?
+- If yes, explain the compatibility and migration impact.
 
 ## Checklist
 
-- [] I've read the [contributing guide](https://github.com/continuedev/continue/blob/main/CONTRIBUTING.md)
-- [] The relevant docs, if any, have been updated or created
-- [] The relevant tests, if any, have been updated or created
+- [ ] I've read the [StamCont contributing guide](../CONTRIBUTING.md).
+- [ ] I added or updated relevant tests.
+- [ ] I updated relevant documentation.
+- [ ] I did not silently weaken a capability, sandbox, persistence, replay, or side-effect-safety invariant.
+- [ ] I did not re-enable an inherited upstream publishing path.
+- [ ] I ran the relevant local validation commands.
 
-## Screen recording or screenshot
+## Validation
 
-[ When applicable, please include a short screen recording or screenshot - this makes it much easier for us as contributors to review and understand your changes. See [this PR](https://github.com/continuedev/continue/pull/6455) as a good example. ]
+List the commands/tests you ran and their results.
 
-## Tests
+```text
+# example
+cd core
+npm run vitest -- agent/releaseReadiness.vitest.ts
+```
 
-[ What tests were added or updated to ensure the changes work as expected? ]
+For release-sensitive changes, the repository gates are **StamCont Baseline** and **StamCont Execution Security**.
+
+## Screenshots / recordings
+
+For user-interface changes, include a screenshot or short recording when it materially helps review.
