@@ -1,63 +1,174 @@
-<h1 align="center">Continue</h1>
+<h1 align="center">StamCont</h1>
 
-<p align="center">Pioneering open-source coding agent</p>
+<p align="center">
+  <strong>Durable, provider-neutral coding-agent runtime with resumable sessions, capability-scoped execution, cross-platform sandboxing, context compaction, and shared CLI/IDE semantics.</strong>
+</p>
 
 <div align="center">
 
-<a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" /></a>
-<a href="https://docs.continue.dev"><img src="https://img.shields.io/badge/Docs-docs.continue.dev-blue" /></a>
-<a href="https://github.com/continuedev/continue/releases"><img src="https://img.shields.io/badge/Changelog-GitHub_Releases-blue" /></a>
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![StamCont Baseline](https://github.com/SaridakisStamatisChristos/StamCont/actions/workflows/stamcont-baseline.yml/badge.svg)](https://github.com/SaridakisStamatisChristos/StamCont/actions/workflows/stamcont-baseline.yml)
+[![Execution Security](https://github.com/SaridakisStamatisChristos/StamCont/actions/workflows/stamcont-execution-security.yml/badge.svg)](https://github.com/SaridakisStamatisChristos/StamCont/actions/workflows/stamcont-execution-security.yml)
 
 </div>
 
-<p align="center">
-  <img src="media/github-readme.png" alt="Banner" />
-</p>
+## What is StamCont?
 
-## What is Continue?
+**StamCont** is an engineering-focused coding-agent platform built around a single canonical agent runtime shared across CLI and IDE/GUI surfaces.
 
-> _Note: The `continuedev/continue` repository is no longer actively maintained and is read-only for all users._
+The project focuses on the hard parts of long-running agent execution: durable state, deterministic replay, safe resume after interruption, provider-neutral model events, capability-controlled tool execution, context-budget management, nested agent authority, and OS-enforced execution boundaries.
 
-Continue is a coding agent available as a [CLI](#cli), [VS Code extension](#vs-code), and [JetBrains plugin](#jetbrains).
+The canonical runtime is:
 
-## Documentation
+```text
+CLI or IDE/GUI surface
+        ↓
+provider-neutral AgentModelDriver
+        ↓
+canonical AgentRunEvent protocol + reducer
+        ↓
+AgentLoop
+        ↓
+AgentKernel-authorized tool runtime
+        ↓
+host / sandbox execution backend
+```
 
-To learn how to configure Continue, how it works, and how to customize it, check out the [Continue Docs](https://docs.continue.dev).
+## Core capabilities
 
-## Final 2.0.0 Release
+- **One provider-neutral AgentLoop** — provider adapters translate into canonical events; providers do not directly execute tools.
+- **Durable sessions** — append-only JSONL history is authoritative, with derived indexes, snapshots, and compaction artifacts.
+- **Deterministic replay and resume** — completed work is not rerun, safe pre-execution boundaries can resume, and ambiguous external side effects are not silently repeated.
+- **Authoritative tool execution** — only completed canonical tool-call items can become executable work.
+- **Explicit execution profiles** — `Plan`, `Interactive`, and `Full Access` map to distinct capability and approval policies.
+- **Cross-platform sandboxing** — Linux uses `bubblewrap`, macOS uses `sandbox-exec`, and Windows uses AppContainer + Job Objects for constrained execution.
+- **Context budgeting and compaction** — long sessions can be compacted at safe semantic boundaries without deleting authoritative history.
+- **Nested sessions / subagents** — child sessions inherit at most the authority of their parent and cannot escalate capabilities.
+- **Cancellation propagation** — cancellation flows through owned model, tool, and process work.
+- **Privacy-bounded diagnostics** — diagnostics reuse canonical identities without dumping prompts, raw tool payloads, credentials, or opaque reasoning state.
+- **CLI / IDE parity** — both surfaces execute through the same Core runtime semantics rather than separate agent implementations.
 
-We polished Continue and did a final 2.0.0 release of the VS Code extension, CLI, and JetBrains plugin.
+## Execution profiles
 
-This included removing anonymous telemetry, pulling out authentication, squashing bugs, and more.
+| Profile | Filesystem | Shell | Network | Approval posture |
+| --- | --- | --- | --- | --- |
+| **Plan** | Workspace read-only | Sandboxed workspace shell | Restricted | Always |
+| **Interactive** | Workspace read/write | Sandboxed workspace shell | Restricted | Policy-driven |
+| **Full Access** | OS-user scope | Host shell | Full | No per-command kernel approval |
 
-### VS Code
+`Plan` and `Interactive` fail closed when an enforceable platform sandbox is unavailable. `Full Access` is explicit and intentionally uses the authority of the OS user running StamCont.
 
-[![VS Code Marketplace](https://img.shields.io/badge/VS_Code_Marketplace-007ACC?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=Continue.continue) [![OpenVSX Registry](https://img.shields.io/badge/OpenVSX_Registry-C160EF?logo=eclipseide&logoColor=white)](https://open-vsx.org/extension/Continue/continue) [![View source](https://img.shields.io/badge/View_source-181717?logo=github&logoColor=white)](extensions/vscode)
+## Durable runtime model
+
+Each durable session stores an authoritative append-only log:
+
+```text
+<agent-session-root>/<sessionId>/
+├── session.jsonl              # authoritative history
+├── session.idx                # derived index
+├── session.snapshot.json      # derived snapshot
+└── session.compaction.json    # derived compacted context
+```
+
+The log remains historical truth. Indexes, snapshots, compaction artifacts, diagnostics, and UI projections are rebuildable or derived state.
+
+Resume semantics are designed around side-effect safety: StamCont distinguishes work that definitely did not execute from work that may already have produced an external effect. Ambiguous tool attempts block automatic replay instead of risking duplicate actions.
+
+## Repository map
+
+```text
+core/agent/                     Canonical agent protocol, reducer, loop,
+                                kernel, persistence, lifecycle, compaction,
+                                budgeting, sessions, sandboxing and diagnostics
+
+extensions/cli/src/agent/       CLI integration with the canonical runtime
+
+gui/                            IDE/GUI agent surface integration
+
+extensions/vscode/              VS Code host integration
+
+docs/STAMCONT_AGENT_KERNEL.md    Kernel, capabilities and execution boundary
+
+docs/STAMCONT_AGENT_RUNTIME.md   Durable runtime and release architecture
+
+docs/STAMCONT_PHASE1_BASELINE.md Baseline and inherited-workflow containment
+
+.github/workflows/
+  stamcont-baseline.yml         Main repository validation gate
+  stamcont-execution-security.yml
+                                Cross-platform execution-security gate
+```
+
+## Current state
+
+The current `main` branch includes the PR16 release-readiness integration gate for the canonical runtime. The implemented architecture covers:
+
+- plain-response durability and terminal replay;
+- canonical tool-call execution through `AgentKernel`;
+- durable cancellation;
+- crash/restart boundaries;
+- long-context compaction and replanning;
+- CLI / IDE semantic parity;
+- nested-session authority;
+- adversarial and property-oriented runtime tests;
+- cross-platform execution-security validation.
+
+For the implementation-level contract and known limits, read [StamCont Agent Runtime](docs/STAMCONT_AGENT_RUNTIME.md).
+
+## Development and validation
+
+### Core
+
+```bash
+cd core
+npm run tsc:check
+npm run lint
+npm test -- --runInBand
+npm run vitest
+```
+
+Focused release-readiness integration:
+
+```bash
+cd core
+npm run vitest -- agent/releaseReadiness.vitest.ts
+```
 
 ### CLI
 
-[![npm](https://img.shields.io/badge/npm-CB3837?logo=npm&logoColor=white)](https://www.npmjs.com/package/@continuedev/cli) [![View source](https://img.shields.io/badge/View_source-181717?logo=github&logoColor=white)](extensions/cli)
+```bash
+cd extensions/cli
+npm run lint
+npm run build
+npm test
+npm run test:smoke
+```
 
-### JetBrains
+Focused CLI/Core parity:
 
-> _Note: We recommend using the Continue CLI instead of the JetBrains plugin._
+```bash
+cd extensions/cli
+npm test -- src/agent/releaseParity.test.ts
+```
 
-[![GitHub Releases](https://img.shields.io/badge/GitHub_Releases-181717?logo=github&logoColor=white)](https://github.com/continuedev/continue/releases) [![View source](https://img.shields.io/badge/View_source-181717?logo=github&logoColor=white)](extensions/intellij)
+The repository-level release gates are **StamCont Baseline** and **StamCont Execution Security**.
 
-## Contributors
+## Architecture documentation
 
-Thank you to the entire Continue community for helping us create a pioneering coding agent.
+- [Agent Kernel](docs/STAMCONT_AGENT_KERNEL.md) — execution profiles, capabilities, host/sandbox backends, subagents, cancellation, and security boundaries.
+- [Agent Runtime](docs/STAMCONT_AGENT_RUNTIME.md) — canonical event model, persistence, replay, resume, compaction, diagnostics, provider contract, release flows, and known limits.
+- [Phase 1 Baseline](docs/STAMCONT_PHASE1_BASELINE.md) — reproducible baseline and containment of inherited upstream publishing paths.
 
-What we built together pushed the boundaries of what AI developer tooling could be.
+## Origin and attribution
 
-We hope this codebase continues to serve as a foundation for others.
+StamCont began as a fork of [Continue](https://github.com/continuedev/continue) and intentionally retains substantial inherited code, compatibility layers, history, and Apache-2.0 attribution where applicable.
 
-## Code friends
+**StamCont is not the upstream Continue project.** Its current development centers on the StamCont-specific durable agent runtime, execution kernel, persistence/resume model, context-management architecture, cross-platform execution security, and release-readiness integration described above.
 
-<a href="https://github.com/continuedev/continue/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=continuedev/continue&max=500" />
-</a>
+Inherited Continue components and notices remain attributable to their original authors.
 
 ## License
 
-Apache 2.0 © 2023-2026 Continue Dev, Inc.
+Licensed under the [Apache License 2.0](LICENSE).
+
+Portions of this repository are derived from Continue and remain subject to the applicable upstream copyright and attribution notices.
