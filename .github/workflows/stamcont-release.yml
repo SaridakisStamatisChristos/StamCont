@@ -1,0 +1,418 @@
+name: StamCont Release
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/stamcont-release.yml"
+      - ".github/actions/build-vscode-extension/action.yml"
+      - "release/**"
+      - "scripts/stamcont-release-*.mjs"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "SemVer to build in dry-run mode (publication remains policy-gated)"
+        required: true
+        default: "0.1.0"
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stamcont-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CI: "true"
+  IGNORE_API_KEY_TESTS: "true"
+
+jobs:
+  contract:
+    name: Release contract
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      publish_enabled: ${{ steps.release.outputs.publish_enabled }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: ".nvmrc"
+
+      - name: Validate release ownership policy
+        run: node scripts/stamcont-release-policy.mjs
+
+      - name: Resolve release version and source policy
+        id: release
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_VERSION: ${{ inputs.version }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            VERSION="0.1.0-pr.${PR_NUMBER}"
+          elif [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+              echo "workflow_dispatch release builds must run from main" >&2
+              exit 1
+            fi
+            VERSION="$EVENT_VERSION"
+          elif [[ "$EVENT_NAME" == "push" && "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF_NAME}"
+            if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "release tag must be strict vMAJOR.MINOR.PATCH" >&2
+              exit 1
+            fi
+            VERSION="${TAG#v}"
+
+            git fetch origin main --depth=1
+            if ! git merge-base --is-ancestor "${GITHUB_SHA}" "origin/main"; then
+              echo "release tag must point to a commit reachable from main" >&2
+              exit 1
+            fi
+          else
+            echo "unsupported release event: $EVENT_NAME" >&2
+            exit 1
+          fi
+
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "invalid release version: $VERSION" >&2
+            exit 1
+          fi
+
+          PUBLISH_ENABLED="$(node -p "String(JSON.parse(require('fs').readFileSync('release/stamcont-release-policy.json','utf8')).release.github.publishEnabled)")"
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "publish_enabled=$PUBLISH_ENABLED" >> "$GITHUB_OUTPUT"
+          echo "Release version: $VERSION"
+          echo "GitHub publication enabled by policy: $PUBLISH_ENABLED"
+
+  cli:
+    name: CLI artifact
+    needs: contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: ".nvmrc"
+
+      - name: Build local packages
+        run: node scripts/build-packages.js
+
+      - name: Build core
+        working-directory: core
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build CLI
+        working-directory: extensions/cli
+        run: |
+          npm ci --include=optional
+          npm run build
+
+      - name: Stage CLI artifact
+        shell: bash
+        env:
+          VERSION: ${{ needs.contract.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          STAGE="release/stamcont-cli-$VERSION"
+          mkdir -p "$STAGE"
+          cp -R extensions/cli/dist "$STAGE/dist"
+          cp extensions/cli/package.json "$STAGE/package.json"
+          cp LICENSE "$STAGE/LICENSE"
+          cat > "$STAGE/INSTALL.txt" <<'EOF'
+          StamCont CLI standalone bundle.
+
+          Primary entry point:
+            node dist/stamcont.js
+
+          Compatibility alias:
+            node dist/cn.js
+
+          The package manifest intentionally retains the compatibility npm identity
+          until a StamCont-owned npm target is provisioned.
+          EOF
+          tar -C release -czf "release/stamcont-cli-$VERSION.tar.gz" "stamcont-cli-$VERSION"
+          rm -rf "$STAGE"
+
+      - name: Upload CLI artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-cli
+          path: release/*.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  vscode:
+    name: VS Code / ${{ matrix.platform }}-${{ matrix.arch }}
+    needs: contract
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            arch: x64
+            npm_config_arch: x64
+            runner: ubuntu-latest
+          - platform: win32
+            arch: x64
+            npm_config_arch: x64
+            runner: windows-latest
+          - platform: darwin
+            arch: arm64
+            npm_config_arch: arm64
+            runner: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build VS Code extension
+        uses: ./.github/actions/build-vscode-extension
+        with:
+          platform: ${{ matrix.platform }}
+          arch: ${{ matrix.arch }}
+          npm_config_arch: ${{ matrix.npm_config_arch }}
+          pre-release: false
+          github-token: ${{ github.token }}
+
+      - name: Stage VSIX
+        shell: bash
+        env:
+          VERSION: ${{ needs.contract.outputs.version }}
+          TARGET: ${{ matrix.platform }}-${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          VSIX="$(find extensions/vscode -type f -name '*.vsix' | sort | head -n 1)"
+          if [[ -z "$VSIX" ]]; then
+            echo "No VSIX artifact produced" >&2
+            exit 1
+          fi
+          cp "$VSIX" "release/stamcont-vscode-$VERSION-$TARGET.vsix"
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-vscode-${{ matrix.platform }}-${{ matrix.arch }}
+          path: release/*.vsix
+          if-no-files-found: error
+          retention-days: 14
+
+  jetbrains:
+    name: JetBrains artifact
+    needs: contract
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: ".nvmrc"
+
+      - name: Setup Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: zulu
+          java-version: 17
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          gradle-home-cache-cleanup: true
+
+      - name: Build local packages
+        run: node scripts/build-packages.js
+
+      - name: Install and build core
+        working-directory: core
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install and build GUI
+        working-directory: gui
+        env:
+          NODE_OPTIONS: "--max-old-space-size=8192"
+        run: |
+          npm ci
+          npm run build
+
+      - name: Prepare IDE webview and native dependencies
+        working-directory: extensions/vscode
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CONTINUE_VSCODE_TARGET: darwin-arm64
+        run: |
+          npm ci
+          npm run prepackage -- --target darwin-arm64
+
+      - name: Build bundled native binaries
+        working-directory: binary
+        run: |
+          npm ci
+          npm run build
+
+      - name: Test and build JetBrains plugin
+        working-directory: extensions/intellij
+        run: ./gradlew test buildPlugin --stacktrace --no-daemon
+
+      - name: Stage JetBrains artifact
+        shell: bash
+        env:
+          VERSION: ${{ needs.contract.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          ZIP="$(find extensions/intellij/build/distributions -maxdepth 1 -type f -name '*.zip' | sort | head -n 1)"
+          if [[ -z "$ZIP" ]]; then
+            echo "No JetBrains distribution produced" >&2
+            exit 1
+          fi
+          cp "$ZIP" "release/stamcont-jetbrains-$VERSION.zip"
+
+      - name: Upload JetBrains artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-jetbrains
+          path: release/*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  metadata:
+    name: SBOM / checksums / provenance
+    needs:
+      - contract
+      - cli
+      - vscode
+      - jetbrains
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: ".nvmrc"
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-*
+          path: release
+          merge-multiple: true
+
+      - name: Inventory staged release artifacts
+        run: find release -maxdepth 2 -type f -print | sort
+
+      - name: Generate CycloneDX SBOM
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        with:
+          path: release
+          format: cyclonedx-json
+          output-file: release/stamcont-sbom.cdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Generate checksums and release manifest
+        env:
+          VERSION: ${{ needs.contract.outputs.version }}
+        run: |
+          node scripts/stamcont-release-metadata.mjs             --dir release             --version "$VERSION"             --source-sha "$GITHUB_SHA"             --repository "$GITHUB_REPOSITORY"
+
+      - name: Verify checksum manifest
+        working-directory: release
+        run: sha256sum --check SHA256SUMS
+
+      - name: Attest primary release artifacts
+        if: github.event_name != 'pull_request'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: release/SHA256SUMS
+
+      - name: Upload complete release bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: stamcont-release-bundle-${{ needs.contract.outputs.version }}
+          path: release/*
+          if-no-files-found: error
+          retention-days: 30
+
+  publish-github:
+    name: Publish GitHub release
+    needs:
+      - contract
+      - metadata
+    if: >-
+      github.event_name == 'push' &&
+      startsWith(github.ref, 'refs/tags/v') &&
+      needs.contract.outputs.publish_enabled == 'true' &&
+      vars.STAMCONT_RELEASES_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Download complete release bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: stamcont-release-bundle-${{ needs.contract.outputs.version }}
+          path: release
+
+      - name: Publish atomically through a draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; refusing to overwrite it." >&2
+            exit 1
+          fi
+
+          CREATED=0
+          rollback() {
+            if [[ "$CREATED" == "1" ]]; then
+              gh release delete "$TAG" --yes || true
+            fi
+          }
+          trap rollback ERR
+
+          gh release create "$TAG"             --draft             --verify-tag             --title "StamCont $TAG"             --generate-notes
+          CREATED=1
+
+          gh release upload "$TAG" release/* --clobber
+          gh release edit "$TAG" --draft=false
+
+          trap - ERR
+          echo "Published GitHub release $TAG"
