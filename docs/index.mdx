@@ -1,14 +1,27 @@
 ---
-title: "What is Continue?"
-description: "Open source AI code assistant for VS Code and JetBrains"
+title: "What is StamCont?"
+description: "A durable coding-agent runtime for provider-neutral, resumable, capability-scoped execution."
 ---
 
-**Continue enables developers to create, share, and use custom AI code agents with our open source [VS Code](https://marketplace.visualstudio.com/items?itemName=Continue.continue) and [JetBrains](https://plugins.jetbrains.com/plugin/22707-continue-extension) extensions.**
+# What is StamCont?
 
-## Key Features
+**StamCont is a durable coding-agent runtime and platform** built around one provider-neutral execution path for CLI and IDE/GUI surfaces.
 
-- [Agent mode](/ide-extensions/agent/quick-start) to work on development tasks together with AI
-- [Chat mode](/ide-extensions/chat/quick-start) to ask general questions and clarify code sections
-- [Edit mode](/ide-extensions/edit/quick-start) to modify code sections without leaving your current file
-- [Autocomplete](/ide-extensions/autocomplete/quick-start) to receive inline code suggestions as you type
-- [Continue CLI (cn)](/cli/quickstart) for terminal-native AI coding assistance
+The project is designed for long-running agent work where correctness depends on more than producing a model response. It explicitly models:
+
+- canonical streamed model events;
+- authoritative completed tool calls;
+- AgentKernel capability enforcement;
+- durable append-only session history;
+- deterministic replay and safe resume;
+- ambiguous-side-effect protection;
+- context budgeting and compaction;
+- nested agent authority;
+- cancellation and owned-process cleanup;
+- constrained Plan/Interactive execution and explicit Full Access.
+
+For the release architecture, read [StamCont Agent Runtime](./STAMCONT_AGENT_RUNTIME.md).
+
+For execution and sandbox boundaries, read [StamCont Agent Kernel](./STAMCONT_AGENT_KERNEL.md).
+
+> **Origin:** StamCont began as a fork of Continue and retains inherited code and compatibility identifiers under Apache-2.0. Current StamCont-specific architecture is documented separately and should not be confused with upstream Continue.
