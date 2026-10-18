@@ -1,32 +1,30 @@
-## Mintlify Starter Kit
+# StamCont documentation
 
-Click on `Use this template` to copy the Mintlify starter kit. The starter kit contains examples including
+This directory contains StamCont's user guides and runtime/reference documentation. It includes inherited Continue-compatible material; upstream package names, settings IDs, and service links on legacy pages must not be interpreted as StamCont-owned distribution or services.
 
-- Guide pages
-- Navigation
-- Customizations
-- API Reference pages
-- Use of popular components
+## Start here
 
-### Development
+- [Project overview](../README.md) — what StamCont implements and how to build the CLI.
+- [CLI quickstart](cli/quickstart.mdx) — standalone artifact or source installation.
+- [IDE package installation](ide-extensions/install.mdx) — VS Code and JetBrains release artifacts.
+- [Agent Runtime](STAMCONT_AGENT_RUNTIME.md) — durable event model, replay and resume.
+- [Agent Kernel](STAMCONT_AGENT_KERNEL.md) — authority and sandbox boundaries.
+- [Upstream provenance](../UPSTREAM.md) — imported Continue baseline and attribution.
 
-Install the [Mintlify CLI](https://www.npmjs.com/package/mint) to preview the documentation changes locally. To install, use the following command
+## Preview or build the documentation site
 
+The repository's documentation website is implemented in `docs-site/` (Next.js) and reads this directory's `docs.json` navigation plus its MDX pages.
+
+Use **Node.js 20.20.1** (see `../.nvmrc`), then:
+
+```bash
+cd docs-site
+npm ci
+npm run dev
 ```
-npm i -g mint
-```
 
-Run the following command at the root of your documentation (where docs.json is)
+From the same directory, `npm run build` performs a static documentation build; the GitHub Pages workflow is manual and separate from a local build. Building or previewing documentation does **not** publish a release.
 
-```
-mint dev
-```
+## Documentation ownership
 
-### Publishing Changes
-
-Install our Github App to auto propagate changes from your repo to your deployment. Changes will be deployed to production automatically after pushing to the default branch. Find the link to install on your dashboard.
-
-#### Troubleshooting
-
-- If the dev environment isn't running - Run `mint update` to ensure you have the most recent version of the CLI.
-- Page loads as a 404 - Make sure you are running in a folder with `docs.json`
+New StamCont-specific pages should describe behavior implemented in this repository. When adjusting inherited pages, preserve accurate references to original Continue APIs and authors, but distinguish legacy compatibility workflows from supported StamCont installation paths. Avoid linking to the upstream Continue marketplace or npm packages as if they were StamCont releases.

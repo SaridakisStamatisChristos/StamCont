@@ -34,6 +34,25 @@ AgentKernel-authorized tool runtime
 host / sandbox execution backend
 ```
 
+## Get started from source
+
+StamCont's standalone packages are distributed through this repository's [GitHub Releases](https://github.com/SaridakisStamatisChristos/StamCont/releases) **when a release is published**. If the Releases page has no downloadable artifacts, build the CLI from source instead. Do not install `@continuedev/cli` expecting a StamCont release; that is an inherited compatibility package identity.
+
+With **Node.js 20.20.1** installed (the version in `.nvmrc`), from the repository root:
+
+```bash
+node scripts/build-packages.js
+cd core
+npm ci
+npm run build
+cd ../extensions/cli
+npm ci --include=optional
+npm run build
+node dist/stamcont.js --help
+```
+
+The final command is a local CLI help smoke check; it does not require a model-provider credential. Actual agent requests require a configured model/provider. The `cn` executable remains a compatibility alias (`node dist/cn.js --help`). For install options and usage, see [CLI README](extensions/cli/README.md) and [CLI quickstart](docs/cli/quickstart.mdx).
+
 ## Core capabilities
 
 - **One provider-neutral AgentLoop** — provider adapters translate into canonical events; providers do not directly execute tools.

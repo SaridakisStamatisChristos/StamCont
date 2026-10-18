@@ -1,86 +1,58 @@
 ---
-title: "Quickstart"
+title: "StamCont CLI quickstart"
+description: "Install or build the StamCont CLI and verify its entry point."
 ---
 
-import { OSAutoDetect } from '/snippets/OSAutoDetect.jsx'
-import CLIInstall from '/snippets/cli-install.mdx'
+# StamCont CLI
 
-<OSAutoDetect />
+The primary CLI command is `stamcont`. The `cn` command is retained as a compatibility alias. Both use the same runtime.
 
-Continue CLI (`cn`) is a terminal-based coding agent. It can edit files, run commands, and work through multi-step tasks — the same agent that powers the Continue IDE extensions, running in your terminal.
+## Standalone GitHub release
 
-<Frame>
-  <img src="/images/cn-demo.gif" />
-</Frame>
+Check [StamCont Releases](https://github.com/SaridakisStamatisChristos/StamCont/releases) for available artifacts. If no release has been published, use the source-build instructions below. Do **not** install `@continuedev/cli` from npm expecting a StamCont release; StamCont retains that package identifier for compatibility but does not own the upstream npm distribution.
 
-## Install
-
-<CLIInstall />
-
-Verify the installation:
+For a published `X.Y.Z` release, download `stamcont-cli-X.Y.Z.tar.gz` and `SHA256SUMS` from the **same** release, verify the archive's SHA-256 against the supplied checksum, then extract it:
 
 ```bash
-cn --version
+tar -xzf stamcont-cli-X.Y.Z.tar.gz
+cd stamcont-cli-X.Y.Z
+node dist/stamcont.js --help
 ```
 
-### Requirements
+On Windows, after extraction, run `node .\dist\stamcont.js --help` in PowerShell. For the checksum validation and optional global installation, see [CLI README](https://github.com/SaridakisStamatisChristos/StamCont/blob/main/extensions/cli/README.md).
 
-- **Node.js 20+** — needed for the npm install path. The shell installer bundles its own runtime.
-- A [Continue](https://continue.dev) account, or an Anthropic API key.
+## Build from source
 
-## First run
+Install Node.js **20.20.1** (as pinned by `.nvmrc`), clone the repository, and run from its root:
 
 ```bash
-cd your-project
-cn
+node scripts/build-packages.js
+cd core
+npm ci
+npm run build
+cd ../extensions/cli
+npm ci --include=optional
+npm run build
+node dist/stamcont.js --help
+node dist/cn.js --help
 ```
 
-On first launch you'll be asked to log in with [Continue](https://continue.dev) or enter an Anthropic API key. After that, you're in a session and can start typing.
+Both help invocations are offline smoke checks and do not require provider credentials. If a local dependency fails to build, consult [build dependencies](https://github.com/SaridakisStamatisChristos/StamCont/blob/main/BUILD_DEPENDENCIES.md) and the component's package scripts.
 
-## Authentication
+## Run an agent
 
-### Log in with Continue
+After selecting a model/provider and configuring its required authentication, the CLI supports interactive sessions, headless prompts, and session resume:
 
 ```bash
-cn login
+stamcont
+stamcont -p "Review my current git diff"
+stamcont --resume
 ```
 
-This opens your browser to authenticate with [Continue](https://continue.dev). Once authenticated, `cn` can use your configured assistants, models, and MCP servers from the platform.
+When running directly from a source checkout without a global installation, replace `stamcont` with `node dist/stamcont.js` in the `extensions/cli` directory.
 
-### API key (headless / CI)
+Credentials and external-service behavior depend on the configured model/provider. Continue-era URLs and environment variables may still exist as compatibility surfaces; they are **not** StamCont-owned credentials or distribution services. See [CLI configuration](/cli/configuration) and the [CLI README](https://github.com/SaridakisStamatisChristos/StamCont/blob/main/extensions/cli/README.md) for details.
 
-For automation environments where there's no browser, set the `CONTINUE_API_KEY` environment variable:
+## Execution authority
 
-```bash
-export CONTINUE_API_KEY=your-key-here
-cn -p "your prompt"
-```
-
-### Local API key
-
-If you don't want to use Continue, you can use an Anthropic API key directly. On first launch, `cn` will prompt you to choose between logging in with Continue or entering an Anthropic API key.
-
-## Two modes
-
-**[TUI mode](/cli/tui-mode)** — run `cn` to start an interactive session. You type messages, reference files with `@`, approve tool calls, and iterate with the agent. This is the default.
-
-**[Headless mode](/cli/headless-mode)** — run `cn -p "your prompt"` for single-shot automation. The agent runs to completion and prints its response to stdout. Use this in scripts, CI/CD, and git hooks.
-
-## Common flags
-
-| Flag | Effect |
-|------|--------|
-| `-p "prompt"` | Headless mode — run prompt and exit |
-| `--config <path or slug>` | Use a specific config file or assistant |
-| `--resume` | Resume the most recent session |
-| `--auto` | Allow all tools without prompting |
-| `--readonly` | Plan mode — read-only tools only |
-| `--allow <tool>` | Allow a specific tool (repeatable) |
-| `--exclude <tool>` | Exclude a specific tool (repeatable) |
-| `--rule <rule>` | Add a rule — file path or string (repeatable) |
-| `--mcp <slug>` | Add an MCP server by slug (repeatable) |
-| `--model <slug>` | Add a model by slug (repeatable) |
-| `--agent <slug>` | Load an agent file by slug |
-| `--verbose` | Enable verbose logging |
-
-Run `cn --help` for the full list.
+StamCont has distinct `Plan`, `Interactive`, and `Full Access` execution profiles. Do not enable Full Access without understanding the OS-user permissions it grants. See [Agent Kernel](https://github.com/SaridakisStamatisChristos/StamCont/blob/main/docs/STAMCONT_AGENT_KERNEL.md) for the security boundary.
