@@ -210,11 +210,6 @@
     ],
     "global": {}
   },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg",
-    "href": "https://github.com/SaridakisStamatisChristos/StamCont"
-  },
   "background": {
     "color": {
       "dark": "#1a1a1a"

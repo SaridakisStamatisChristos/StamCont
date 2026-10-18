@@ -8,7 +8,6 @@ import { type NavGroup, type NavItem, type NavTab } from "@/config/docsNav";
 import { TableOfContents } from "./TableOfContents";
 import { DocsSearch } from "./DocsSearch";
 import { resolveHref } from "@/lib/resolveHref";
-import { withBasePath } from "@/lib/basePath";
 import type { Heading } from "@/lib/docs";
 
 /* ------------------------------------------------------------------ */
@@ -48,7 +47,6 @@ function slugToLabel(slug: string, titleMap?: Record<string, string>) {
 
 const NAV_LINK_DEFS = [
   { label: "Docs", path: "/docs" },
-  { label: "Blog", path: "/blog" },
 ];
 
 const NAV_LINKS = NAV_LINK_DEFS.map((d) => ({
@@ -235,21 +233,17 @@ export function DocsShell({
               className={`hidden items-center lg:flex ${SIDEBAR_W} flex-shrink-0 px-5 py-3`}
             >
               <Link href={resolveHref("/")} className="flex items-center">
-                <img
-                  src={withBasePath("/images/continue-logo-light.png")}
-                  alt="Continue"
-                  className="h-8 w-auto dark:invert"
-                />
+                <span className="text-lg font-semibold tracking-tight text-black/90 dark:text-white/90">
+                  StamCont
+                </span>
               </Link>
             </div>
             {/* Mobile logo */}
             <div className="flex items-center px-5 py-3 lg:hidden">
               <Link href={resolveHref("/")} className="flex items-center">
-                <img
-                  src={withBasePath("/images/continue-logo-light.png")}
-                  alt="Continue"
-                  className="h-8 w-auto dark:invert"
-                />
+                <span className="text-lg font-semibold tracking-tight text-black/90 dark:text-white/90">
+                  StamCont
+                </span>
               </Link>
             </div>
             {/* Centered search */}
