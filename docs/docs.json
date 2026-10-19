@@ -1,7 +1,7 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
-  "name": "Continue",
+  "name": "StamCont",
   "colors": {
     "primary": "#6b7280",
     "light": "#ffffff",
@@ -210,11 +210,6 @@
     ],
     "global": {}
   },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg",
-    "href": "https://docs.continue.dev"
-  },
   "background": {
     "color": {
       "dark": "#1a1a1a"
@@ -228,10 +223,7 @@
   },
   "footer": {
     "socials": {
-      "x": "https://twitter.com/continuedev",
-      "github": "https://github.com/continuedev/continue",
-      "linkedin": "https://linkedin.com/company/continuedev",
-      "youtube": "https://www.youtube.com/@continuedev"
+      "github": "https://github.com/SaridakisStamatisChristos/StamCont"
     }
   },
   "contextual": {

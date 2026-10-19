@@ -6,9 +6,9 @@ import "./globals.css";
 import "./docs.css";
 
 export const metadata: Metadata = {
-  title: "Continue Docs",
+  title: "StamCont Docs",
   description:
-    "Documentation for Continue — the open-source AI code assistant.",
+    "Documentation for StamCont — a durable, provider-neutral coding-agent runtime.",
 };
 
 export default function RootLayout({

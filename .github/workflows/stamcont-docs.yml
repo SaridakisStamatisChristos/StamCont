@@ -1,0 +1,52 @@
+name: StamCont Docs Build
+
+on:
+  pull_request:
+    paths:
+      - "docs/**"
+      - "docs-site/**"
+      - ".github/workflows/stamcont-docs.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "docs/**"
+      - "docs-site/**"
+      - ".github/workflows/stamcont-docs.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  docs:
+    name: Static documentation build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NEXT_PUBLIC_BASE_PATH: /StamCont
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: docs-site/package-lock.json
+
+      - name: Install docs dependencies
+        working-directory: docs-site
+        run: npm ci
+
+      - name: Check brand config
+        run: |
+          node -e 'const fs = require("node:fs"); const docs = JSON.parse(fs.readFileSync("docs/docs.json", "utf8")); if (docs.name !== "StamCont") process.exit(1);'
+          node -e 'const config = require("./docs-site/next.config.js"); if (config.basePath !== "/StamCont") process.exit(1);'
+
+      - name: Build static site
+        working-directory: docs-site
+        run: npm run build
+
+      - name: Verify static export
+        run: test -f docs-site/out/index.html

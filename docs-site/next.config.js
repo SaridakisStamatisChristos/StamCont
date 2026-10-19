@@ -1,8 +1,8 @@
 /** @type {import('next').NextConfig} */
 
-// Served at the root of the custom domain docs.continue.dev (via GitHub Pages),
-// so there is no base path. (public/CNAME sets the custom domain.)
-const basePath = "";
+// Build for a subpath (e.g. /StamCont on project GitHub Pages) when set.
+// Local development remains at the root unless the variable is supplied.
+const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
 
 const nextConfig = {
   output: "export",
